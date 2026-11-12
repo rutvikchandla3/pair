@@ -8,6 +8,8 @@ import type { GitStackedAction, VcsStatusResult } from "@t3tools/contracts";
 export const WORKSPACE_WORKTREE_REASON =
   "A workspace thread starts in a new worktree of each of its repositories.";
 
+export const WORKSPACE_CLOUD_REASON = "Each repository starts from its default branch.";
+
 const WORKSPACE_REPOSITORIES_PENDING =
   "Each repository gets its own worktree when the thread starts.";
 

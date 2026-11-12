@@ -143,14 +143,21 @@ export function createNewThreadHandler(router: AnyRouter) {
         candidate.id === projectRef.projectId &&
         candidate.environmentId === projectRef.environmentId,
     );
-    // A workspace thread only starts in a new worktree, whatever the caller carried over.
+    // A workspace thread starts in a new worktree or the cloud, whatever the caller carried over.
     const options =
       requestedOptions && isWorkspaceProject(project)
         ? {
             ...requestedOptions,
             ...(requestedOptions.branch === undefined ? {} : { branch: null }),
             ...(requestedOptions.worktreePath === undefined ? {} : { worktreePath: null }),
-            ...(requestedOptions.envMode === undefined ? {} : { envMode: "worktree" as const }),
+            ...(requestedOptions.envMode === undefined
+              ? {}
+              : {
+                  envMode:
+                    requestedOptions.envMode === "cloud"
+                      ? ("cloud" as const)
+                      : ("worktree" as const),
+                }),
           }
         : requestedOptions;
     const abandonedSinceRequest = () =>
@@ -211,13 +218,13 @@ export function createNewThreadHandler(router: AnyRouter) {
       );
     };
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
-      if (isWorkspaceProject(project)) return "worktree";
       const cloudLaunch =
         environmentServerConfigs.get(projectRef.environmentId)?.environment.capabilities
           .cloudLaunch === true;
       if (newThreadPrefersCloud(targetServerSettings, project?.id ?? null, cloudLaunch)) {
         return "cloud";
       }
+      if (isWorkspaceProject(project)) return "worktree";
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
       const consultProjectFile =

@@ -768,9 +768,7 @@ export default function ChatView(props: ChatViewProps) {
   const draftIsWorkspace = isWorkspaceProject(fallbackDraftProject);
   // Cloud on a local project launches on its Pair Cloud project: models and uploads read there.
   const draftCloudTarget = useCloudTarget(
-    !serverThread && !draftIsWorkspace && draftThread?.envMode === "cloud"
-      ? fallbackDraftProjectRef
-      : null,
+    !serverThread && draftThread?.envMode === "cloud" ? fallbackDraftProjectRef : null,
   );
   const draftCloudLaunchTarget = resolveCloudLaunchTarget(
     draftCloudTarget,
@@ -2342,7 +2340,12 @@ export default function ChatView(props: ChatViewProps) {
       ? pendingServerThreadBranchEntryForThread.branch
       : (activeThread?.branch ?? null);
   // A routed launch checks the selected branch on this machine: Pair Cloud only sees origin.
-  const routedCloudBranch = routedCloud && activeThreadBranch !== null ? activeThreadBranch : null;
+  // A workspace has no branch to check: each repository starts from its own default branch.
+  const routedCloudBranch =
+    routedCloud && !activeProjectIsWorkspace && activeThreadBranch !== null
+      ? activeThreadBranch
+      : null;
+  const routedCloudGitCwd = routedCloud && !activeProjectIsWorkspace ? gitCwd : null;
   const routedCloudRefQuery = useEnvironmentQuery(
     routedCloudBranch !== null && gitCwd !== null
       ? vcsEnvironment.listRefs({
@@ -2353,30 +2356,39 @@ export default function ChatView(props: ChatViewProps) {
   );
   // Current and default sort first, so a short page names the default branch.
   const routedCloudDefaultRefQuery = useEnvironmentQuery(
-    routedCloud && gitCwd !== null
-      ? vcsEnvironment.listRefs({ environmentId, input: { cwd: gitCwd, limit: 2 } })
+    routedCloudGitCwd !== null
+      ? vcsEnvironment.listRefs({ environmentId, input: { cwd: routedCloudGitCwd, limit: 2 } })
       : null,
   );
   useAtomMount(
-    vcsStatusRevalidation(routedCloud && gitCwd !== null ? { environmentId, cwd: gitCwd } : null),
+    vcsStatusRevalidation(
+      routedCloudGitCwd !== null ? { environmentId, cwd: routedCloudGitCwd } : null,
+    ),
   );
   const routedCloudSend =
-    routedCloud && routedCloudBranch !== null
+    routedCloud && activeProjectIsWorkspace
       ? {
           environmentId: routedCloud.environmentId,
           projectId: routedCloud.projectId,
-          defaultBranch:
-            routedCloudDefaultRefQuery.data?.refs.find((ref) => ref.isDefault)?.name ?? null,
-          branchCheck: cloudBranchCheck({
-            branch: routedCloudBranch,
-            ref:
-              routedCloudRefQuery.data?.refs.find(
-                (ref) => ref.name === routedCloudBranch && ref.isRemote !== true,
-              ) ?? null,
-            status: gitStatusQuery.data ?? null,
-          }),
+          defaultBranch: null,
+          branchCheck: { kind: "ok" } as const,
         }
-      : null;
+      : routedCloud && routedCloudBranch !== null
+        ? {
+            environmentId: routedCloud.environmentId,
+            projectId: routedCloud.projectId,
+            defaultBranch:
+              routedCloudDefaultRefQuery.data?.refs.find((ref) => ref.isDefault)?.name ?? null,
+            branchCheck: cloudBranchCheck({
+              branch: routedCloudBranch,
+              ref:
+                routedCloudRefQuery.data?.refs.find(
+                  (ref) => ref.name === routedCloudBranch && ref.isRemote !== true,
+                ) ?? null,
+              status: gitStatusQuery.data ?? null,
+            }),
+          }
+        : null;
   const startFromOrigin = isLocalDraftThread
     ? (draftThread?.startFromOrigin ?? false)
     : canOverrideServerThreadEnvMode
@@ -3087,6 +3099,7 @@ export default function ChatView(props: ChatViewProps) {
     activeProject,
     activeEnvironmentUnavailable,
     defaultRuntimeMode,
+    cloudThread: serverThread?.source.sandboxId !== undefined,
   });
   const { onSend } = useComposerSend({
     environmentId,

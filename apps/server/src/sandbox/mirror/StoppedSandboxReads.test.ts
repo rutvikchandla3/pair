@@ -69,6 +69,7 @@ const layerReads = (
   contexts: ReadonlyMap<ThreadId, ProjectionCheckpointContext>,
   sleepSnapshotAt: DateTime.Utc | null = null,
   state: OrchestrationV2Sandbox["state"] = "sleeping",
+  shell: Partial<OrchestrationV2ThreadShell> = { worktreePath: checkout },
 ) =>
   StoppedSandboxReads.layer.pipe(
     Layer.provide(
@@ -81,8 +82,7 @@ const layerReads = (
             ownerThreadId: [...contexts.keys()][0],
             sleepSnapshotAt,
           } as OrchestrationV2Sandbox),
-        getThreadShell: () =>
-          Effect.succeed({ worktreePath: checkout } as OrchestrationV2ThreadShell),
+        getThreadShell: () => Effect.succeed(shell as OrchestrationV2ThreadShell),
         listSandboxThreads: () =>
           Effect.succeed(
             [...contexts.keys()].map((threadId) => ({
@@ -104,6 +104,7 @@ const seedMirror = Effect.fn("StoppedSandboxReadsTest.seedMirror")(function* (
     readonly files: Readonly<Record<string, string | Uint8Array>>;
   }>,
   fetched: ReadonlyArray<string>,
+  mirrorProjectId: ProjectId = projectId,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -133,7 +134,7 @@ const seedMirror = Effect.fn("StoppedSandboxReadsTest.seedMirror")(function* (
     });
     yield* git(source, ["update-ref", commit.ref, "HEAD"]);
   }
-  const gitDir = CheckpointMirror.mirrorGitDir(path, stateDir, projectId);
+  const gitDir = CheckpointMirror.mirrorGitDir(path, stateDir, mirrorProjectId);
   yield* fs.makeDirectory(gitDir, { recursive: true });
   yield* git(gitDir, ["init", "--bare", "--quiet", gitDir]);
   if (fetched.length > 0) {
@@ -431,5 +432,98 @@ it.effect("diffs the sleep snapshot against its branch tip, after its disk expir
     // The base branch never reaches the mirror.
     const branch = yield* reads.diffPreview(view, { cwd: checkout, sourceKind: "branch-range" });
     assert.deepStrictEqual(branch.sources, []);
+  }).pipe(Effect.provide(layerBase), Effect.scoped),
+);
+
+it.effect("reads a sleeping workspace folder from each repository's mirror under its name", () =>
+  Effect.gen(function* () {
+    const folder = `/t3-sandbox/${sandboxId}/worktrees/feature`;
+    const roots = [
+      { projectId: ProjectId.make("project:stopped-reads:api"), name: "api" },
+      { projectId: ProjectId.make("project:stopped-reads:web"), name: "web" },
+    ];
+    const snapshotRef = CheckpointMirror.sandboxSnapshotRef(firstThread);
+    const files = [{ "src/a.ts": "export const api = 'hello';\n" }, { "README.md": "hello web\n" }];
+    for (const [index, root] of roots.entries()) {
+      yield* seedMirror(
+        [{ ref: snapshotRef, date: "2026-01-02T00:00:00Z", files: files[index]! }],
+        [snapshotRef],
+        root.projectId,
+      );
+    }
+    const reads = yield* StoppedSandboxReads.StoppedSandboxReads.pipe(
+      Effect.provide(
+        layerReads(
+          new Map([[firstThread, contextFor([])]]),
+          DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
+          "sleeping",
+          { worktreePath: folder, roots },
+        ),
+      ),
+    );
+    const view = yield* reads.viewFor(folder, sandboxId);
+    assert.deepStrictEqual(
+      (yield* reads.list(view, { cwd: folder })).entries.map(
+        (entry) => `${entry.kind}:${entry.path}`,
+      ),
+      [
+        "directory:api",
+        "directory:api/src",
+        "file:api/src/a.ts",
+        "directory:web",
+        "file:web/README.md",
+      ],
+    );
+    assert.deepStrictEqual(
+      (yield* reads.list(view, { cwd: folder, directoryPath: "api/src" })).entries,
+      [{ path: "api/src/a.ts", kind: "file" }],
+    );
+    const unrouted = yield* reads
+      .list(view, { cwd: folder, directoryPath: "docs" })
+      .pipe(Effect.flip);
+    assert.strictEqual(unrouted._tag, "WorkspaceEntriesReadDirectoryError");
+
+    const file = yield* reads.readFile(view, { cwd: folder, relativePath: "web/README.md" });
+    assert.deepStrictEqual([file.relativePath, file.contents], ["web/README.md", "hello web\n"]);
+    const outside = yield* reads
+      .readFile(view, { cwd: folder, relativePath: "docs/README.md" })
+      .pipe(Effect.flip);
+    assert.strictEqual(outside._tag, "WorkspacePathOutsideRootError");
+
+    const contents = yield* reads.searchContents(view, {
+      cwd: folder,
+      query: "hello",
+      limit: 10,
+      caseSensitive: false,
+      wholeWord: false,
+      useRegex: false,
+    });
+    assert.deepStrictEqual(
+      contents.matches.map((match) => match.path),
+      ["api/src/a.ts", "web/README.md"],
+    );
+    assert.deepStrictEqual(
+      (yield* reads.browse(view, { cwd: folder, partialPath: "./" })).entries,
+      [
+        { name: "api", fullPath: `${folder}/api` },
+        { name: "web", fullPath: `${folder}/web` },
+      ],
+    );
+    assert.deepStrictEqual(
+      (yield* reads.browse(view, { cwd: folder, partialPath: "./api/" })).entries,
+      [{ name: "src", fullPath: `${folder}/api/src` }],
+    );
+    // The folder is no repository; each repository's changes are read at its own cwd.
+    assert.deepStrictEqual((yield* reads.diffPreview(view, { cwd: folder })).sources, []);
+
+    const api = yield* reads.viewFor(`${folder}/api`, sandboxId);
+    assert.strictEqual(api.prefix, "");
+    const changes = yield* reads.diffPreview(api, { cwd: `${folder}/api` });
+    assert.deepStrictEqual(
+      changes.sources.map((source) => [source.kind, source.files?.map((entry) => entry.path)]),
+      [["working-tree", ["src/a.ts"]]],
+    );
+    const unknown = yield* reads.viewFor(`${folder}/docs`, sandboxId).pipe(Effect.flip);
+    assert.strictEqual(unknown._tag, "SandboxAsleep");
   }).pipe(Effect.provide(layerBase), Effect.scoped),
 );

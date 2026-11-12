@@ -1456,7 +1456,11 @@ export function planComposerTurn(input: {
       : input.workspace === true
         ? WORKSPACE_WORKTREE_BASE_REF
         : input.activeThreadBranch,
-    baseRefForCloud: shouldLaunchCloud ? input.activeThreadBranch : null,
+    baseRefForCloud: !shouldLaunchCloud
+      ? null
+      : input.workspace === true
+        ? WORKSPACE_WORKTREE_BASE_REF
+        : input.activeThreadBranch,
     compactBeforeSend,
     turnDispatchMode:
       compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : input.dispatchMode,

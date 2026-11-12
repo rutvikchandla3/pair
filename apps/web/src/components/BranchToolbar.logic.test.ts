@@ -173,14 +173,30 @@ describe("resolveEffectiveEnvMode", () => {
       "local",
     ],
     [
-      "a workspace draft that holds a local or cloud mode",
+      "a workspace draft that holds a local mode",
       { draftThreadEnvMode: "local", workspace: true },
       "worktree",
     ],
     [
       "a workspace draft that carried another thread's worktree",
-      { activeWorktreePath: "/repo/.t3/worktrees/a", draftThreadEnvMode: "cloud", workspace: true },
+      { activeWorktreePath: "/repo/.t3/worktrees/a", draftThreadEnvMode: "local", workspace: true },
       "worktree",
+    ],
+    ["a workspace cloud draft", { draftThreadEnvMode: "cloud", workspace: true }, "cloud"],
+    [
+      "a workspace cloud draft after Cloud went away",
+      { draftThreadEnvMode: "cloud", cloudAvailable: false, workspace: true },
+      "worktree",
+    ],
+    [
+      "a workspace draft on a cloud-launch server",
+      { draftThreadEnvMode: "worktree", cloudLaunch: true, workspace: true },
+      "cloud",
+    ],
+    [
+      "a workspace thread on a machine",
+      { hasServerThread: true, sandboxId, workspace: true },
+      "cloud",
     ],
     [
       "a workspace thread before its folder exists",
@@ -207,6 +223,15 @@ describe("resolveCloudEnvModeItem", () => {
       },
     },
   } as const;
+  const workspaceProject = {
+    environmentId: mac,
+    repositoryIdentity: null,
+    roots: [{ projectId: ProjectId.make("api"), name: "api" }],
+  } as const;
+  const createWorkspace = {
+    title: "Shop",
+    roots: [{ projectId: ProjectId.make("cloud-api"), name: "api" }],
+  };
   const option = (
     environmentId: EnvironmentId,
     label: string,
@@ -283,6 +308,48 @@ describe("resolveCloudEnvModeItem", () => {
             reason: "Add acme/app to Pair Cloud first.",
           },
         ],
+        value: "cloud",
+      },
+    ],
+    [
+      "Create on Pair Cloud for a workspace whose repositories are all there",
+      {
+        project: workspaceProject,
+        cloud: {
+          kind: "targets",
+          targets: [{ ...option(cloud, "Pair Cloud", null), createWorkspace }],
+        },
+      },
+      {
+        disabledReason: "Create this workspace on Pair Cloud first.",
+        only: false,
+        rows: [
+          {
+            value: "create:cloud",
+            label: "Create on Pair Cloud",
+            action: {
+              kind: "create",
+              environmentId: cloud,
+              label: "Pair Cloud",
+              workspace: createWorkspace,
+            },
+            disabled: false,
+            reason: "Create this workspace on Pair Cloud from its repositories there.",
+          },
+        ],
+        value: "cloud",
+      },
+    ],
+    [
+      "Cloud disabled for a workspace with repositories missing there",
+      {
+        project: workspaceProject,
+        cloud: targets(option(cloud, "Pair Cloud", null, "Add acme/web to Pair Cloud first.")),
+      },
+      {
+        disabledReason: "Add acme/web to Pair Cloud first.",
+        only: false,
+        rows: [cloudRow("Add acme/web to Pair Cloud first.")],
         value: "cloud",
       },
     ],

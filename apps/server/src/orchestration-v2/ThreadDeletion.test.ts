@@ -305,26 +305,27 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
     const checkpointRefs = [0, 1].map((ordinal) =>
       CheckpointRef.make(`refs/t3/delete-plan/${ordinal}`),
     );
+    const cloudPlanInput: OrchestrationV2ThreadProjection = {
+      ...projection,
+      thread: { ...projection.thread, sandboxId: SandboxId.make("sbx_00000000000000000001") },
+      checkpoints: checkpointRefs.map((ref, ordinal) => ({
+        id: CheckpointId.make(`checkpoint:delete-plan:${ordinal}`),
+        threadId,
+        scopeId: CheckpointScopeId.make("scope:delete-plan"),
+        runId: null,
+        nodeId: NodeId.make("node:delete-plan"),
+        parentCheckpointId: null,
+        ordinalWithinScope: ordinal,
+        appRunOrdinal: null,
+        ref,
+        status: ordinal === 0 ? ("ready" as const) : ("stale" as const),
+        files: [],
+        capturedAt: createdAt,
+      })),
+    };
     const cloudPlan = yield* planThreadDeletion({
       command,
-      projection: {
-        ...projection,
-        thread: { ...projection.thread, sandboxId: SandboxId.make("sbx_00000000000000000001") },
-        checkpoints: checkpointRefs.map((ref, ordinal) => ({
-          id: CheckpointId.make(`checkpoint:delete-plan:${ordinal}`),
-          threadId,
-          scopeId: CheckpointScopeId.make("scope:delete-plan"),
-          runId: null,
-          nodeId: NodeId.make("node:delete-plan"),
-          parentCheckpointId: null,
-          ordinalWithinScope: ordinal,
-          appRunOrdinal: null,
-          ref,
-          status: ordinal === 0 ? ("ready" as const) : ("stale" as const),
-          files: [],
-          capturedAt: createdAt,
-        })),
-      },
+      projection: cloudPlanInput,
       attachmentIds: [],
       now: deletedAt,
       idAllocator: yield* IdAllocator.IdAllocatorV2,
@@ -334,5 +335,26 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
       projectId: ProjectId.make("project:delete-plan"),
       checkpointRefs,
     });
+
+    // A workspace thread's refs live in each root project's mirror.
+    const roots = ["api", "web"].map((name) => ({
+      projectId: ProjectId.make(`project:delete-plan:${name}`),
+      name,
+    }));
+    const workspacePlan = yield* planThreadDeletion({
+      command,
+      projection: { ...cloudPlanInput, thread: { ...cloudPlanInput.thread, roots } },
+      attachmentIds: [],
+      now: deletedAt,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+    });
+    assert.deepEqual(
+      workspacePlan.effects.map((effect) => effect.request).slice(-2),
+      roots.map((root) => ({
+        type: "sandbox.mirror.forget-thread",
+        projectId: root.projectId,
+        checkpointRefs,
+      })),
+    );
   }).pipe(Effect.provide(IdAllocator.layer)),
 );

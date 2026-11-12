@@ -1,6 +1,7 @@
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectId,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectReadFileInput,
@@ -43,13 +44,25 @@ export interface StoppedView {
   readonly prefix: string;
   /** The cwd the client asked about. */
   readonly cwd: string;
+  /**
+   * A workspace folder's view: each repository's own view at `<cwd>/<name>`, those the mirrors
+   * hold. Reads combine them under `<name>/` and route a path by its first segment; the other
+   * fields are the first repository's, with no commit of their own.
+   */
+  readonly repositories?: ReadonlyArray<{ readonly name: string; readonly view: StoppedView }>;
 }
 
 export class StoppedSandboxReads extends Context.Service<
   StoppedSandboxReads,
   {
-    /** The head context saved with the thread's last sleep snapshot; null when there is none. */
-    readonly headContext: (threadId: ThreadId) => Effect.Effect<SandboxHeadContext | null>;
+    /**
+     * The head context saved with the thread's last sleep snapshot; null when there is none. A
+     * workspace thread saves one per repository, read with that root's project.
+     */
+    readonly headContext: (
+      threadId: ThreadId,
+      projectId?: ProjectId,
+    ) => Effect.Effect<SandboxHeadContext | null>;
     /** The view for a cwd under /t3-sandbox/<id>/; fails with SandboxAsleep when none exists. */
     readonly viewFor: (
       cwd: string,

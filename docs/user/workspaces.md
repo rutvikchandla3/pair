@@ -66,9 +66,26 @@ Everyone on the server sees every workspace, as with projects.
 
 You can't delete a project while a workspace uses it. Remove it from the workspace first.
 
+## Workspaces in Cloud
+
+A workspace thread can run on a [cloud machine](./cloud.md). One machine holds every repository,
+in the same folder layout, and each repository starts from its own default branch.
+
+- **On Pair Cloud,** create a workspace from the projects already added there. Every thread in it
+  is a cloud thread.
+- **From your Mac,** choose **Cloud** for a workspace thread. Pair uses the Pair Cloud workspace
+  with the same repositories, whatever their order or folder names. If there is none and every
+  repository is already a project on Pair Cloud, **Create on Pair Cloud** makes it. If some are
+  missing, Cloud says which repositories to add there first.
+- Every repository must be on github.com. The machine can push to the thread's repositories and
+  their forks, and to nothing else. Each repository uses its own git credential, so connect GitHub
+  for every organisation the workspace spans.
+- While the machine sleeps, diffs, files and pull requests stay readable. When it wakes, a
+  repository whose checkout was lost is rebuilt from the last saved copy, and the thread says
+  which repositories were rebuilt and from where.
+
 ## Not supported yet
 
 - The diff panel's **Changes**, **Uncommitted** and **Commits** views. A workspace thread shows
   turn diffs only.
-- Cloud. A workspace thread can't run in Cloud or move between your Mac and Pair Cloud, and a Pair
-  Cloud server has no workspaces.
+- Moving a workspace thread between your Mac and Pair Cloud.

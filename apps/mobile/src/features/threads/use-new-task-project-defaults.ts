@@ -74,9 +74,8 @@ export function useNewTaskProjectDefaults(
   const projectHasThreads = useProjectHasThreads(project);
   const isTeamMode = useIsTeamMode(project?.environmentId ?? null);
   const cloudLaunch = serverConfig?.environment.capabilities.cloudLaunch === true;
-  // A workspace's repositories are on this machine; the server refuses it in the cloud.
   const cloud: NewTaskCloud =
-    project === null || workspace
+    project === null
       ? NO_NEW_TASK_CLOUD
       : resolveNewTaskCloud({
           cloudTarget: resolveCloudTarget({
@@ -95,10 +94,10 @@ export function useNewTaskProjectDefaults(
   // A Pair Cloud project starts in the cloud; a routed one only when the user picks Cloud.
   const defaultWorkspaceMode: NewTaskWorkspaceMode = isScratch
     ? "local"
-    : workspace
-      ? "worktree"
-      : cloud.available && !cloud.routed
-        ? "cloud"
+    : cloud.available && !cloud.routed
+      ? "cloud"
+      : workspace
+        ? "worktree"
         : resolveNewThreadEnvMode({
             teamDefault: isTeamMode,
             projectSettings,
@@ -114,7 +113,7 @@ export function useNewTaskProjectDefaults(
   return {
     serverConfig,
     isScratch,
-    /** A workspace of several repositories: its tasks start only in new worktrees. */
+    /** A workspace of several repositories: its tasks start in new worktrees or the cloud. */
     workspace,
     projectSettings,
     defaultWorkspaceMode,

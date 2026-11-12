@@ -158,7 +158,7 @@ type NewTaskFlowContextValue = {
   readonly isGitRepo: boolean;
   readonly isGitRepoKnown: boolean;
   readonly canChooseWorkspace: boolean;
-  /** The selected project is a workspace: its tasks start only in new worktrees. */
+  /** The selected project is a workspace: its tasks start in new worktrees or the cloud. */
   readonly isWorkspace: boolean;
   /** The selected project's Cloud entry: its own Pair Cloud, a routed one, or not offered. */
   readonly cloud: NewTaskCloud;
@@ -476,22 +476,24 @@ export function NewTaskFlowProvider(
       : null;
   const linkedEnvironments = useLinkedEnvironments(launchEnvironmentId);
   const teamViewer = useTeamViewer(launchEnvironmentId);
+  // A workspace has no branch to check: each repository starts from its own default branch.
+  const routedBranch = cloudRoute && !isWorkspace ? selectedBranchName : null;
   const routedBranchRefs = useBranches({
-    environmentId: cloudRoute && selectedProject ? selectedProject.environmentId : null,
-    cwd: cloudRoute && selectedBranchName ? selectedProject?.workspaceRoot || null : null,
-    query: selectedBranchName,
+    environmentId: routedBranch !== null && selectedProject ? selectedProject.environmentId : null,
+    cwd: routedBranch !== null ? selectedProject?.workspaceRoot || null : null,
+    query: routedBranch,
   });
   const routedDefaultBranchRef = allBranchRefs.find((branch) => branch.isDefault) ?? null;
   const routedDefaultBranch = routedDefaultBranchRef
     ? resolveNewTaskBaseBranchName("cloud", routedDefaultBranchRef)
     : selectedBranchName;
   const cloudBranch =
-    cloudRoute && selectedBranchName
+    routedBranch !== null
       ? cloudBranchCheck({
-          branch: selectedBranchName,
+          branch: routedBranch,
           ref:
             routedBranchRefs.data?.refs.find(
-              (branch) => !branch.isRemote && branch.name === selectedBranchName,
+              (branch) => !branch.isRemote && branch.name === routedBranch,
             ) ?? null,
           status: projectGitStatus.data ?? null,
         })
@@ -906,6 +908,7 @@ export function NewTaskFlowProvider(
         projectTitle: launchProject?.title ?? selectedProject.title,
         ...(launchProject ? { projectCwd: launchProject.workspaceRoot } : {}),
         workspaceMode: mode,
+        ...(isWorkspace ? { workspace: true } : {}),
         ...(mode === "worktree" && workspaceSelection?.pullRequestReference
           ? { pullRequestReference: workspaceSelection.pullRequestReference }
           : {}),
@@ -920,7 +923,7 @@ export function NewTaskFlowProvider(
               routedFrom: {
                 environmentId: selectedProject.environmentId,
                 projectId: selectedProject.id,
-                defaultBranch: routedDefaultBranch ?? branch,
+                defaultBranch: isWorkspace ? branch : (routedDefaultBranch ?? branch),
               },
             }
           : {}),

@@ -3,7 +3,10 @@ import * as NodePath from "node:path";
 
 import {
   GitCommandError,
+  type OrchestrationV2Sandbox,
   type ProjectEntry,
+  type ProjectId,
+  type ProjectRoot,
   type ProjectSearchContentsInput,
   type ProjectSearchContentsResult,
   SandboxAsleep,
@@ -69,6 +72,17 @@ const treePathFor = (view: StoppedView, relativePath: string): string | null => 
 };
 
 const treeIsh = (view: StoppedView, treePath: string) => `${view.commit}:${treePath}`;
+
+/** A path in a workspace folder's view, routed by its first segment to that repository's view. */
+const routeToRepository = (view: StoppedView, relativePath: string) => {
+  const absolute = posix.resolve(view.cwd, relativePath.trim());
+  if (!isInside(view.cwd, absolute) || absolute === view.cwd) return null;
+  const [name, ...rest] = posix.relative(view.cwd, absolute).split("/");
+  const repository = view.repositories?.find((entry) => entry.name === name);
+  return repository === undefined ? null : { ...repository, path: rest.join("/") };
+};
+
+const underRepository = (name: string, path: string) => (path === "" ? name : `${name}/${path}`);
 
 interface TreeEntry {
   readonly type: "blob" | "tree" | "commit";
@@ -173,15 +187,22 @@ const make = Effect.gen(function* () {
     return yield* new SandboxAsleep({ sandboxId, state: yield* sandboxState(sandboxId) });
   });
 
-  const viewFor: StoppedSandboxReads["Service"]["viewFor"] = Effect.fn(
-    "StoppedSandboxReads.viewFor",
-  )(function* (rawCwd, sandboxId) {
-    const cwd = posix.resolve(rawCwd);
-    const sandbox = yield* projection.getSandbox(sandboxId).pipe(Effect.orDie);
-    const asleep = new SandboxAsleep({ sandboxId, state: sandbox?.state ?? "destroyed" });
-    if (sandbox === null) return yield* asleep;
+  /** One repository of a workspace folder: its checkout on the machine and its project's mirror. */
+  interface Repository {
+    readonly folder: string;
+    readonly name: string;
+    readonly projectId: ProjectId;
+  }
 
-    const threads = yield* projection.listSandboxThreads(sandboxId).pipe(Effect.orDie);
+  const repositoryView = Effect.fn("StoppedSandboxReads.repositoryView")(function* (
+    sandbox: OrchestrationV2Sandbox,
+    shells: ReadonlyArray<{ readonly threadId: ThreadId; readonly worktreePath: string | null }>,
+    cwd: string,
+    repository: Repository | null,
+  ) {
+    const asleep = new SandboxAsleep({ sandboxId: sandbox.id, state: sandbox.state });
+    const threads = yield* projection.listSandboxThreads(sandbox.id).pipe(Effect.orDie);
+    const repositoryCwd = repository === null ? null : `${repository.folder}/${repository.name}`;
     const candidates: Array<{
       readonly threadId: ThreadId;
       readonly ref: string;
@@ -191,20 +212,15 @@ const make = Effect.gen(function* () {
     }> = [];
     // Only this sleep's snapshot: an older one may still be in the mirror after a failed capture.
     if (sandbox.sleepSnapshotAt != null) {
-      const checkouts: Array<{ threadId: ThreadId; worktreePath: string | null }> = [];
-      for (const threadId of new Set([
-        sandbox.ownerThreadId,
-        ...threads.map((row) => row.threadId),
-      ])) {
-        const shell = yield* projection.getThreadShell(threadId).pipe(Effect.orDie);
-        checkouts.push({ threadId, worktreePath: shell?.worktreePath ?? null });
-      }
       for (const [worktreePath, threadId] of CheckpointMirror.snapshotNamers(
         sandbox.ownerThreadId,
-        checkouts,
+        shells,
       )) {
-        const scopeCwd = posix.resolve(worktreePath);
-        if (!isInside(scopeCwd, cwd)) continue;
+        const folder = posix.resolve(worktreePath);
+        // A workspace folder's snapshot is one commit per repository, each in its own mirror.
+        const scopeCwd =
+          repository === null ? folder : folder === repository.folder ? repositoryCwd! : null;
+        if (scopeCwd === null || !isInside(scopeCwd, cwd)) continue;
         candidates.push({
           threadId,
           ref: CheckpointMirror.sandboxSnapshotRef(threadId),
@@ -217,7 +233,13 @@ const make = Effect.gen(function* () {
     for (const { threadId } of threads) {
       const context = yield* projection.getCheckpointContext(threadId).pipe(Effect.orDie);
       const scopeCwds = new Map(
-        context.checkpointScopes.map((scope) => [scope.id, posix.resolve(scope.cwd)]),
+        context.checkpointScopes.flatMap((scope) => {
+          const scopeCwd = posix.resolve(scope.cwd);
+          if (repository === null) return scope.roots === undefined ? [[scope.id, scopeCwd]] : [];
+          return scopeCwd === repository.folder && scope.roots?.includes(repository.name) === true
+            ? [[scope.id, repositoryCwd!]]
+            : [];
+        }),
       );
       for (const checkpoint of context.checkpoints) {
         const scopeCwd = scopeCwds.get(checkpoint.scopeId);
@@ -236,7 +258,11 @@ const make = Effect.gen(function* () {
     if (candidates.length === 0) return yield* asleep;
 
     // One for-each-ref: which candidates the mirror holds, and when each was captured.
-    const gitDir = CheckpointMirror.mirrorGitDir(path, stateDir, sandbox.projectId);
+    const gitDir = CheckpointMirror.mirrorGitDir(
+      path,
+      stateDir,
+      repository?.projectId ?? sandbox.projectId,
+    );
     const refs = yield* git(gitDir, "viewFor", [
       "for-each-ref",
       "--format=%(refname)%00%(objectname)%00%(committerdate:unix)",
@@ -279,7 +305,7 @@ const make = Effect.gen(function* () {
     }
     if (best === undefined || bestTip === undefined) return yield* asleep;
     return {
-      sandboxId,
+      sandboxId: sandbox.id,
       source: best.source,
       threadId: best.threadId,
       turn: best.turn,
@@ -287,7 +313,67 @@ const make = Effect.gen(function* () {
       gitDir,
       prefix: posix.relative(best.scopeCwd, cwd),
       cwd,
-    };
+    } satisfies StoppedView;
+  });
+
+  const viewFor: StoppedSandboxReads["Service"]["viewFor"] = Effect.fn(
+    "StoppedSandboxReads.viewFor",
+  )(function* (rawCwd, sandboxId) {
+    const cwd = posix.resolve(rawCwd);
+    const sandbox = yield* projection.getSandbox(sandboxId).pipe(Effect.orDie);
+    const asleep = new SandboxAsleep({ sandboxId, state: sandbox?.state ?? "destroyed" });
+    if (sandbox === null) return yield* asleep;
+
+    const threads = yield* projection.listSandboxThreads(sandboxId).pipe(Effect.orDie);
+    const shells: Array<{
+      readonly threadId: ThreadId;
+      readonly worktreePath: string | null;
+      readonly roots: ReadonlyArray<ProjectRoot> | undefined;
+    }> = [];
+    for (const threadId of new Set([
+      sandbox.ownerThreadId,
+      ...threads.map((row) => row.threadId),
+    ])) {
+      const shell = yield* projection.getThreadShell(threadId).pipe(Effect.orDie);
+      shells.push({ threadId, worktreePath: shell?.worktreePath ?? null, roots: shell?.roots });
+    }
+
+    // A workspace folder holds a repository per root, each read from its root project's mirror.
+    const workspace = shells.find(
+      (shell) =>
+        shell.roots !== undefined &&
+        shell.worktreePath !== null &&
+        isInside(posix.resolve(shell.worktreePath), cwd),
+    );
+    if (workspace === undefined) return yield* repositoryView(sandbox, shells, cwd, null);
+    const folder = posix.resolve(workspace.worktreePath!);
+    const repositories = (workspace.roots ?? []).map((root) => ({
+      folder,
+      name: root.name,
+      projectId: root.projectId,
+    }));
+    if (cwd !== folder) {
+      const name = posix.relative(folder, cwd).split("/")[0];
+      const repository = repositories.find((entry) => entry.name === name);
+      if (repository === undefined) return yield* asleep;
+      return yield* repositoryView(sandbox, shells, cwd, repository);
+    }
+    const views = yield* Effect.forEach(repositories, (repository) =>
+      repositoryView(sandbox, shells, `${folder}/${repository.name}`, repository).pipe(
+        Effect.map((view) => [{ name: repository.name, view }]),
+        Effect.catchTags({ SandboxAsleep: () => Effect.succeed([]) }),
+      ),
+    ).pipe(Effect.map((found) => found.flat()));
+    const first = views[0];
+    if (first === undefined) return yield* asleep;
+    return {
+      ...first.view,
+      commit: "",
+      gitDir: "",
+      prefix: "",
+      cwd,
+      repositories: views,
+    } satisfies StoppedView;
   });
 
   const listTree = (
@@ -314,11 +400,35 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const listEntries = (
+    view: StoppedView,
+  ): Effect.Effect<Array<ProjectEntry>, WorkspaceEntries.WorkspaceEntriesReadDirectoryError> =>
+    view.repositories === undefined
+      ? listTree(view, view.prefix, true).pipe(
+          Effect.map((entries) =>
+            (entries ?? []).map((entry): ProjectEntry => ({
+              path: entry.path,
+              kind: entryKind(entry),
+            })),
+          ),
+        )
+      : Effect.forEach(view.repositories, (repository) =>
+          listEntries(repository.view).pipe(
+            Effect.map((entries) => [
+              { path: repository.name, kind: "directory" as const },
+              ...entries.map((entry) => ({
+                ...entry,
+                path: underRepository(repository.name, entry.path),
+              })),
+            ]),
+          ),
+        ).pipe(Effect.map((entries) => entries.flat()));
+
   /** Every file and folder under cwd, path-sorted and capped like the live index. */
   const listAll = Effect.fn("StoppedSandboxReads.listAll")(function* (view: StoppedView) {
-    const entries = ((yield* listTree(view, view.prefix, true)) ?? [])
-      .map((entry): ProjectEntry => ({ path: entry.path, kind: entryKind(entry) }))
-      .toSorted((left, right) => left.path.localeCompare(right.path));
+    const entries = (yield* listEntries(view)).toSorted((left, right) =>
+      left.path.localeCompare(right.path),
+    );
     return {
       entries: entries.slice(0, MAX_LIST_ENTRIES),
       truncated: entries.length > MAX_LIST_ENTRIES,
@@ -329,13 +439,34 @@ const make = Effect.gen(function* () {
     function* (view, input) {
       if (input.directoryPath === undefined) return yield* listAll(view);
       const directoryPath = input.directoryPath;
-      const treePath = treePathFor(view, directoryPath);
       const notADirectory = new WorkspaceEntries.WorkspaceEntriesReadDirectoryError({
         cwd: view.cwd,
         partialPath: directoryPath,
         parentPath: posix.resolve(view.cwd, directoryPath),
         cause: new Error("Directory must be inside the workspace and outside .git."),
       });
+      if (view.repositories !== undefined) {
+        if (posix.resolve(view.cwd, directoryPath.trim()) === view.cwd) {
+          return {
+            entries: view.repositories.map((repository): ProjectEntry => ({
+              path: repository.name,
+              kind: "directory",
+            })),
+            truncated: false,
+          };
+        }
+        const routed = routeToRepository(view, directoryPath);
+        if (routed === null) return yield* notADirectory;
+        const listed = yield* list(routed.view, { ...input, directoryPath: routed.path });
+        return {
+          ...listed,
+          entries: listed.entries.map((entry) => ({
+            ...entry,
+            path: underRepository(routed.name, entry.path),
+          })),
+        };
+      }
+      const treePath = treePathFor(view, directoryPath);
       if (treePath === null) return yield* notADirectory;
       const children = yield* listTree(view, treePath, false);
       if (children === null) return yield* notADirectory;
@@ -378,7 +509,28 @@ const make = Effect.gen(function* () {
 
   const searchContents: StoppedSandboxReads["Service"]["searchContents"] = Effect.fn(
     "StoppedSandboxReads.searchContents",
-  )(function* (view, input) {
+  )(function* (view, input): Effect.fn.Return<
+    ProjectSearchContentsResult,
+    WorkspaceEntries.WorkspaceEntriesError
+  > {
+    if (view.repositories !== undefined) {
+      const found = yield* Effect.forEach(view.repositories, (repository) =>
+        searchContents(repository.view, input).pipe(
+          Effect.map((result) => ({
+            truncated: result.truncated,
+            matches: result.matches.map((match) => ({
+              ...match,
+              path: underRepository(repository.name, match.path),
+            })),
+          })),
+        ),
+      );
+      const matches = found.flatMap((result) => result.matches);
+      return {
+        matches: matches.slice(0, input.limit),
+        truncated: found.some((result) => result.truncated) || matches.length > input.limit,
+      };
+    }
     const chunks: Array<Uint8Array> = [];
     const run = yield* git(
       view.gitDir,
@@ -454,6 +606,30 @@ const make = Effect.gen(function* () {
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
       const parentPath = endsWithSeparator ? resolved : posix.dirname(resolved);
       const namePrefix = endsWithSeparator ? "" : posix.basename(resolved);
+      if (view.repositories !== undefined) {
+        if (input.partialPath.startsWith("~") || !isInside(view.cwd, parentPath)) {
+          return { parentPath, entries: [] };
+        }
+        if (parentPath === view.cwd) {
+          const lowerPrefix = namePrefix.toLowerCase();
+          return {
+            parentPath,
+            entries: view.repositories
+              .filter((repository) => repository.name.toLowerCase().startsWith(lowerPrefix))
+              .map((repository) => ({
+                name: repository.name,
+                fullPath: posix.join(parentPath, repository.name),
+              }))
+              .toSorted((left, right) => left.name.localeCompare(right.name)),
+          };
+        }
+        const routed = routeToRepository(view, parentPath);
+        if (routed === null) return { parentPath, entries: [] };
+        return yield* browse(routed.view, {
+          ...input,
+          partialPath: endsWithSeparator ? `${resolved}/` : resolved,
+        });
+      }
       // `~` and paths outside the checkout name the stopped machine's disk, which the checkpoint lacks.
       const root = posix.resolve(
         view.cwd,
@@ -497,6 +673,12 @@ const make = Effect.gen(function* () {
     const relativePath = posix.isAbsolute(requested)
       ? posix.relative(view.cwd, requested)
       : requested;
+    if (view.repositories !== undefined) {
+      const routed = requested.startsWith("~") ? null : routeToRepository(view, relativePath);
+      if (routed === null) return yield* outside;
+      const read = yield* readFile(routed.view, { ...input, relativePath: routed.path });
+      return { ...read, relativePath: underRepository(routed.name, read.relativePath) };
+    }
     const treePath = requested.startsWith("~") ? null : treePathFor(view, relativePath);
     if (treePath === null || treePath === view.prefix) return yield* outside;
     const displayPath = posix.relative(view.cwd, posix.resolve(view.cwd, relativePath));
@@ -574,7 +756,9 @@ const make = Effect.gen(function* () {
     const generatedAt = yield* DateTime.now;
     const sourceKind = input.file?.sourceKind ?? input.sourceKind;
     // Branch commits and the base branch never reach the mirror: only the uncommitted changes.
+    // A workspace folder is no repository; clients read each repository's changes at its own cwd.
     if (
+      view.repositories !== undefined ||
       input.commitSha !== undefined ||
       (sourceKind !== undefined && sourceKind !== "working-tree")
     ) {
@@ -670,8 +854,8 @@ const make = Effect.gen(function* () {
   const headContext: StoppedSandboxReads["Service"]["headContext"] = Effect.fn(
     "StoppedSandboxReads.headContext",
   )(
-    function* (threadId) {
-      const { projectId } = yield* projection.getThread(threadId);
+    function* (threadId, rootProjectId) {
+      const projectId = rootProjectId ?? (yield* projection.getThread(threadId)).projectId;
       const gitDir = CheckpointMirror.mirrorGitDir(path, stateDir, projectId);
       const blob = yield* git(gitDir, "headContext", [
         "cat-file",

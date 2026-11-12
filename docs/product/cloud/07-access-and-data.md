@@ -113,7 +113,9 @@ the checkout stays.
 `<thread>` is the base64url thread id (`sandboxThreadRefPrefix`). Checkpoint refs keep their original
 names. Scope ids embed the thread id, and a fork gets its own scope, so threads can't collide, and
 the diff code can use the names it computes today. Branches go under the thread's own namespace
-because two threads can use the same branch name.
+because two threads can use the same branch name. A workspace thread has one repository per root,
+so each ref above lives once per root, in that root project's mirror, and every read and rebuild
+works per repository.
 
 A new mirror is a `git clone --bare --local --template=` of the checkout, renamed into place when
 done. That hardlinks the existing objects and leaves no hooks. Don't use `alternates`: a `git gc` in

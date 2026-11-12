@@ -3,6 +3,7 @@ import type { RunnerOpsCheckpointCaptureResult } from "@t3tools/contracts/runner
 import * as Effect from "effect/Effect";
 
 import * as CheckpointStore from "./CheckpointStore.ts";
+import type { CheckpointStoreError } from "./Errors.ts";
 import { isGitImport, parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 
 // The git half of a checkpoint capture. The server runs it for local workspaces and the runner
@@ -17,9 +18,29 @@ export interface CheckpointCaptureWarning {
 export interface TurnCapture {
   readonly status: RunnerOpsCheckpointCaptureResult["status"];
   readonly commitOid: string | null;
+  readonly roots?: CheckpointStore.RootCommits;
   readonly files: ReadonlyArray<OrchestrationV2CheckpointFileSummary>;
   readonly warnings: ReadonlyArray<CheckpointCaptureWarning>;
 }
+
+/** With roots, every root's commit too; `commitOid` is the first captured one. */
+const capture = Effect.fn("CheckpointCapture.capture")(function* (
+  store: CheckpointStore.CheckpointStore["Service"],
+  input: CheckpointStore.CaptureCheckpointInput,
+): Effect.fn.Return<
+  { readonly commitOid: string | null; readonly roots?: CheckpointStore.RootCommits },
+  CheckpointStoreError
+> {
+  const { roots } = input;
+  if (roots === undefined) {
+    return { commitOid: yield* store.captureCheckpoint(input) };
+  }
+  const commits = yield* store.captureRoots({ ...input, roots });
+  return {
+    commitOid: commits.find((root) => root.commitOid !== null)?.commitOid ?? null,
+    roots: commits,
+  };
+});
 
 export const isGitCheckpointable = (cwd: string, roots?: ReadonlyArray<string>) =>
   CheckpointStore.CheckpointStore.use((store) => store.isGitRepository(cwd, roots)).pipe(
@@ -39,8 +60,8 @@ export const captureBaseline = Effect.fn("CheckpointCapture.captureBaseline")(fu
   if (yield* store.hasCheckpointRef(input)) {
     return { status: "ready" as const, commitOid: null };
   }
-  return yield* store.captureCheckpoint({ ...input, keepExisting: true }).pipe(
-    Effect.map((commitOid) => ({ status: "ready" as const, commitOid })),
+  return yield* capture(store, { ...input, keepExisting: true }).pipe(
+    Effect.map((captured) => ({ status: "ready" as const, ...captured })),
     Effect.catchTags({
       VcsUnsupportedOperationError: () =>
         Effect.succeed({ status: "missing" as const, commitOid: null }),
@@ -72,18 +93,20 @@ export const captureTurn = Effect.fn("CheckpointCapture.captureTurn")(function* 
     return finish({ status: "missing", commitOid: null, files: [] });
   }
 
-  const captured = yield* store
-    .captureCheckpoint({ cwd: input.cwd, roots: input.roots, checkpointRef: input.checkpointRef })
-    .pipe(
-      Effect.map((commitOid) => ({ status: "ready" as const, commitOid })),
-      Effect.catchTags({
-        VcsUnsupportedOperationError: () =>
-          Effect.succeed({ status: "missing" as const, commitOid: null }),
-      }),
-      Effect.catch(
-        warn("capture-failed", input.checkpointRef, { status: "error" as const, commitOid: null }),
-      ),
-    );
+  const captured = yield* capture(store, {
+    cwd: input.cwd,
+    roots: input.roots,
+    checkpointRef: input.checkpointRef,
+  }).pipe(
+    Effect.map((result) => ({ status: "ready" as const, ...result })),
+    Effect.catchTags({
+      VcsUnsupportedOperationError: () =>
+        Effect.succeed({ status: "missing" as const, commitOid: null }),
+    }),
+    Effect.catch(
+      warn("capture-failed", input.checkpointRef, { status: "error" as const, commitOid: null }),
+    ),
+  );
   if (captured.status !== "ready") {
     return finish({ ...captured, files: [] });
   }
@@ -134,5 +157,5 @@ export const captureTurn = Effect.fn("CheckpointCapture.captureTurn")(function* 
       )
     : [];
 
-  return finish({ status: "ready", commitOid: captured.commitOid, files });
+  return finish({ ...captured, files });
 });

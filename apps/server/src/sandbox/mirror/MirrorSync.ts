@@ -78,13 +78,16 @@ export class MirrorSyncError extends Schema.TaggedError<MirrorSyncError>()("Mirr
 export class MirrorSync extends Context.Service<
   MirrorSync,
   {
-    /** Pulls these refs and the thread's branch into the mirror; returns the mirror's project. */
+    /**
+     * Pulls these refs and the thread's branch into the mirror; returns the mirrors' projects. A
+     * workspace thread's `<cwd>/<root name>` goes into its root project's mirror under the same names.
+     */
     readonly sync: (input: {
       readonly threadId: ThreadId;
-      /** A checkout on the thread's sandbox host. */
+      /** A checkout on the thread's sandbox host, or a workspace thread's folder there. */
       readonly cwd: string;
       readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
-    }) => Effect.Effect<ProjectId, MirrorSyncError>;
+    }) => Effect.Effect<ReadonlyArray<ProjectId>, MirrorSyncError>;
     /**
      * Rebuilds the thread's worktree at `worktreePath` from the mirror's copy of its branch and,
      * when it sits on that branch's tip, its sleep snapshot (in the working tree, not the index).
@@ -119,7 +122,10 @@ export class MirrorSync extends Context.Service<
       MirrorSyncError,
       Scope.Scope
     >;
-    /** Saves the thread's branch, upstream and remotes for PR discovery while it sleeps. */
+    /**
+     * Saves the thread's branch, upstream and remotes for PR discovery while it sleeps; a
+     * workspace thread's, per repository, into each root project's mirror.
+     */
     readonly recordHead: (input: {
       readonly threadId: ThreadId;
       readonly cwd: string;
@@ -141,6 +147,19 @@ const previousOrdinalRefs = (refs: ReadonlyArray<string>) => {
 };
 
 type BundleOutcome = "written" | "empty" | "missing-prerequisite";
+
+const repositoriesOf = (
+  thread: {
+    readonly projectId: ProjectId;
+    readonly roots?:
+      | ReadonlyArray<{ readonly projectId: ProjectId; readonly name: string }>
+      | undefined;
+  },
+  cwd: string,
+) =>
+  thread.roots === undefined
+    ? [{ projectId: thread.projectId, cwd }]
+    : thread.roots.map((root) => ({ projectId: root.projectId, cwd: `${cwd}/${root.name}` }));
 
 export const make = Effect.fn("MirrorSync.make")(function* (
   options: { readonly maxBundleBytes?: number } = {},
@@ -305,23 +324,22 @@ export const make = Effect.fn("MirrorSync.make")(function* (
     );
   };
 
-  const sync: MirrorSync["Service"]["sync"] = Effect.fn("MirrorSync.sync")(function* ({
-    threadId,
-    cwd,
-    checkpointRefs,
+  const syncRepository = Effect.fn("MirrorSync.syncRepository")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly branch: string | null;
+    readonly host: WorkspaceHost;
+    readonly cwd: string;
+    readonly projectId: ProjectId;
+    readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
   }) {
+    const { threadId, host, cwd, projectId, checkpointRefs } = input;
     const importFailed = failWith(threadId, "import-failed");
-    const thread = yield* projections.getThread(threadId).pipe(Effect.mapError(importFailed));
-    const host = yield* hosts
-      .forPath(cwd)
-      .pipe(Effect.mapError(failWith(threadId, "sandbox-unavailable")));
-    const { projectId } = thread;
     yield* mirror.ensure(projectId).pipe(Effect.mapError(importFailed));
 
     // The server picks every ref name; the sandbox only produces bytes (06 §7).
     const branchTarget = CheckpointMirror.sandboxBranchRef(threadId);
     const targets = new Map<string, string>(checkpointRefs.map((ref) => [ref, ref]));
-    if (thread.branch !== null) targets.set(`refs/heads/${thread.branch}`, branchTarget);
+    if (input.branch !== null) targets.set(`refs/heads/${input.branch}`, branchTarget);
 
     const sandboxTips = yield* readSandboxTips(threadId, host, cwd, [...targets.keys()]);
     const previous = previousOrdinalRefs(checkpointRefs);
@@ -376,6 +394,22 @@ export const make = Effect.fn("MirrorSync.make")(function* (
     yield* mirror.updateRefs(projectId, updates).pipe(Effect.mapError(importFailed));
     return projectId;
   }, Effect.scoped);
+
+  const sync: MirrorSync["Service"]["sync"] = Effect.fn("MirrorSync.sync")(function* ({
+    threadId,
+    cwd,
+    checkpointRefs,
+  }) {
+    const thread = yield* projections
+      .getThread(threadId)
+      .pipe(Effect.mapError(failWith(threadId, "import-failed")));
+    const host = yield* hosts
+      .forPath(cwd)
+      .pipe(Effect.mapError(failWith(threadId, "sandbox-unavailable")));
+    return yield* Effect.forEach(repositoriesOf(thread, cwd), (repository) =>
+      syncRepository({ threadId, branch: thread.branch, host, checkpointRefs, ...repository }),
+    );
+  });
 
   const bundleThread: MirrorSync["Service"]["bundleThread"] = Effect.fn("MirrorSync.bundleThread")(
     function* ({ threadId, projectId, prerequisites }) {
@@ -526,15 +560,28 @@ export const make = Effect.fn("MirrorSync.make")(function* (
       const importFailed = failWith(threadId, "import-failed");
       const thread = yield* projections.getThread(threadId).pipe(Effect.mapError(importFailed));
       if (thread.branch === null) return;
+      const { branch } = thread;
       const host = yield* hosts
         .forPath(cwd)
         .pipe(Effect.mapError(failWith(threadId, "sandbox-unavailable")));
-      const head = yield* readHeadContext(threadId, host, cwd, thread.branch);
-      if (head === null) return;
-      const json = yield* encodeHeadContext(head).pipe(Effect.mapError(importFailed));
-      yield* mirror
-        .writeBlobRef(thread.projectId, CheckpointMirror.sandboxHeadRef(threadId), json)
-        .pipe(Effect.mapError(importFailed));
+      yield* Effect.forEach(repositoriesOf(thread, cwd), (repository) =>
+        readHeadContext(threadId, host, repository.cwd, branch).pipe(
+          Effect.flatMap((head) =>
+            head === null
+              ? Effect.void
+              : encodeHeadContext(head).pipe(
+                  Effect.flatMap((json) =>
+                    mirror.writeBlobRef(
+                      repository.projectId,
+                      CheckpointMirror.sandboxHeadRef(threadId),
+                      json,
+                    ),
+                  ),
+                  Effect.mapError(importFailed),
+                ),
+          ),
+        ),
+      );
     },
   );
 

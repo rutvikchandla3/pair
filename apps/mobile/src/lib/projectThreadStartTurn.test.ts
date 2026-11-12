@@ -1,3 +1,4 @@
+import { WORKSPACE_WORKTREE_BASE_REF } from "@t3tools/client-runtime/state/workspaces";
 import { ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -127,5 +128,17 @@ describe("buildProjectThreadStartTurnInput", () => {
     expect(
       buildProjectThreadStartTurnInput({ ...routed, branch: "main" }).bootstrap.prepareCloud,
     ).toEqual({ baseRef: "main" });
+    // A workspace's branch is named by the server; each repository starts from its own default.
+    expect(
+      buildProjectThreadStartTurnInput({
+        ...routed,
+        workspace: true,
+        branch: WORKSPACE_WORKTREE_BASE_REF,
+        routedFromDefaultBranch: WORKSPACE_WORKTREE_BASE_REF,
+      }).bootstrap,
+    ).toEqual({
+      createThread: expect.objectContaining({ branch: null, worktreePath: null }),
+      prepareCloud: { baseRef: WORKSPACE_WORKTREE_BASE_REF },
+    });
   });
 });

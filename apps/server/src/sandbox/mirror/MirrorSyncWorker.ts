@@ -55,6 +55,12 @@ const make = Effect.gen(function* () {
   const synced = new Set<ProjectId>();
   const maintainedAt = new Map<ProjectId, number>();
 
+  // A workspace thread's repositories each sync into their own root project's mirror.
+  const mirrorsOf = (thread: {
+    readonly projectId: ProjectId;
+    readonly roots?: ReadonlyArray<{ readonly projectId: ProjectId }> | undefined;
+  }) => thread.roots?.map((root) => root.projectId) ?? [thread.projectId];
+
   const bounded = (threadId: ThreadId) =>
     Effect.timeoutOrElse({
       duration: SYNC_TIMEOUT,
@@ -68,7 +74,11 @@ const make = Effect.gen(function* () {
   }) =>
     mirrorSync.sync(input).pipe(
       bounded(input.threadId),
-      Effect.tap((projectId) => Effect.sync(() => synced.add(projectId))),
+      Effect.tap((projectIds) =>
+        Effect.sync(() => {
+          for (const projectId of projectIds) synced.add(projectId);
+        }),
+      ),
     );
 
   /** True once the mirror holds every ready ref; false keeps it pending without a log. */
@@ -84,9 +94,11 @@ const make = Effect.gen(function* () {
       if (sandboxIdFromPath(cwd) === undefined) continue;
       refsByCwd.set(cwd, [...(refsByCwd.get(cwd) ?? []), checkpoint.ref]);
     }
-    const held = yield* mirror.tips(thread.projectId, [...refsByCwd.values()].flat());
+    const held = yield* Effect.forEach(mirrorsOf(thread), (projectId) =>
+      mirror.tips(projectId, [...refsByCwd.values()].flat()),
+    );
     for (const [cwd, refs] of refsByCwd) {
-      const missing = refs.filter((ref) => !held.has(ref));
+      const missing = refs.filter((ref) => !held.every((tips) => tips.has(ref)));
       if (missing.length === 0) continue;
       const result = yield* syncCheckpoints({ threadId, cwd, checkpointRefs: missing }).pipe(
         Effect.as(true),
@@ -219,7 +231,13 @@ const make = Effect.gen(function* () {
         return Effect.void;
       }
       return projections.getThread(threadId).pipe(
-        Effect.flatMap((thread) => mirror.deleteRefs(thread.projectId, deletedRefs)),
+        Effect.flatMap((thread) =>
+          Effect.forEach(
+            mirrorsOf(thread),
+            (projectId) => mirror.deleteRefs(projectId, deletedRefs),
+            { discard: true },
+          ),
+        ),
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.void

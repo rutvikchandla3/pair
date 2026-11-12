@@ -234,6 +234,10 @@ function makeHarness(options: HarnessOptions = {}) {
   const removeWorkspaceCheckout = vi.fn(
     (_checkout: WorkspaceCheckouts.WorkspaceCheckout) => Effect.void,
   );
+  const writeWorkspaceGuidance = vi.fn(
+    (_input: Parameters<WorkspaceCheckouts.WorkspaceCheckouts["Service"]["writeGuidance"]>[0]) =>
+      Effect.void,
+  );
   const renameWorkspaceBranch = vi.fn(
     (input: Parameters<WorkspaceCheckouts.WorkspaceCheckouts["Service"]["renameBranch"]>[0]) =>
       Effect.succeed({ branch: input.newBranch }),
@@ -250,6 +254,7 @@ function makeHarness(options: HarnessOptions = {}) {
       create: createWorkspaceCheckout,
       remove: removeWorkspaceCheckout,
       renameBranch: renameWorkspaceBranch,
+      writeGuidance: writeWorkspaceGuidance,
     }),
   );
   const layerExternalServices = Layer.mergeAll(
@@ -416,6 +421,7 @@ function makeHarness(options: HarnessOptions = {}) {
     createWorkspaceCheckout,
     removeWorkspaceCheckout,
     renameWorkspaceBranch,
+    writeWorkspaceGuidance,
   };
 }
 
@@ -3666,6 +3672,24 @@ it.effect.each([
       ),
     refusal: { _tag: "CloudLaunchError", reason: "export-unavailable" },
   },
+  {
+    name: "a workspace with a root whose origin isn't on github.com",
+    settings: cloudSettings,
+    projectId: workspaceProjectId,
+    git: {
+      readRemoteUrl: ({ cwd }: { readonly cwd: string }) =>
+        Effect.succeed(cwd === "/other-repo" ? "https://gitlab.com/acme/other.git" : cloudRemote),
+    },
+    refusal: { _tag: "CloudLaunchError", reason: "workspace-root-not-github", root: "other" },
+  },
+  {
+    name: "a workspace moved with its conversation",
+    settings: cloudSettings,
+    projectId: workspaceProjectId,
+    git: { readRemoteUrl: () => Effect.succeed(cloudRemote) },
+    contextExportRef: seedRef,
+    refusal: { _tag: "CloudLaunchError", reason: "workspace-move" },
+  },
 ])(
   "refuses a cloud launch for $name before any thread or machine",
   ({ settings, git, workspace, cloudOnly = true, refusal, ...row }) => {
@@ -3684,6 +3708,7 @@ it.effect.each([
         thread: "thread:launch:cloud-off",
         message: "Fix the build",
         workspace: workspace ?? cloudWorkspace,
+        ...("projectId" in row ? { projectId: row.projectId } : {}),
       });
       const error = yield* Effect.flip(
         launches.launch({
@@ -3766,27 +3791,29 @@ it.effect("reuses the sandbox when a cloud launch is replayed", () => {
   }).pipe(Effect.provide(harness.layer));
 });
 
-// Subprocess fixture: an in-process runner over the hub clones and checks out with real git.
-it.live.each([
-  { source: "a clone of origin", fromImage: false },
-  { source: "a copy of the team image's clone", fromImage: true },
-])("launches a cloud thread end to end: machine, runner hello, $source, release", ({ fromImage }) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const git = yield* GitVcsDriver.GitVcsDriver;
-    const hub = yield* RunnerHub.RunnerHub;
-    const hosts = yield* WorkspaceHosts.WorkspaceHosts;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-cloud-e2e-" });
-    const seed = `${directory}/seed`;
-    const origin = `${directory}/origin.git`;
-    // The loopback runner serves the local disk, so the sandbox root is a folder of ours.
-    const root = `${directory}/sandbox`;
-    yield* fs.makeDirectory(seed);
-    yield* fs.makeDirectory(root);
-    const run = (cwd: string, args: ReadonlyArray<string>) =>
-      git.execute({ operation: "launch-cloud-e2e", cwd, args });
-    yield* run(seed, ["init", "-b", "main"]);
-    yield* run(seed, [
+const layerCloudE2e = GitVcsDriver.layer.pipe(
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-cloud-git-" })),
+  Layer.provideMerge(RunnerHub.layer),
+  Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
+  Layer.provide(RunnerGrants.layer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+
+/** Real git over a loopback runner: repositories with an origin, and a machine for a launch. */
+const makeCloudE2e = Effect.fn("ThreadLaunchServiceTest.makeCloudE2e")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const hub = yield* RunnerHub.RunnerHub;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-cloud-e2e-" });
+  // The loopback runner serves the local disk, so the sandbox root is a folder of ours.
+  const root = `${directory}/sandbox`;
+  yield* fs.makeDirectory(root);
+  const run = (cwd: string, args: ReadonlyArray<string>) =>
+    git.execute({ operation: "launch-cloud-e2e", cwd, args });
+  const commit = (cwd: string, message: string) =>
+    run(cwd, [
       "-c",
       "user.name=T",
       "-c",
@@ -3794,54 +3821,35 @@ it.live.each([
       "commit",
       "--allow-empty",
       "-m",
-      "base",
+      message,
     ]);
+  /** A repository pushed to a bare origin; returns the origin's path and `main`'s commit. */
+  const makeOrigin = Effect.fn("ThreadLaunchServiceTest.makeOrigin")(function* (name: string) {
+    const seed = `${directory}/${name}-seed`;
+    const origin = `${directory}/${name}.git`;
+    yield* fs.makeDirectory(seed);
+    yield* run(seed, ["init", "-b", "main"]);
+    yield* commit(seed, `${name} base`);
     yield* run(seed, ["init", "--bare", origin]);
     yield* run(seed, ["push", origin, "main"]);
-    // The build cloned `main` before this commit, so only a fetch after the copy reaches it.
-    const imageRoot = `${directory}/image`;
-    if (fromImage) {
-      yield* run(seed, [
-        "clone",
-        origin,
-        CloudPreparation.clonePathFor(imageRoot, origin, projectId),
-      ]);
-    }
-    yield* run(seed, [
-      "-c",
-      "user.name=T",
-      "-c",
-      "user.email=t@t",
-      "commit",
-      "--allow-empty",
-      "-m",
-      "after the build",
-    ]);
-    yield* run(seed, ["push", origin, "main"]);
-    const head = (yield* run(seed, ["rev-parse", "HEAD"])).stdout.trim();
-    const succeeds = (cwd: string, args: ReadonlyArray<string>) =>
-      git.execute({ operation: "launch-cloud-e2e", cwd, args, allowNonZeroExit: true }).pipe(
-        Effect.map((result) => result.exitCode === 0),
-        Effect.orElseSucceed(() => false),
-      );
-
-    const fake = yield* FakeComputeDriver.make(ComputeDriverId.make("docker"));
-    const cloneRepository = vi.fn(git.cloneRepository);
-    const harness = makeHarness({
-      cloudOnly: true,
-      serverSettings: cloudSettings,
-      ...(fromImage ? { activeImageBuild: imageBuild() } : {}),
-      createWorktree: (input, options) => git.createWorktree(input, options),
-      git: {
-        readRemoteUrl: () => Effect.succeed(origin),
-        isRepository: (cwd) => succeeds(cwd, ["rev-parse", "--git-dir"]),
-        cloneRepository,
-        fetchRemote: git.fetchRemote,
-        hasCommit: ({ cwd, refName }) =>
-          succeeds(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]),
-      },
-    });
-    const layerSandboxEffects = SandboxEffects.layer.pipe(
+    return { seed, origin };
+  });
+  const head = (cwd: string) =>
+    run(cwd, ["rev-parse", "HEAD"]).pipe(Effect.map((r) => r.stdout.trim()));
+  const succeeds = (cwd: string, args: ReadonlyArray<string>) =>
+    git.execute({ operation: "launch-cloud-e2e", cwd, args, allowNonZeroExit: true }).pipe(
+      Effect.map((result) => result.exitCode === 0),
+      Effect.orElseSucceed(() => false),
+    );
+  const fake = yield* FakeComputeDriver.make(ComputeDriverId.make("docker"));
+  const realGit = {
+    isRepository: (cwd: string) => succeeds(cwd, ["rev-parse", "--git-dir"]),
+    fetchRemote: git.fetchRemote,
+    hasCommit: ({ cwd, refName }: { readonly cwd: string; readonly refName: string }) =>
+      succeeds(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]),
+  };
+  const layerSandboxEffects = (harnessLayer: ReturnType<typeof makeHarness>["layer"]) =>
+    SandboxEffects.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           FakeComputeDriver.layerRegistry(fake.driver),
@@ -3868,8 +3876,83 @@ it.live.each([
           }),
         ),
       ),
-      Layer.provide(harness.layer),
+      Layer.provide(harnessLayer),
     );
+  /** Runs the launch's create effect, boots its runner and attaches it; returns the create call. */
+  const bootMachine = Effect.fn("ThreadLaunchServiceTest.bootMachine")(function* (
+    commandId: CommandId,
+    threadId: ThreadId,
+  ) {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+    // The provision's create effect, as the effect worker runs it, answered by the driver.
+    const create = yield* (yield* SandboxEffects.SandboxEffects)
+      .execute({ type: "sandbox.create", sandboxId, generation: 1 })
+      .pipe(Effect.forkChild);
+    const call = yield* Queue.take(fake.calls);
+    if (call._tag !== "create") return yield* Effect.die(`Expected create, got ${call._tag}`);
+    yield* Deferred.succeed(call.reply, { driverRef: call.input.name, baseImage: null });
+    yield* Fiber.join(create);
+    // The machine boots: its runner enrolls with the bootstrap's secret and says hello.
+    const runner = yield* RunnerHubTesting.makeRunner(call.input.bootstrap.enrollmentSecret);
+    yield* runner.connect();
+    yield* hub.connection(sandboxId);
+    const host = yield* hosts.forPath(`/t3-sandbox/${sandboxId}`);
+    yield* hosts.register(root, host);
+    yield* threads.dispatch({
+      type: "sandbox.runner.attached",
+      commandId: CommandId.make(`sandbox-attached:${sandboxId}:1:boot`),
+      threadId,
+      sandboxId,
+      generation: 1,
+      runnerBootId: "boot",
+    });
+    return { call: call.input, host };
+  });
+  return {
+    git,
+    hosts,
+    directory,
+    root,
+    run,
+    commit,
+    head,
+    makeOrigin,
+    realGit,
+    layerSandboxEffects,
+    bootMachine,
+  };
+});
+
+// Subprocess fixture: an in-process runner over the hub clones and checks out with real git.
+it.live.each([
+  { source: "a clone of origin", fromImage: false },
+  { source: "a copy of the team image's clone", fromImage: true },
+])("launches a cloud thread end to end: machine, runner hello, $source, release", ({ fromImage }) =>
+  Effect.gen(function* () {
+    const e2e = yield* makeCloudE2e();
+    const { seed, origin } = yield* e2e.makeOrigin("app");
+    // The build cloned `main` before this commit, so only a fetch after the copy reaches it.
+    const imageRoot = `${e2e.directory}/image`;
+    if (fromImage) {
+      yield* e2e.run(seed, [
+        "clone",
+        origin,
+        CloudPreparation.clonePathFor(imageRoot, origin, projectId),
+      ]);
+    }
+    yield* e2e.commit(seed, "after the build");
+    yield* e2e.run(seed, ["push", origin, "main"]);
+    const head = yield* e2e.head(seed);
+
+    const cloneRepository = vi.fn(e2e.git.cloneRepository);
+    const harness = makeHarness({
+      cloudOnly: true,
+      serverSettings: cloudSettings,
+      ...(fromImage ? { activeImageBuild: imageBuild() } : {}),
+      createWorktree: (input, options) => e2e.git.createWorktree(input, options),
+      git: { ...e2e.realGit, readRemoteUrl: () => Effect.succeed(origin), cloneRepository },
+    });
 
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -3883,42 +3966,18 @@ it.live.each([
           workspace: cloudWorkspace,
         }),
       );
-      const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
-
-      // The provision's create effect, as the effect worker runs it, answered by the driver.
-      const create = yield* (yield* SandboxEffects.SandboxEffects)
-        .execute({ type: "sandbox.create", sandboxId, generation: 1 })
-        .pipe(Effect.forkChild);
-      const call = yield* Queue.take(fake.calls);
-      if (call._tag !== "create") return yield* Effect.die(`Expected create, got ${call._tag}`);
+      const { call, host } = yield* e2e.bootMachine(commandId, launched.threadId);
       assert.deepEqual(
-        call.input.image,
+        call.image,
         fromImage ? { type: "build", imageRef: "sha256:team-image-4" } : { type: "base" },
       );
-      yield* Deferred.succeed(call.reply, { driverRef: call.input.name, baseImage: null });
-      yield* Fiber.join(create);
-
-      // The machine boots: its runner enrolls with the bootstrap's secret and says hello.
-      const runner = yield* RunnerHubTesting.makeRunner(call.input.bootstrap.enrollmentSecret);
-      yield* runner.connect();
-      yield* hub.connection(sandboxId);
-      const host = yield* hosts.forPath(`/t3-sandbox/${sandboxId}`);
-      yield* hosts.register(root, host);
-      yield* threads.dispatch({
-        type: "sandbox.runner.attached",
-        commandId: CommandId.make(`sandbox-attached:${sandboxId}:1:boot`),
-        threadId: launched.threadId,
-        sandboxId,
-        generation: 1,
-        runnerBootId: "boot",
-      });
       yield* runReaching(launched.threadId, "starting");
 
       const projection = yield* threads.getThreadProjection(launched.threadId);
       const worktreePath = projection.thread.worktreePath ?? "";
-      assert.isTrue(worktreePath.startsWith(`${root}/worktrees/`));
-      assert.equal((yield* hosts.forPath(worktreePath)).id, host.id);
-      assert.equal((yield* run(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), head);
+      assert.isTrue(worktreePath.startsWith(`${e2e.root}/worktrees/`));
+      assert.equal((yield* e2e.hosts.forPath(worktreePath)).id, host.id);
+      assert.equal(yield* e2e.head(worktreePath), head);
       assert.equal(cloneRepository.mock.calls.length, fromImage ? 0 : 1);
       assert.equal(projection.runs[0]?.status, "starting");
       // The released run's turn is queued for the provider, which runs in the worktree there.
@@ -3930,21 +3989,170 @@ it.live.each([
         "provider-turn.start",
       );
     }).pipe(
-      Effect.provideService(CloudPreparation.SandboxCheckoutRoot, () => root),
+      Effect.provideService(CloudPreparation.SandboxCheckoutRoot, () => e2e.root),
       Effect.provideService(CloudPreparation.TeamImageCloneRoot, imageRoot),
-      Effect.provide(Layer.merge(harness.layer, layerSandboxEffects)),
+      Effect.provide(Layer.merge(harness.layer, e2e.layerSandboxEffects(harness.layer))),
     );
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(
-      GitVcsDriver.layer.pipe(
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-cloud-git-" })),
-        Layer.provideMerge(RunnerHub.layer),
-        Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
-        Layer.provide(RunnerGrants.layer),
-        Layer.provide(SqlitePersistence.layerMemory),
-        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      ),
-    ),
-  ),
+  }).pipe(Effect.scoped, Effect.provide(layerCloudE2e)),
+);
+
+// Subprocess fixture: both roots' repositories are cloned and checked out on the machine.
+it.live.each([
+  { name: "checks out every repository in one folder", otherOrigin: true },
+  { name: "removes the repositories it checked out when one fails", otherOrigin: false },
+])("launches a cloud workspace thread: $name", ({ otherOrigin }) =>
+  Effect.gen(function* () {
+    const e2e = yield* makeCloudE2e();
+    const repo = yield* e2e.makeOrigin("repo");
+    const other = yield* e2e.makeOrigin("other");
+    // Roots must be on github.com; the clone reaches the local origin standing in for it.
+    const remotes = new Map([
+      ["/repo", { url: "https://github.com/acme/repo.git", origin: repo.origin }],
+      [
+        "/other-repo",
+        {
+          url: "https://github.com/acme/other.git",
+          origin: otherOrigin ? other.origin : `${e2e.directory}/missing.git`,
+        },
+      ],
+    ]);
+    const originFor = (url: string) =>
+      [...remotes.values()].find((remote) => remote.url === url)?.origin ?? url;
+    // The mirror holds no copy of either repository.
+    const mirrorRestore = vi.fn<MirrorSync.MirrorSync["Service"]["restore"]>(() =>
+      Effect.succeed(null),
+    );
+    const harness = makeHarness({
+      cloudOnly: true,
+      serverSettings: cloudSettings,
+      mirrorRestore,
+      createWorktree: (input, options) => e2e.git.createWorktree(input, options),
+      git: {
+        ...e2e.realGit,
+        readRemoteUrl: ({ cwd }) => Effect.succeed(remotes.get(cwd)?.url ?? null),
+        defaultBranch: () => Effect.succeed("main"),
+        pruneWorktrees: e2e.git.pruneWorktrees,
+        cloneRepository: (input) =>
+          e2e.git.cloneRepository({ ...input, url: originFor(input.url) }),
+      },
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const commandId = CommandId.make("command:launch:cloud-workspace");
+      const launched = yield* launches.launch(
+        launchInput({
+          command: commandId,
+          thread: "thread:launch:cloud-workspace",
+          message: "Fix the build",
+          projectId: workspaceProjectId,
+          workspace: cloudWorkspace,
+        }),
+      );
+      yield* e2e.bootMachine(commandId, launched.threadId);
+      const clonePath = (url: string, id: ProjectId) =>
+        CloudPreparation.clonePathFor(e2e.root, url, id);
+
+      if (!otherOrigin) {
+        yield* runReaching(launched.threadId, "failed");
+        const projection = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(projection.thread.worktreePath, null);
+        const [removed] = harness.removeWorktree.mock.calls.map(([input]) => input);
+        assert.equal(removed?.cwd, clonePath("https://github.com/acme/repo.git", projectId));
+        assert.match(removed?.path ?? "", /\/worktrees\/[^/]+\/repo$/);
+        assert.equal(harness.removeWorktree.mock.calls.length, 1);
+        return;
+      }
+
+      yield* runReaching(launched.threadId, "starting");
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      const folder = projection.thread.worktreePath ?? "";
+      assert.isTrue(folder.startsWith(`${e2e.root}/worktrees/`));
+      assert.deepEqual(projection.thread.roots, workspaceRoots);
+      assert.equal(yield* e2e.head(`${folder}/repo`), yield* e2e.head(repo.seed));
+      assert.equal(yield* e2e.head(`${folder}/other`), yield* e2e.head(other.seed));
+      assert.isTrue(
+        yield* e2e.realGit.isRepository(
+          clonePath("https://github.com/acme/other.git", otherProjectId),
+        ),
+      );
+      assert.deepEqual(harness.writeWorkspaceGuidance.mock.calls, [
+        [{ folder, roots: workspaceRoots }],
+      ]);
+      const setups = harness.runSetup.mock.calls.map(([input]) => input.worktreePath);
+      assert.deepEqual(setups, [`${folder}/repo`, `${folder}/other`, folder]);
+
+      const fs = yield* FileSystem.FileSystem;
+      const branch = projection.thread.branch ?? "";
+      // The fake renames the thread's branch in the projection only; the machine follows here.
+      for (const name of ["repo", "other"]) {
+        yield* e2e.run(`${folder}/${name}`, ["branch", "-m", branch]);
+      }
+      const rebuild = Effect.fn("ThreadLaunchServiceTest.rebuild")(function* (attempt: number) {
+        const calls = harness.runSetup.mock.calls.length;
+        const notices = threads
+          .streamStoredEventsFrom({ threadId: launched.threadId, eventType: "turn-item.updated" })
+          .pipe(
+            Stream.filterMap((stored) =>
+              stored.event.type === "turn-item.updated" &&
+              stored.event.payload.type === "system_notice"
+                ? Result.succeed(stored.event.payload.message)
+                : Result.failVoid,
+            ),
+            Stream.take(attempt),
+            Stream.runCollect,
+          );
+        yield* launches.restoreCheckout({
+          commandId: CommandId.make(`sandbox-restore:${launched.threadId}:${attempt + 1}`),
+          threadId: launched.threadId,
+        });
+        const message = (yield* notices).at(-1);
+        return {
+          message,
+          setups: harness.runSetup.mock.calls.slice(calls).map(([input]) => input.worktreePath),
+        };
+      });
+
+      // One repository gone: only it is rebuilt, from its branch still in the machine's clone.
+      yield* fs.remove(`${folder}/other`, { recursive: true });
+      const one = yield* rebuild(1);
+      assert.equal(
+        one.message,
+        `Rebuilt other/: they were missing from the machine's disk. other/ checked out ${branch} again on the machine; uncommitted changes were not kept. Ignored files and caches were not kept.`,
+      );
+      assert.deepEqual(one.setups, [`${folder}/other`]);
+      assert.equal(yield* e2e.head(`${folder}/other`), yield* e2e.head(other.seed));
+      assert.equal(yield* e2e.head(`${folder}/repo`), yield* e2e.head(repo.seed));
+
+      // A discarded disk: no folder and no clones, so each repository comes back from its remote.
+      yield* fs.remove(e2e.root, { recursive: true });
+      yield* fs.makeDirectory(e2e.root);
+      const all = yield* rebuild(2);
+      assert.equal(
+        all.message,
+        `Rebuilt repo/, other/: the machine's disk was lost. repo/, other/ checked out again from the remote: no copy of ${branch} was saved, so unpushed commits and uncommitted changes were not kept. Ignored files and caches were not kept.`,
+      );
+      assert.deepEqual(all.setups, [`${folder}/repo`, `${folder}/other`, folder]);
+      assert.equal(yield* e2e.head(`${folder}/repo`), yield* e2e.head(repo.seed));
+      assert.equal(yield* e2e.head(`${folder}/other`), yield* e2e.head(other.seed));
+      assert.deepEqual(
+        mirrorRestore.mock.calls.map(([input]) => [input.projectId, input.worktreePath]),
+        [
+          [otherProjectId, `${folder}/other`],
+          [projectId, `${folder}/repo`],
+          [otherProjectId, `${folder}/other`],
+        ],
+      );
+      // The guidance files come back with each rebuild.
+      assert.deepEqual(harness.writeWorkspaceGuidance.mock.calls, [
+        [{ folder, roots: workspaceRoots }],
+        [{ folder, roots: workspaceRoots }],
+        [{ folder, roots: workspaceRoots }],
+      ]);
+    }).pipe(
+      Effect.provideService(CloudPreparation.SandboxCheckoutRoot, () => e2e.root),
+      Effect.provide(Layer.merge(harness.layer, e2e.layerSandboxEffects(harness.layer))),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerCloudE2e)),
 );

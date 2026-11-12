@@ -896,49 +896,68 @@ it.effect("invalidates workspace-derived metadata when a project moves", () =>
   }),
 );
 
-it.effect("refuses a workspace outside the Pair Cloud checkouts on a cloud-only server", () =>
-  Effect.gen(function* () {
-    const service = yield* ProjectService.ProjectService;
-    const { checkoutsDir } = yield* ServerConfig.ServerConfig;
-    const projectId = ProjectId.make("project:pair-cloud");
-    const create = (id: ProjectId, workspaceRoot: string) =>
-      service.create({
-        commandId: CommandId.make(`command:create:${id}`),
-        projectId: id,
-        title: "App",
-        workspaceRoot,
-      });
-    const refusal = <A>(effect: Effect.Effect<A, ProjectService.ProjectServiceError>) =>
-      effect.pipe(
-        Effect.flip,
-        Effect.map((error) => (error._tag === "ProjectOperationError" ? error.operation : error)),
+it.effect(
+  "refuses a project outside the Pair Cloud checkouts on a cloud-only server, not a workspace of them",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { checkoutsDir } = yield* ServerConfig.ServerConfig;
+      const projectId = ProjectId.make("project:pair-cloud");
+      const create = (id: ProjectId, workspaceRoot: string) =>
+        service.create({
+          commandId: CommandId.make(`command:create:${id}`),
+          projectId: id,
+          title: "App",
+          workspaceRoot,
+        });
+      const refusal = <A>(effect: Effect.Effect<A, ProjectService.ProjectServiceError>) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error) => (error._tag === "ProjectOperationError" ? error.operation : error)),
+        );
+
+      assert.equal((yield* create(projectId, `${checkoutsDir}/${projectId}`)).id, projectId);
+      assert.equal(
+        yield* refusal(create(ProjectId.make("project:host"), "/work/app")),
+        "pair-cloud-workspace",
+      );
+      // Another project's checkout, and a path that climbs out of its own.
+      assert.equal(
+        yield* refusal(create(ProjectId.make("project:other"), `${checkoutsDir}/${projectId}`)),
+        "pair-cloud-workspace",
+      );
+      assert.equal(
+        yield* refusal(create(ProjectId.make("project:a/../b"), `${checkoutsDir}/project:a/../b`)),
+        "pair-cloud-workspace",
+      );
+      assert.equal(
+        yield* refusal(
+          service.update({
+            commandId: CommandId.make("command:move"),
+            projectId,
+            workspaceRoot: "/work/app",
+          }),
+        ),
+        "pair-cloud-workspace",
       );
 
-    assert.equal((yield* create(projectId, `${checkoutsDir}/${projectId}`)).id, projectId);
-    assert.equal(
-      yield* refusal(create(ProjectId.make("project:host"), "/work/app")),
-      "pair-cloud-workspace",
-    );
-    // Another project's checkout, and a path that climbs out of its own.
-    assert.equal(
-      yield* refusal(create(ProjectId.make("project:other"), `${checkoutsDir}/${projectId}`)),
-      "pair-cloud-workspace",
-    );
-    assert.equal(
-      yield* refusal(create(ProjectId.make("project:a/../b"), `${checkoutsDir}/project:a/../b`)),
-      "pair-cloud-workspace",
-    );
-    assert.equal(
-      yield* refusal(
-        service.update({
-          commandId: CommandId.make("command:move"),
-          projectId,
-          workspaceRoot: "/work/app",
-        }),
-      ),
-      "pair-cloud-workspace",
-    );
-  }).pipe(Effect.provide(layerTestFor(layerMetadata, { cloudOnly: true }))),
+      const apiId = ProjectId.make("project:api");
+      for (const id of [projectId, apiId]) {
+        yield* fileSystem.makeDirectory(`${checkoutsDir}/${id}/.git`, { recursive: true });
+      }
+      yield* create(apiId, `${checkoutsDir}/${apiId}`);
+      const workspace = yield* service.create({
+        commandId: CommandId.make("command:create:workspace"),
+        projectId: ProjectId.make("project:workspace"),
+        title: "Stack",
+        roots: [{ projectId }, { projectId: apiId }],
+      });
+      assert.deepEqual(
+        workspace.roots?.map((root) => root.projectId),
+        [projectId, apiId],
+      );
+    }).pipe(Effect.provide(layerTestFor(layerMetadata, { cloudOnly: true }))),
 );
 
 it.effect("serializes two projects claiming the same workspace root", () =>

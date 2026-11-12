@@ -31,6 +31,8 @@ const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
 interface BranchToolbarEnvModeSelectorProps {
   /** Why the workspace is fixed to a new worktree, or null when it can change. */
   forcedWorktreeReason?: string | null;
+  /** Why the current checkout is off while other modes stay open, or null. */
+  localDisabledReason?: string | null;
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
@@ -44,6 +46,7 @@ interface BranchToolbarEnvModeSelectorProps {
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
   forcedWorktreeReason = null,
+  localDisabledReason = null,
   envLocked,
   effectiveEnvMode,
   activeWorktreePath,
@@ -172,16 +175,18 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           <SelectGroupLabel>Workspace</SelectGroupLabel>
           {cloudOnly ? null : (
             <>
-              <SelectItem value="local">
-                <span className="inline-flex items-center gap-1.5">
-                  {activeWorktreePath ? (
-                    <FolderGitIcon className="size-3" />
-                  ) : (
-                    <FolderIcon className="size-3" />
-                  )}
-                  {resolveCurrentWorkspaceLabel(activeWorktreePath)}
-                </span>
-              </SelectItem>
+              <CloudEnvModeTooltip reason={localDisabledReason}>
+                <SelectItem value="local" disabled={localDisabledReason !== null}>
+                  <span className="inline-flex items-center gap-1.5">
+                    {activeWorktreePath ? (
+                      <FolderGitIcon className="size-3" />
+                    ) : (
+                      <FolderIcon className="size-3" />
+                    )}
+                    {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                  </span>
+                </SelectItem>
+              </CloudEnvModeTooltip>
               <SelectItem value="worktree">
                 <span className="inline-flex items-center gap-1.5">
                   <FolderGit2Icon className="size-3" />

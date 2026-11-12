@@ -64,7 +64,7 @@ Once a driver is saved, every project allows cloud threads. To change that, open
 - **Project cloud variables** are set on that project's machines, over the team's variables.
 
 The machine clones the project's `origin` remote, so a project needs one.
-[Workspaces](./workspaces.md) don't run in Cloud yet.
+A [workspace](./workspaces.md) thread gets one machine with every repository in it.
 
 ## Start a cloud thread
 

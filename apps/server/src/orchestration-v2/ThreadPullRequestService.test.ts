@@ -484,15 +484,24 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   );
 
   it.effect.each([
-    { linked: "nothing", existing: [], discovered: ["api", "web"] },
+    { linked: "nothing", existing: [], discovered: ["api", "web"], asleep: false },
     // An earlier sync linked api's pull request; web's joins it without clearing it.
-    { linked: "api's pull request", existing: ["api"], discovered: ["web"] },
+    { linked: "api's pull request", existing: ["api"], discovered: ["web"], asleep: false },
+    // Each repository's head comes from its root project's mirror; the machine stays asleep.
+    {
+      linked: "nothing on a sleeping machine",
+      existing: [],
+      discovered: ["api", "web"],
+      asleep: true,
+    },
   ] as const)(
     "links each workspace repository's pull request when $linked is linked",
-    ({ existing, discovered }) =>
+    ({ existing, discovered, asleep }) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const folder = "/worktrees/stack/feature";
+          const folder = asleep
+            ? "/t3-sandbox/sbx_00000000000000000034/worktrees/feature"
+            : "/worktrees/stack/feature";
           const roots = ["api", "web"].map((name) => ({
             projectId: ProjectId.make(`project:${name}`),
             name,
@@ -535,6 +544,28 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const sweepStarted = yield* Deferred.make<void>();
           const commands: Array<OrchestrationV2ServerCommand> = [];
           const lookupCwds: Array<string> = [];
+          const headFor = (projectId: ProjectId): SandboxHeadContext => {
+            const name = roots.find((root) => root.projectId === projectId)!.name;
+            return {
+              version: 1,
+              capturedAt: NOW,
+              branch: "feature",
+              headOid: (name === "api" ? "a" : "b").repeat(40),
+              upstream: { remoteName: "origin", remoteRef: "refs/heads/feature" },
+              remotes: [{ name: "origin", url: `git@github.com:acme/${name}.git` }],
+              defaultBranch: "main",
+            };
+          };
+          const detectedFor = (name: string, headRef: string) => ({
+            number: pullRequest(name).number,
+            title: name,
+            url: pullRequest(name).url,
+            baseRef: "main",
+            headRef,
+            state: "open" as const,
+            repositoryKey: `github.com/acme/${name}`,
+            updatedAt: "2026-09-20T00:00:00.000Z",
+          });
           const dependencies = Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.never,
@@ -560,20 +591,25 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             }),
             Layer.mock(GitManager.GitManager)({
               branchPullRequest: (input) =>
+                asleep
+                  ? Effect.die("git must not run for a sleeping machine")
+                  : Effect.sync(() => {
+                      lookupCwds.push(input.cwd);
+                      return detectedFor(input.cwd.split("/").at(-1)!, input.branch);
+                    }),
+              pullRequestForRecordedHead: (input) =>
                 Effect.sync(() => {
-                  lookupCwds.push(input.cwd);
                   const name = input.cwd.split("/").at(-1)!;
-                  return {
-                    number: pullRequest(name).number,
-                    title: name,
-                    url: pullRequest(name).url,
-                    baseRef: "main",
-                    headRef: input.branch,
-                    state: "open" as const,
-                    repositoryKey: `github.com/acme/${name}`,
-                    updatedAt: "2026-09-20T00:00:00.000Z",
-                  };
+                  expect(input.head).toEqual(headFor(ProjectId.make(`project:${name}`)));
+                  lookupCwds.push(input.cwd);
+                  return detectedFor(name, input.head.branch);
                 }),
+            }),
+            Layer.mock(StoppedSandboxReads.StoppedSandboxReads)({
+              headContext: (threadId, projectId) =>
+                threadId === thread.id && projectId !== undefined
+                  ? Effect.succeed(headFor(projectId))
+                  : Effect.die("a workspace reads each repository's own head"),
             }),
             Layer.mock(PullRequestService.PullRequestService)({}),
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
@@ -598,7 +634,12 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               SecureRandom.SecureRandom,
               SecureRandom.make((size) => new Uint8Array(size).fill(1)),
             ),
-            FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
+            FileSystem.layerNoop({
+              exists: () =>
+                asleep
+                  ? Effect.die("no file check at a sleeping machine's path")
+                  : Effect.succeed(true),
+            }),
             Path.layer,
           );
           yield* Effect.gen(function* () {
@@ -613,8 +654,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             ),
           );
 
+          // Asleep, each lookup runs at the root project's checkout on the server.
           expect(new Set(lookupCwds)).toEqual(
-            new Set(roots.map((root) => `${folder}/${root.name}`)),
+            new Set(
+              roots.map((root) => (asleep ? `/repos/${root.name}` : `${folder}/${root.name}`)),
+            ),
           );
           expect(commands).toEqual([
             expect.objectContaining({

@@ -48,6 +48,12 @@ const layerHosts = Layer.unwrap(
 );
 
 const projectFor = (threadId: ThreadId) => ProjectId.make(`project:${threadId}`);
+/** A workspace thread over the repositories `setup` made for these two thread ids. */
+const workspaceThread = ThreadId.make("thread:workspace");
+const workspaceRoots = [
+  { projectId: projectFor(ThreadId.make("thread:workspace-api")), name: "api" },
+  { projectId: projectFor(ThreadId.make("thread:workspace-web")), name: "web" },
+];
 
 // The thread's sandbox checkout sits on branch `work`.
 const layerProjections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -58,6 +64,7 @@ const layerProjections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
       branch: "work",
       sandboxId: SandboxId.make("sbx_00000000000000000100"),
       deletedAt: null,
+      ...(threadId === workspaceThread ? { roots: workspaceRoots } : {}),
     } as never),
 });
 
@@ -99,7 +106,11 @@ const ordinalRef = (ordinal: number) =>
  * A project checkout on this machine with three commits, and a clone of it in the sandbox on
  * branch `work`. The mirror is seeded from the project checkout.
  */
-const setup = Effect.fn("MirrorSyncTest.setup")(function* (threadId: ThreadId) {
+const setup = Effect.fn("MirrorSyncTest.setup")(function* (
+  threadId: ThreadId,
+  /** Where in the sandbox root the clone goes; the thread id by default. */
+  at?: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const sql = yield* SqlClient.SqlClient;
@@ -121,7 +132,7 @@ const setup = Effect.fn("MirrorSyncTest.setup")(function* (threadId: ThreadId) {
       '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL
     )
   `;
-  const sandbox = path.join(yield* SandboxRoot, threadId.replaceAll(":", "-"));
+  const sandbox = path.join(yield* SandboxRoot, at ?? threadId.replaceAll(":", "-"));
   yield* git(project, ["clone", "--quiet", "--no-local", project, sandbox]);
   yield* git(sandbox, ["switch", "--quiet", "-c", "work"]);
 
@@ -187,6 +198,91 @@ it.effect(
       });
       assert.include(diff, "+edit 1");
     }).pipe(Effect.scoped, Effect.provide(layerWith())),
+);
+
+it.effect("syncs a workspace thread's repositories into their projects' mirrors", () =>
+  Effect.gen(function* () {
+    const [api, web] = yield* Effect.forEach(workspaceRoots, (root) =>
+      setup(ThreadId.make(`thread:workspace-${root.name}`), `workspace/${root.name}`),
+    );
+    const path = yield* Path.Path;
+    const folder = path.join(yield* SandboxRoot, "workspace");
+    const [baseline, turn] = [ordinalRef(0), ordinalRef(1)];
+    // The sleep snapshot: captured in each repository under the thread's one ref name.
+    const snapshot = CheckpointRef.make(CheckpointMirror.sandboxSnapshotRef(workspaceThread));
+    const vcs = yield* VcsDriver.VcsDriver;
+    for (const repository of [api!, web!]) {
+      yield* repository.mirror.ensure(repository.projectId);
+      yield* repository.capture(0);
+      yield* repository.capture(1);
+      yield* vcs.checkpoints.captureCheckpoint({
+        cwd: repository.sandbox,
+        checkpointRef: snapshot,
+      });
+    }
+
+    const sync = yield* MirrorSync.MirrorSync;
+    assert.deepEqual(
+      yield* sync.sync({
+        threadId: workspaceThread,
+        cwd: folder,
+        checkpointRefs: [baseline, turn, snapshot],
+      }),
+      workspaceRoots.map((root) => root.projectId),
+    );
+    yield* sync.recordHead({ threadId: workspaceThread, cwd: folder });
+    const branchTarget = `${CheckpointMirror.sandboxThreadRefPrefix(workspaceThread)}branch`;
+    const reads = yield* StoppedSandboxReads.StoppedSandboxReads;
+    for (const repository of [api!, web!]) {
+      const tips = yield* repository.mirror.tips(repository.projectId, [
+        baseline,
+        turn,
+        snapshot,
+        branchTarget,
+      ]);
+      assert.deepEqual(
+        [tips.get(baseline), tips.get(turn), tips.get(snapshot), tips.get(branchTarget)].join("\n"),
+        yield* git(repository.sandbox, ["rev-parse", baseline, turn, snapshot, "HEAD"]),
+      );
+      const head = yield* reads.headContext(workspaceThread, repository.projectId);
+      assert.deepEqual(
+        [head?.branch, head?.headOid],
+        ["work", yield* git(repository.sandbox, ["rev-parse", "HEAD"])],
+      );
+    }
+
+    const placement = yield* MirrorCheckpointReader.CheckpointDiffPlacement;
+    const reader = Option.getOrThrow(yield* placement.readerFor(workspaceThread));
+    const diff = yield* reader.diffCheckpoints({
+      cwd: folder,
+      roots: workspaceRoots.map((root) => root.name),
+      fromCheckpointRef: baseline,
+      toCheckpointRef: turn,
+      ignoreWhitespace: false,
+    });
+    assert.include(diff, "+++ b/api/agent.txt");
+    assert.include(diff, "+++ b/web/agent.txt");
+
+    // Deleting the thread forgets it in each root project's mirror, as its forget-thread effects do.
+    const threadRefs = (repository: typeof api) =>
+      repository!.mirrorGit([
+        "for-each-ref",
+        "--format=%(refname)",
+        baseline,
+        turn,
+        CheckpointMirror.sandboxThreadRefPrefix(workspaceThread),
+      ]);
+    for (const repository of [api!, web!]) {
+      assert.lengthOf((yield* threadRefs(repository)).split("\n"), 5);
+      yield* repository.mirror.deleteRefs(repository.projectId, [baseline, turn]);
+      yield* repository.mirror.deleteThreadNamespace(repository.projectId, workspaceThread);
+      assert.equal(yield* threadRefs(repository), "");
+      assert.isNull(yield* reads.headContext(workspaceThread, repository.projectId));
+    }
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(StoppedSandboxReads.layer.pipe(Layer.provideMerge(layerWith()))),
+  ),
 );
 
 it.effect("falls back a prerequisite tier when the sandbox pruned one the mirror holds", () =>

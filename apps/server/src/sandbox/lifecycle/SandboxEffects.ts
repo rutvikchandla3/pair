@@ -244,15 +244,24 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  /** The capture instant once every attached checkout's working tree is in the mirror, else null. */
+  /**
+   * The capture instant once every attached checkout's working tree is in the mirror, else null.
+   * A workspace folder counts only when every repository is: one that fails is logged by name, and
+   * the sleep still goes ahead, its reads falling back to checkpoints as for a failed checkout.
+   */
   const snapshotBeforeSleep = Effect.fn("SandboxEffects.snapshotBeforeSleep")(
     function* (record: OrchestrationV2Sandbox) {
       if (Option.isNone(checkpoints) || Option.isNone(mirrorSync)) return null;
       const rows = yield* projections.listSandboxThreads(record.id);
       const threads: Array<{ threadId: ThreadId; worktreePath: string | null }> = [];
+      const rootsOf = new Map<ThreadId, ReadonlyArray<string> | undefined>();
       for (const threadId of new Set([record.ownerThreadId, ...rows.map((row) => row.threadId)])) {
-        const worktreePath = (yield* projections.getThreadShell(threadId))?.worktreePath ?? null;
-        threads.push({ threadId, worktreePath });
+        const shell = yield* projections.getThreadShell(threadId);
+        threads.push({ threadId, worktreePath: shell?.worktreePath ?? null });
+        rootsOf.set(
+          threadId,
+          shell?.roots?.map((root) => root.name),
+        );
       }
       const namers = snapshotNamers(record.ownerThreadId, threads);
       if (namers.size === 0) return null;
@@ -261,15 +270,26 @@ const make = Effect.gen(function* () {
         namers,
         ([cwd, threadId]) => {
           const ref = sandboxSnapshotRef(threadId);
-          return checkpoints.value.captureSnapshot({ cwd, ref }).pipe(
-            Effect.flatMap((status) =>
-              status === "ready"
-                ? mirrorSync.value.syncRefs({
-                    threadId,
+          const roots = rootsOf.get(threadId);
+          return checkpoints.value.captureSnapshot({ cwd, roots, ref }).pipe(
+            Effect.tap(({ uncaptured }) =>
+              uncaptured.length === 0
+                ? Effect.void
+                : Effect.logWarning("Some repositories were not snapshotted before sleep", {
                     cwd,
-                    checkpointRefs: [ref],
-                    recordHead: true,
-                  })
+                    repositories: uncaptured,
+                  }),
+            ),
+            Effect.flatMap(({ status, uncaptured }) =>
+              status === "ready"
+                ? mirrorSync.value
+                    .syncRefs({
+                      threadId,
+                      cwd,
+                      checkpointRefs: [ref],
+                      recordHead: true,
+                    })
+                    .pipe(Effect.map((ok) => ok && uncaptured.length === 0))
                 : Effect.succeed(false),
             ),
           );

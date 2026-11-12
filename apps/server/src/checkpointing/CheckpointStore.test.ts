@@ -686,9 +686,16 @@ describe.each(layers)("on the %s host", (_hostKind, layerTest) =>
           expect(turn.commitOid).toBe(
             yield* git(NodePath.join(workspace.cwd, "api"), ["rev-parse", firstTurn]),
           );
-          expect(
-            yield* git(NodePath.join(workspace.cwd, "web"), ["rev-parse", firstTurn]),
-          ).not.toBe("");
+          expect(turn.roots).toEqual([
+            {
+              name: "api",
+              commitOid: yield* git(NodePath.join(workspace.cwd, "api"), ["rev-parse", firstTurn]),
+            },
+            {
+              name: "web",
+              commitOid: yield* git(NodePath.join(workspace.cwd, "web"), ["rev-parse", firstTurn]),
+            },
+          ]);
           expect(turn.files).toEqual([
             { path: "api/README.md", kind: "modified", additions: 1, deletions: 1 },
             { path: "web/new.txt", kind: "modified", additions: 0, deletions: 0 },

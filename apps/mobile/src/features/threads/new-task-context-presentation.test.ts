@@ -1,10 +1,13 @@
 import { WORKSPACE_WORKTREE_BASE_REF } from "@t3tools/client-runtime/state/workspaces";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { resolveNewTaskCloud } from "./new-task-cloud";
 import {
   fillNewTaskWorkspaceBranch,
   resolveNewTaskBranchLabel,
   resolveNewTaskBranchWorktreePath,
+  resolveNewTaskDraftWorkspace,
   resolveNewTaskLocalWorkspaceSelection,
   resolveNewTaskWorkspaceSelection,
 } from "./new-task-context-presentation";
@@ -74,30 +77,127 @@ describe("resolveNewTaskWorkspaceSelection", () => {
     });
   });
 
-  it("starts a workspace's task in a new worktree whatever the draft chose", () => {
-    const workspaceTask = {
-      mode: "worktree",
-      branch: WORKSPACE_WORKTREE_BASE_REF,
-      worktreePath: null,
-    };
-    for (const selection of [
-      undefined,
-      cloud,
-      { mode: "local", branch: "feature", worktreePath: "/existing-worktree" } as const,
-    ]) {
-      expect(resolveNewTaskWorkspaceSelection({ ...base, workspace: true, selection })).toEqual(
-        workspaceTask,
-      );
-    }
-    // Its own folder is not a repository, which must not fall back to the current checkout.
+  // Its own folder is not a repository, which must not fall back to the current checkout.
+  it("starts a workspace's task in a new worktree of each repository", () => {
     expect(
       resolveNewTaskWorkspaceSelection({
         ...base,
         workspace: true,
         isGitRepo: false,
-        selection: undefined,
+        selection: { mode: "local", branch: "feature", worktreePath: "/existing-worktree" },
       }),
-    ).toEqual(workspaceTask);
+    ).toEqual({ mode: "worktree", branch: WORKSPACE_WORKTREE_BASE_REF, worktreePath: null });
+  });
+});
+
+describe("a workspace's new task", () => {
+  const mac = EnvironmentId.make("mac");
+  const pairCloud = EnvironmentId.make("pair-cloud");
+  const target = (input: {
+    readonly projectId: string | null;
+    readonly disabledReason?: string;
+    readonly create?: boolean;
+  }) => ({
+    environmentId: pairCloud,
+    label: "Pair Cloud",
+    projectId: input.projectId === null ? null : ProjectId.make(input.projectId),
+    disabledReason: input.disabledReason ?? null,
+    ...(input.create
+      ? {
+          createWorkspace: {
+            title: "Shop",
+            roots: [{ name: "web", projectId: ProjectId.make("cloud-web") }],
+          },
+        }
+      : {}),
+  });
+  const pickedCloud = {
+    mode: "cloud",
+    branch: null,
+    worktreePath: null,
+    cloudEnvironmentId: pairCloud,
+  } as const;
+
+  it.each([
+    {
+      name: "on a local server with a matching Pair Cloud workspace",
+      environmentId: mac,
+      cloudLaunch: false,
+      cloudTarget: { kind: "targets" as const, targets: [target({ projectId: "cloud-shop" })] },
+      expected: { mode: "cloud", title: "Cloud", message: null },
+    },
+    {
+      name: "on a local server where Pair Cloud can create it",
+      environmentId: mac,
+      cloudLaunch: false,
+      cloudTarget: {
+        kind: "targets" as const,
+        targets: [target({ projectId: null, create: true })],
+      },
+      expected: {
+        mode: "worktree",
+        title: "Create on Pair Cloud",
+        message: "Create this workspace on Pair Cloud first.",
+      },
+    },
+    {
+      name: "on a local server with repositories missing from Pair Cloud",
+      environmentId: mac,
+      cloudLaunch: false,
+      cloudTarget: {
+        kind: "targets" as const,
+        targets: [target({ projectId: null, disabledReason: "Add api/ to Pair Cloud first." })],
+      },
+      expected: { mode: "worktree", title: "Cloud", message: "Add api/ to Pair Cloud first." },
+    },
+    {
+      name: "on a local server with no Pair Cloud",
+      environmentId: mac,
+      cloudLaunch: false,
+      cloudTarget: { kind: "hidden" as const },
+      expected: { mode: "worktree", title: undefined, message: null },
+    },
+    {
+      name: "on a cloud-only environment",
+      environmentId: pairCloud,
+      cloudLaunch: true,
+      cloudTarget: { kind: "targets" as const, targets: [target({ projectId: "cloud-shop" })] },
+      expected: { mode: "cloud", title: "Cloud", message: null },
+    },
+  ])("starts $name as $expected.mode", ({ environmentId, cloudLaunch, cloudTarget, expected }) => {
+    const cloud = resolveNewTaskCloud({
+      cloudTarget,
+      project: { environmentId, repositoryIdentity: null },
+      cloudEnvironmentId: pairCloud,
+    });
+    expect(cloud.options[0]?.title).toBe(expected.title);
+    expect(cloud.message).toBe(expected.message);
+    // The draft picked Cloud, never chose, or picked a local checkout the workspace doesn't have.
+    for (const selection of [
+      pickedCloud,
+      undefined,
+      { mode: "local", branch: "feature", worktreePath: "/existing-worktree" } as const,
+    ]) {
+      const resolved = resolveNewTaskDraftWorkspace({
+        selection,
+        canChooseWorkspace: false,
+        defaultMode: cloudLaunch ? "cloud" : "worktree",
+        defaultModeSettled: true,
+        isGitRepo: false,
+        cloudAvailable: cloud.available,
+        cloudLaunch,
+        workspace: true,
+        branches: [],
+        projectCwd: "/workspaces/shop",
+      });
+      const cloudMode = expected.mode === "cloud" && (cloudLaunch || selection?.mode === "cloud");
+      expect(resolved).toEqual({
+        mode: cloudMode ? "cloud" : "worktree",
+        branch: WORKSPACE_WORKTREE_BASE_REF,
+        worktreePath: null,
+        ...(cloudMode && selection?.mode === "cloud" ? { cloudEnvironmentId: pairCloud } : {}),
+      });
+    }
   });
 });
 

@@ -184,7 +184,11 @@ T3 Code throughout.
   opened from the thread's branch are linked from every repository, and the thread settles when
   all of them are merged or closed. Storage cleanup removes a thread's folder only when every
   repository in it is safe to remove.
-- Not built yet: Cloud, and the diff panel's uncommitted and commit views.
+- **In Cloud.** A workspace thread runs on one machine that holds every repository. Pair Cloud
+  has its own workspaces, and a Cloud pick on a local workspace goes to the one with the same
+  repositories, or offers to create it. Sleep, wake and rebuild work per repository.
+- Not built yet: moving a workspace thread between a Mac and Pair Cloud, and the diff panel's
+  uncommitted and commit views.
 - User guide: [Workspaces](../user/workspaces.md).
 
 ## Not planned

@@ -3,6 +3,7 @@ import {
   isListedThreadLineage,
   type PeerLinkSummary,
   type ProjectId,
+  type ProjectRoot,
   repositoryGroupingKeyOf,
   type ServerConfig,
   type VcsRef,
@@ -25,10 +26,22 @@ export type CloudTarget =
 export interface CloudTargetOption {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  /** The matching Pair Cloud project, or null: Cloud offers Add to Pair Cloud here. */
+  /**
+   * The matching Pair Cloud project, or null: Cloud offers Add to Pair Cloud here, or for a
+   * workspace, `createWorkspace` when it can.
+   */
   readonly projectId: ProjectId | null;
   /** Why it can't launch now (offline, turned off for the project), or null. */
   readonly disabledReason: string | null;
+  /** A workspace with no match whose repositories are all Pair Cloud projects here. */
+  readonly createWorkspace?: PairCloudWorkspace;
+}
+
+/** The `project.create` input that makes a local workspace on a Pair Cloud. */
+export interface PairCloudWorkspace {
+  readonly title: string;
+  /** That Pair Cloud's projects, in the workspace's order, under the workspace's folder names. */
+  readonly roots: ReadonlyArray<ProjectRoot>;
 }
 
 interface CloudTargetEnvironment {
@@ -71,9 +84,140 @@ function unavailableReason(
   return availability.available ? null : availability.message;
 }
 
-/** Where Cloud goes for `project`: itself on Pair Cloud, a matching Pair Cloud project, or Add. */
+function oldestOf(projects: ReadonlyArray<EnvironmentProject>): EnvironmentProject | null {
+  return projects.reduce<EnvironmentProject | null>(
+    (oldest, candidate) =>
+      oldest === null || candidate.createdAt < oldest.createdAt ? candidate : oldest,
+    null,
+  );
+}
+
+function githubOriginKey(
+  project: Pick<EnvironmentProject, "repositoryIdentity"> | undefined,
+): string | null {
+  const key = project?.repositoryIdentity
+    ? repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase()
+    : null;
+  return key !== null && key.startsWith("github.com/") ? key : null;
+}
+
+function listNames(names: ReadonlyArray<string>): string {
+  return names.length < 2
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * A workspace launches on the Pair Cloud workspace whose repositories have the same origins
+ * (order and folder names aside), or creates one when each repository is a project there.
+ */
+function resolveWorkspaceCloudTarget(input: {
+  readonly workspace: Pick<EnvironmentProject, "environmentId" | "title"> & {
+    readonly roots: ReadonlyArray<ProjectRoot>;
+  };
+  readonly cloudEnvironments: ReadonlyArray<CloudTargetEnvironment>;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+}): CloudTarget {
+  const { workspace } = input;
+  const origins: string[] = [];
+  for (const root of workspace.roots) {
+    const rootProject = input.projects.find(
+      (candidate) =>
+        candidate.environmentId === workspace.environmentId && candidate.id === root.projectId,
+    );
+    // Worded as the server words its own refusals.
+    if (rootProject === undefined) {
+      return {
+        kind: "unavailable",
+        message: `${root.name}/ belongs to a project that no longer exists. Edit the workspace's repositories.`,
+      };
+    }
+    const origin = githubOriginKey(rootProject);
+    if (origin === null) {
+      return {
+        kind: "unavailable",
+        message: `${root.name}/ isn't a github.com repository, so this workspace can't run in Pair Cloud.`,
+      };
+    }
+    origins.push(origin);
+  }
+  const wanted = new Set(origins);
+
+  const targets = input.cloudEnvironments
+    .map((environment): CloudTargetOption => {
+      const here = input.projects.filter(
+        (candidate) =>
+          candidate.environmentId === environment.environmentId && !candidate.archivedAt,
+      );
+      const originOf = new Map(here.map((candidate) => [candidate.id, githubOriginKey(candidate)]));
+      const match = oldestOf(
+        here.filter((candidate) => {
+          if (!isWorkspaceProject(candidate)) return false;
+          const keys = candidate.roots.map((root) => originOf.get(root.projectId) ?? null);
+          const found = new Set(keys);
+          return (
+            !found.has(null) &&
+            found.size === wanted.size &&
+            [...wanted].every((origin) => found.has(origin))
+          );
+        }),
+      );
+      const offline = environment.connected ? null : `${environment.label} is offline.`;
+      const base = { environmentId: environment.environmentId, label: environment.label };
+      if (match !== null) {
+        return {
+          ...base,
+          projectId: match.id,
+          disabledReason: offline ?? unavailableReason(environment.serverConfig, match.id),
+        };
+      }
+      const repositories = origins.map((origin) =>
+        oldestOf(
+          here.filter(
+            (candidate) => !isWorkspaceProject(candidate) && originOf.get(candidate.id) === origin,
+          ),
+        ),
+      );
+      const missing = [
+        ...new Set(
+          origins
+            .filter((_, index) => repositories[index] === null)
+            .map((origin) => origin.replace(/^github\.com\//, "")),
+        ),
+      ];
+      if (missing.length > 0) {
+        return {
+          ...base,
+          projectId: null,
+          disabledReason: offline ?? `Add ${listNames(missing)} to ${environment.label} first.`,
+        };
+      }
+      return {
+        ...base,
+        projectId: null,
+        disabledReason: offline ?? unavailableReason(environment.serverConfig, null),
+        createWorkspace: {
+          title: workspace.title,
+          roots: workspace.roots.map((root, index) => ({
+            projectId: repositories[index]!.id,
+            name: root.name,
+          })),
+        },
+      };
+    })
+    .sort((left, right) => left.label.localeCompare(right.label));
+  return { kind: "targets", targets };
+}
+
+/**
+ * Where Cloud goes for `project`: itself on Pair Cloud, a matching Pair Cloud project, or Add. A
+ * workspace goes to the Pair Cloud workspace with the same repositories, or offers to create it.
+ */
 export function resolveCloudTarget(input: {
-  readonly project: Pick<EnvironmentProject, "id" | "environmentId" | "repositoryIdentity">;
+  readonly project: Pick<
+    EnvironmentProject,
+    "id" | "environmentId" | "repositoryIdentity" | "title" | "roots"
+  >;
   readonly environments: ReadonlyArray<CloudTargetEnvironment>;
   readonly projects: ReadonlyArray<EnvironmentProject>;
 }): CloudTarget {
@@ -101,6 +245,13 @@ export function resolveCloudTarget(input: {
     isCloudLaunchEnvironment(environment.serverConfig),
   );
   if (cloudEnvironments.length === 0) return { kind: "hidden" };
+  if (isWorkspaceProject(project)) {
+    return resolveWorkspaceCloudTarget({
+      workspace: project,
+      cloudEnvironments,
+      projects: input.projects,
+    });
+  }
 
   const originKey = project.repositoryIdentity
     ? repositoryGroupingKeyOf(project.repositoryIdentity)
@@ -111,19 +262,15 @@ export function resolveCloudTarget(input: {
 
   const targets = cloudEnvironments
     .map((environment): CloudTargetOption => {
-      const match = input.projects
-        .filter(
+      const match = oldestOf(
+        input.projects.filter(
           (candidate) =>
             candidate.environmentId === environment.environmentId &&
             !candidate.archivedAt &&
             candidate.repositoryIdentity != null &&
             repositoryGroupingKeyOf(candidate.repositoryIdentity) === originKey,
-        )
-        .reduce<EnvironmentProject | null>(
-          (oldest, candidate) =>
-            oldest === null || candidate.createdAt < oldest.createdAt ? candidate : oldest,
-          null,
-        );
+        ),
+      );
       const projectId = match?.id ?? null;
       return {
         environmentId: environment.environmentId,
@@ -145,19 +292,15 @@ function oldestProjectWithOrigin(
   originKey: string,
 ): EnvironmentProject | null {
   const key = originKey.toLowerCase();
-  return projects
-    .filter(
+  return oldestOf(
+    projects.filter(
       (candidate) =>
         candidate.environmentId === environmentId &&
         !candidate.archivedAt &&
         candidate.repositoryIdentity != null &&
         repositoryGroupingKeyOf(candidate.repositoryIdentity).toLowerCase() === key,
-    )
-    .reduce<EnvironmentProject | null>(
-      (oldest, candidate) =>
-        oldest === null || candidate.createdAt < oldest.createdAt ? candidate : oldest,
-      null,
-    );
+    ),
+  );
 }
 
 export type ContinueLocallyOffer =
@@ -316,7 +459,7 @@ export function resolveContinueInCloud(input: {
     (candidate) =>
       candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
   );
-  // A workspace thread spans several repositories; Cloud runs one.
+  // The server can't move a workspace thread between a Mac and Pair Cloud yet.
   if (project === undefined || isWorkspaceProject(project)) return HIDDEN_OFFER;
   return continueInCloudOffer({
     thread: {

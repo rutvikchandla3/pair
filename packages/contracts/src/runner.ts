@@ -859,10 +859,18 @@ export type RunnerGitCredentialResponse = typeof RunnerGitCredentialResponse.Typ
  */
 export const RUNNER_OPS_PAGE_BYTES = 192 * 1024;
 
+/** A workspace thread's folder holds one repository per root, at `<cwd>/<root name>`. */
+const RunnerOpsCheckpointRoots = Schema.optional(Schema.Array(TrimmedNonEmptyString));
+
 export const RunnerOpsCheckpointCaptureInput = Schema.Union([
-  Schema.TaggedStruct("baseline", { cwd: RunnerPath, checkpointRef: CheckpointRef }),
+  Schema.TaggedStruct("baseline", {
+    cwd: RunnerPath,
+    roots: RunnerOpsCheckpointRoots,
+    checkpointRef: CheckpointRef,
+  }),
   Schema.TaggedStruct("turn", {
     cwd: RunnerPath,
+    roots: RunnerOpsCheckpointRoots,
     checkpointRef: CheckpointRef,
     previousCheckpointRef: CheckpointRef,
   }),
@@ -873,6 +881,16 @@ export const RunnerOpsCheckpointCaptureResult = Schema.Struct({
   status: Schema.Literals(["ready", "missing", "error"]),
   /** The captured commit, a bundle prerequisite for the checkpoint mirror. */
   commitOid: Schema.NullOr(TrimmedNonEmptyString),
+  /** With roots: each repository's captured commit; `commitOid` is the first one's. */
+  roots: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: TrimmedNonEmptyString,
+        commitOid: Schema.NullOr(TrimmedNonEmptyString),
+      }),
+    ),
+  ),
+  /** With roots, paths read `<root name>/<path in that repository>`. */
   files: Schema.Array(OrchestrationV2CheckpointFileSummary),
   warnings: Schema.Array(
     Schema.Literals([

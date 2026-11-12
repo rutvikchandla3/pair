@@ -137,7 +137,7 @@ const layerFor = (world: World, options: { readonly team: boolean } = { team: tr
         captureSnapshot: ({ cwd, ref }) =>
           Effect.sync(() => world.captures.push({ cwd, ref })).pipe(
             Effect.andThen(vcs.checkpoints.captureCheckpoint({ cwd, checkpointRef: ref })),
-            Effect.as("ready" as const),
+            Effect.as({ status: "ready" as const, uncaptured: [] }),
             Effect.orDie,
           ),
       });

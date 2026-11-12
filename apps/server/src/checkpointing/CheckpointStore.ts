@@ -83,6 +83,17 @@ export class CheckpointStore extends Context.Service<
       input: CaptureCheckpointInput,
     ) => Effect.Effect<string, CheckpointStoreError>;
 
+    /** The workspace repositories at `<cwd>/<root>` that are on disk, each read where it is. */
+    readonly presentRoots: (
+      cwd: string,
+      roots: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<PresentRoot>>;
+
+    /** `captureCheckpoint` with roots, reporting each present root's commit (null: not captured). */
+    readonly captureRoots: (
+      input: CaptureCheckpointInput & { readonly roots: ReadonlyArray<string> },
+    ) => Effect.Effect<RootCommits, CheckpointStoreError>;
+
     /**
      * With roots: every root on disk holds the ref, and at least one root is on disk. A root
      * whose folder is gone holds nothing and is not counted; restore still refuses it.
@@ -116,6 +127,11 @@ export class CheckpointStore extends Context.Service<
   }
 >()("t3/checkpointing/CheckpointStore") {}
 
+export type RootCommits = ReadonlyArray<{
+  readonly name: string;
+  readonly commitOid: string | null;
+}>;
+
 interface RootCheckout {
   readonly name: string;
   readonly cwd: string;
@@ -129,6 +145,168 @@ const lastPathSegment = (value: string) => value.split(/[\\/]+/).findLast((part)
 const pathsUnderRoot = (paths: ReadonlyArray<string>, name: string) =>
   paths.flatMap((entry) => (entry.startsWith(`${name}/`) ? [entry.slice(name.length + 1)] : []));
 
+/** One repository of a workspace thread, where its checkpoint refs live. */
+export interface PresentRoot {
+  readonly name: string;
+  readonly cwd: string;
+  readonly checkpoints: VcsCheckpointOps;
+}
+
+// A root missing either ref, such as one whose checkout was gone at capture, is left out.
+const unlessRefMissing = <A>(
+  root: PresentRoot,
+  refs: { readonly fromCheckpointRef: CheckpointRef; readonly toCheckpointRef: CheckpointRef },
+  operation: Effect.Effect<A, CheckpointStoreError>,
+) =>
+  operation.pipe(
+    Effect.catchTags({
+      VcsProcessExitError: Effect.fn("CheckpointStore.unlessRefMissing")(function* (error) {
+        const held = yield* Effect.forEach(
+          [refs.fromCheckpointRef, refs.toCheckpointRef],
+          (checkpointRef) => root.checkpoints.hasCheckpointRef({ cwd: root.cwd, checkpointRef }),
+        );
+        if (held.every(Boolean)) return yield* error;
+        yield* Effect.logWarning("A workspace repository lacks a checkpoint; leaving it out", {
+          cwd: root.cwd,
+        });
+        return null;
+      }),
+    }),
+  );
+
+/** `diffCheckpoints` over a workspace's repositories, wherever their refs are read. */
+export const diffRoots = Effect.fn("CheckpointStore.diffRoots")(function* (
+  present: ReadonlyArray<PresentRoot>,
+  input: DiffCheckpointsInput,
+) {
+  if (input.filePaths?.length === 0) return "";
+  const maxOutputBytes = input.maxOutputBytes ?? CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
+  let output = "";
+  let outputBytes = 0;
+  for (const root of present) {
+    if (outputBytes >= maxOutputBytes) break;
+    const filePaths =
+      input.filePaths === undefined ? undefined : pathsUnderRoot(input.filePaths, root.name);
+    if (filePaths?.length === 0) continue;
+    const { roots: _roots, ...rest } = input;
+    const diff = yield* unlessRefMissing(
+      root,
+      input,
+      root.checkpoints.diffCheckpoints({
+        ...rest,
+        cwd: root.cwd,
+        pathPrefix: root.name,
+        maxOutputBytes: maxOutputBytes - outputBytes,
+        ...(filePaths === undefined ? {} : { filePaths }),
+      }),
+    );
+    if (diff === null) continue;
+    output += diff;
+    outputBytes += Buffer.byteLength(diff);
+  }
+  if (outputBytes <= maxOutputBytes) return output;
+  if (input.format === "numstat") {
+    return yield* new VcsProcessOutputLimitError({
+      operation: "CheckpointStore.diffCheckpoints",
+      command: "git diff",
+      cwd: input.cwd,
+      stream: "stdout",
+      maxBytes: maxOutputBytes,
+      observedBytes: outputBytes,
+    });
+  }
+  // Prefixed rename lines can overrun the bytes git was given; drop a split final character.
+  return new TextDecoder().decode(Buffer.from(output).subarray(0, maxOutputBytes), {
+    stream: true,
+  });
+});
+
+/** `listAuthoredPaths` over a workspace's repositories, wherever their refs are read. */
+export const listAuthoredPathsInRoots = Effect.fn("CheckpointStore.listAuthoredPathsInRoots")(
+  function* (present: ReadonlyArray<PresentRoot>, input: ListAuthoredPathsInput) {
+    const perRoot = yield* Effect.forEach(
+      present,
+      (root) =>
+        unlessRefMissing(
+          root,
+          input,
+          root.checkpoints
+            .listAuthoredPaths({ ...input, cwd: root.cwd })
+            .pipe(Effect.map((authored) => ({ root, authored }))),
+        ),
+      { concurrency: "unbounded" },
+    );
+    const compared = perRoot.filter((entry) => entry !== null);
+    if (compared.every((entry) => entry.authored === null)) return null;
+    const authored = new Set<string>();
+    for (const entry of compared) {
+      if (entry.authored !== null) {
+        for (const path of entry.authored) authored.add(`${entry.root.name}/${path}`);
+        continue;
+      }
+      // HEAD did not move in this root, so every change in it is the turn's.
+      const numstat = yield* entry.root.checkpoints.diffCheckpoints({
+        cwd: entry.root.cwd,
+        fromCheckpointRef: input.fromCheckpointRef,
+        toCheckpointRef: input.toCheckpointRef,
+        ignoreWhitespace: false,
+        format: "numstat",
+        pathPrefix: entry.root.name,
+      });
+      for (const file of parseTurnDiffFilesFromNumstat(numstat)) {
+        authored.add(file.path);
+        if (file.previousPath !== undefined) authored.add(file.previousPath);
+      }
+    }
+    return authored;
+  },
+);
+
+const resolveRootsWith = Effect.fn("CheckpointStore.resolveRoots")(function* (
+  vcsRegistry: VcsDriverRegistry.VcsDriverRegistry["Service"],
+  cwd: string,
+  roots: ReadonlyArray<string>,
+) {
+  return yield* Effect.forEach(
+    roots,
+    (name) => {
+      // Root names are single folder names; git and spawn accept "/" on every platform.
+      const rootCwd = `${cwd.replace(/[\\/]+$/, "")}/${name}`;
+      return vcsRegistry.detect({ cwd: rootCwd, requestedKind: "git" }).pipe(
+        // A folder that is not a repository of its own would resolve to any repository enclosing it.
+        Effect.map((handle) =>
+          handle !== null && lastPathSegment(handle.repository.rootPath) === name
+            ? handle.driver
+            : null,
+        ),
+        Effect.orElseSucceed(() => null),
+        Effect.tap((driver) =>
+          driver === null
+            ? Effect.logWarning("A workspace repository is missing; it has no checkpoint", {
+                cwd: rootCwd,
+              })
+            : Effect.void,
+        ),
+        Effect.map((driver): RootCheckout => ({ name, cwd: rootCwd, driver })),
+      );
+    },
+    { concurrency: "unbounded" },
+  );
+});
+
+const presentRootsWith = (
+  vcsRegistry: VcsDriverRegistry.VcsDriverRegistry["Service"],
+  cwd: string,
+  roots: ReadonlyArray<string>,
+) =>
+  resolveRootsWith(vcsRegistry, cwd, roots).pipe(
+    Effect.map((checkouts) =>
+      checkouts.flatMap(({ name, cwd: rootCwd, driver }) =>
+        driver === null ? [] : [{ name, cwd: rootCwd, driver, checkpoints: driver.checkpoints }],
+      ),
+    ),
+  );
+
 /** @public */
 export const make = Effect.gen(function* () {
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
@@ -140,67 +318,10 @@ export const make = Effect.gen(function* () {
     return handle.driver.checkpoints satisfies VcsCheckpointOps;
   });
 
-  const resolveRoots = Effect.fn("CheckpointStore.resolveRoots")(function* (
-    cwd: string,
-    roots: ReadonlyArray<string>,
-  ) {
-    return yield* Effect.forEach(
-      roots,
-      (name) => {
-        // Root names are single folder names; git and spawn accept "/" on every platform.
-        const rootCwd = `${cwd.replace(/[\\/]+$/, "")}/${name}`;
-        return vcsRegistry.detect({ cwd: rootCwd, requestedKind: "git" }).pipe(
-          // A folder that is not a repository of its own would resolve to any repository enclosing it.
-          Effect.map((handle) =>
-            handle !== null && lastPathSegment(handle.repository.rootPath) === name
-              ? handle.driver
-              : null,
-          ),
-          Effect.orElseSucceed(() => null),
-          Effect.tap((driver) =>
-            driver === null
-              ? Effect.logWarning("A workspace repository is missing; it has no checkpoint", {
-                  cwd: rootCwd,
-                })
-              : Effect.void,
-          ),
-          Effect.map((driver): RootCheckout => ({ name, cwd: rootCwd, driver })),
-        );
-      },
-      { concurrency: "unbounded" },
-    );
-  });
-
+  const resolveRoots = (cwd: string, roots: ReadonlyArray<string>) =>
+    resolveRootsWith(vcsRegistry, cwd, roots);
   const presentRoots = (cwd: string, roots: ReadonlyArray<string>) =>
-    resolveRoots(cwd, roots).pipe(
-      Effect.map((checkouts) =>
-        checkouts.flatMap(({ name, cwd: rootCwd, driver }) =>
-          driver === null ? [] : [{ name, cwd: rootCwd, driver, checkpoints: driver.checkpoints }],
-        ),
-      ),
-    );
-
-  // A root missing either ref, such as one whose checkout was gone at capture, is left out.
-  const unlessRefMissing = <A>(
-    root: { readonly cwd: string; readonly checkpoints: VcsCheckpointOps },
-    refs: { readonly fromCheckpointRef: CheckpointRef; readonly toCheckpointRef: CheckpointRef },
-    operation: Effect.Effect<A, CheckpointStoreError>,
-  ) =>
-    operation.pipe(
-      Effect.catchTags({
-        VcsProcessExitError: Effect.fn("CheckpointStore.unlessRefMissing")(function* (error) {
-          const held = yield* Effect.forEach(
-            [refs.fromCheckpointRef, refs.toCheckpointRef],
-            (checkpointRef) => root.checkpoints.hasCheckpointRef({ cwd: root.cwd, checkpointRef }),
-          );
-          if (held.every(Boolean)) return yield* error;
-          yield* Effect.logWarning("A workspace repository lacks a checkpoint; leaving it out", {
-            cwd: root.cwd,
-          });
-          return null;
-        }),
-      }),
-    );
+    presentRootsWith(vcsRegistry, cwd, roots);
 
   const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd, roots) =>
     roots === undefined
@@ -209,57 +330,66 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.map((repository) => repository !== null))
       : presentRoots(cwd, roots).pipe(Effect.map((present) => present.length > 0));
 
+  const captureRoots: CheckpointStore["Service"]["captureRoots"] = Effect.fn("captureRoots")(
+    function* (input) {
+      const present = yield* presentRoots(input.cwd, input.roots);
+      const commits = yield* Effect.forEach(
+        present,
+        Effect.fnUntraced(function* (root) {
+          if (input.keepExisting === true) {
+            const existing = yield* root.driver.execute({
+              operation: "CheckpointStore.captureCheckpoint",
+              cwd: root.cwd,
+              args: ["rev-parse", "--verify", "--quiet", `${input.checkpointRef}^{commit}`],
+              allowNonZeroExit: true,
+            });
+            if (existing.exitCode === 0 && existing.stdout.trim() !== "") {
+              return existing.stdout.trim();
+            }
+          }
+          return yield* root.checkpoints
+            .captureCheckpoint({
+              cwd: root.cwd,
+              checkpointRef: input.checkpointRef,
+              ...(input.excludePaths === undefined
+                ? {}
+                : { excludePaths: pathsUnderRoot(input.excludePaths, root.name) }),
+            })
+            .pipe(
+              Effect.catchTags({
+                VcsUnsupportedOperationError: (error) =>
+                  Effect.logWarning("A workspace repository cannot be checkpointed", {
+                    cwd: root.cwd,
+                    detail: error.detail,
+                  }).pipe(Effect.as(null)),
+              }),
+            );
+        }),
+        { concurrency: "unbounded" },
+      );
+      if (commits.every((commit) => commit === null)) {
+        return yield* new VcsUnsupportedOperationError({
+          operation: "CheckpointStore.captureCheckpoint",
+          kind: "git",
+          detail: "No repository in the workspace folder can be checkpointed.",
+        });
+      }
+      return present.map((root, index) => ({ name: root.name, commitOid: commits[index] ?? null }));
+    },
+  );
+
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",
   )(function* (input) {
-    if (input.roots === undefined) {
+    const { roots } = input;
+    if (roots === undefined) {
       const checkpoints = yield* resolveCheckpoints(input.cwd);
       return yield* checkpoints.captureCheckpoint(input);
     }
-    const present = yield* presentRoots(input.cwd, input.roots);
-    const commits = yield* Effect.forEach(
-      present,
-      Effect.fnUntraced(function* (root) {
-        if (input.keepExisting === true) {
-          const existing = yield* root.driver.execute({
-            operation: "CheckpointStore.captureCheckpoint",
-            cwd: root.cwd,
-            args: ["rev-parse", "--verify", "--quiet", `${input.checkpointRef}^{commit}`],
-            allowNonZeroExit: true,
-          });
-          if (existing.exitCode === 0 && existing.stdout.trim() !== "") {
-            return existing.stdout.trim();
-          }
-        }
-        return yield* root.checkpoints
-          .captureCheckpoint({
-            cwd: root.cwd,
-            checkpointRef: input.checkpointRef,
-            ...(input.excludePaths === undefined
-              ? {}
-              : { excludePaths: pathsUnderRoot(input.excludePaths, root.name) }),
-          })
-          .pipe(
-            Effect.catchTags({
-              VcsUnsupportedOperationError: (error) =>
-                Effect.logWarning("A workspace repository cannot be checkpointed", {
-                  cwd: root.cwd,
-                  detail: error.detail,
-                }).pipe(Effect.as(null)),
-            }),
-          );
-      }),
-      { concurrency: "unbounded" },
+    const first = (yield* captureRoots({ ...input, roots })).find(
+      (root) => root.commitOid !== null,
     );
-    const first = commits.find((commit) => commit !== null);
-    if (first === undefined) {
-      return yield* new VcsUnsupportedOperationError({
-        operation: "CheckpointStore.captureCheckpoint",
-        kind: "git",
-        detail: "No repository in the workspace folder can be checkpointed.",
-      });
-    }
-    return first;
+    return first?.commitOid ?? (yield* Effect.die("captureRoots captured no repository."));
   });
 
   const hasCheckpointRef: CheckpointStore["Service"]["hasCheckpointRef"] = Effect.fn(
@@ -328,46 +458,7 @@ export const make = Effect.gen(function* () {
       const checkpoints = yield* resolveCheckpoints(input.cwd);
       return yield* checkpoints.diffCheckpoints(input);
     }
-    if (input.filePaths?.length === 0) return "";
-    const maxOutputBytes = input.maxOutputBytes ?? CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
-    let output = "";
-    let outputBytes = 0;
-    for (const root of yield* presentRoots(input.cwd, input.roots)) {
-      if (outputBytes >= maxOutputBytes) break;
-      const filePaths =
-        input.filePaths === undefined ? undefined : pathsUnderRoot(input.filePaths, root.name);
-      if (filePaths?.length === 0) continue;
-      const { roots: _roots, ...rest } = input;
-      const diff = yield* unlessRefMissing(
-        root,
-        input,
-        root.checkpoints.diffCheckpoints({
-          ...rest,
-          cwd: root.cwd,
-          pathPrefix: root.name,
-          maxOutputBytes: maxOutputBytes - outputBytes,
-          ...(filePaths === undefined ? {} : { filePaths }),
-        }),
-      );
-      if (diff === null) continue;
-      output += diff;
-      outputBytes += Buffer.byteLength(diff);
-    }
-    if (outputBytes <= maxOutputBytes) return output;
-    if (input.format === "numstat") {
-      return yield* new VcsProcessOutputLimitError({
-        operation: "CheckpointStore.diffCheckpoints",
-        command: "git diff",
-        cwd: input.cwd,
-        stream: "stdout",
-        maxBytes: maxOutputBytes,
-        observedBytes: outputBytes,
-      });
-    }
-    // Prefixed rename lines can overrun the bytes git was given; drop a split final character.
-    return new TextDecoder().decode(Buffer.from(output).subarray(0, maxOutputBytes), {
-      stream: true,
-    });
+    return yield* diffRoots(yield* presentRoots(input.cwd, input.roots), input);
   });
 
   const listAuthoredPaths: CheckpointStore["Service"]["listAuthoredPaths"] = Effect.fn(
@@ -377,42 +468,7 @@ export const make = Effect.gen(function* () {
       const checkpoints = yield* resolveCheckpoints(input.cwd);
       return yield* checkpoints.listAuthoredPaths(input);
     }
-    const present = yield* presentRoots(input.cwd, input.roots);
-    const perRoot = yield* Effect.forEach(
-      present,
-      (root) =>
-        unlessRefMissing(
-          root,
-          input,
-          root.checkpoints
-            .listAuthoredPaths({ ...input, cwd: root.cwd })
-            .pipe(Effect.map((authored) => ({ root, authored }))),
-        ),
-      { concurrency: "unbounded" },
-    );
-    const compared = perRoot.filter((entry) => entry !== null);
-    if (compared.every((entry) => entry.authored === null)) return null;
-    const authored = new Set<string>();
-    for (const entry of compared) {
-      if (entry.authored !== null) {
-        for (const path of entry.authored) authored.add(`${entry.root.name}/${path}`);
-        continue;
-      }
-      // HEAD did not move in this root, so every change in it is the turn's.
-      const numstat = yield* entry.root.checkpoints.diffCheckpoints({
-        cwd: entry.root.cwd,
-        fromCheckpointRef: input.fromCheckpointRef,
-        toCheckpointRef: input.toCheckpointRef,
-        ignoreWhitespace: false,
-        format: "numstat",
-        pathPrefix: entry.root.name,
-      });
-      for (const file of parseTurnDiffFilesFromNumstat(numstat)) {
-        authored.add(file.path);
-        if (file.previousPath !== undefined) authored.add(file.previousPath);
-      }
-    }
-    return authored;
+    return yield* listAuthoredPathsInRoots(yield* presentRoots(input.cwd, input.roots), input);
   });
 
   const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(
@@ -435,7 +491,9 @@ export const make = Effect.gen(function* () {
 
   return CheckpointStore.of({
     isGitRepository,
+    presentRoots,
     captureCheckpoint,
+    captureRoots,
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,

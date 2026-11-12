@@ -18,6 +18,8 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { SANDBOX_ROOT, sandboxIdFromPath } from "../workspaceHost/WorkspaceHost.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { resolveWorktreesDirectory, worktreeDirectoryName } from "../worktreePaths.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -83,7 +85,8 @@ export class WorkspaceCheckouts extends Context.Service<
     /**
      * Removes a thread folder a client names by its project's folder, keeping branches as a
      * single-repository worktree removal does. Uses the roots of the threads that own the folder,
-     * else the project's. False when that project is not a workspace.
+     * else the project's. False when that project is not a workspace. A folder on a Pair Cloud
+     * machine is left to the machine's disposal, as a cloud thread's checkout is: no git runs.
      */
     readonly removeFolder: (input: {
       readonly workspaceRoot: string;
@@ -115,6 +118,8 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const digest = yield* Digest.Digest;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  // The server provides the hosts; a cloud thread's folder is on its machine.
+  const hosts = yield* Effect.serviceOption(WorkspaceHosts.WorkspaceHosts);
 
   const failure =
     (operation: WorkspaceCheckoutError["operation"], detail: string) => (cause: unknown) =>
@@ -173,8 +178,11 @@ const make = Effect.gen(function* () {
     roots: ReadonlyArray<{ readonly name: string; readonly title: string }>,
   ) {
     const text = workspaceGuidanceText({ roots });
+    const folderFileSystem = Option.isSome(hosts)
+      ? (yield* hosts.value.forPath(folder)).fileSystem
+      : fileSystem;
     for (const file of WORKSPACE_GUIDANCE_FILES) {
-      yield* fileSystem.writeFileString(path.join(folder, file), text, { flag: "wx" }).pipe(
+      yield* folderFileSystem.writeFileString(path.join(folder, file), text, { flag: "wx" }).pipe(
         Effect.catchIf(
           (error) => error.reason._tag === "AlreadyExists",
           () => Effect.void,
@@ -247,6 +255,12 @@ const make = Effect.gen(function* () {
       .getByWorkspaceRoot(input.workspaceRoot, { includeDeleted: true })
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(project) || project.value.roots === undefined) return false;
+    if (
+      input.folder.startsWith(`${SANDBOX_ROOT}/`) &&
+      sandboxIdFromPath(input.folder) !== undefined
+    ) {
+      return true;
+    }
     if (!(yield* isManagedWorktreePath(input.folder))) {
       return yield* new WorkspaceCheckoutError({
         operation: "remove",

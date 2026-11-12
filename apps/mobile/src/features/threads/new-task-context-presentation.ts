@@ -16,12 +16,20 @@ export function resolveNewTaskWorkspaceSelection(input: {
   /** The project is a workspace of several repositories. */
   readonly workspace: boolean;
 }): ComposerDraftWorkspaceSelection {
-  // The server runs a workspace thread only in a new worktree of each repository, each from
-  // its own default branch, so no draft choice applies.
-  if (input.workspace) {
-    return { mode: "worktree", branch: WORKSPACE_WORKTREE_BASE_REF, worktreePath: null };
-  }
   const selection = input.selection ?? input.fallback;
+  // A workspace thread runs in a new worktree of each repository, here or on one machine, each
+  // from its own default branch, so only Cloud is a choice.
+  if (input.workspace) {
+    const cloud = input.cloudLaunch || (selection.mode === "cloud" && input.cloudAvailable);
+    return {
+      mode: cloud ? "cloud" : "worktree",
+      branch: WORKSPACE_WORKTREE_BASE_REF,
+      worktreePath: null,
+      ...(cloud && selection.cloudEnvironmentId
+        ? { cloudEnvironmentId: selection.cloudEnvironmentId }
+        : {}),
+    };
+  }
   const mode = resolveSendEnvMode({ requestedEnvMode: selection.mode, isGitRepo: input.isGitRepo });
   if (!input.isGitRepo) return { mode, branch: null, worktreePath: null };
   if (input.cloudLaunch) {
@@ -207,7 +215,7 @@ export function resolveNewTaskDraftWorkspace(input: {
   readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
   readonly projectCwd: string | null;
 }): ComposerDraftWorkspaceSelection {
-  const selection = input.canChooseWorkspace ? input.selection : undefined;
+  const selection = input.canChooseWorkspace || input.workspace ? input.selection : undefined;
   return fillNewTaskWorkspaceBranch({
     selection: resolveNewTaskWorkspaceSelection({
       selection,

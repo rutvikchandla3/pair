@@ -129,12 +129,13 @@ export const make = Effect.gen(function* () {
   const recordedHeadFor = (
     group: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>,
     branch: string,
+    rootProjectId?: ProjectId,
   ) =>
     Option.isNone(stopped)
       ? Effect.succeed(null)
       : Effect.gen(function* () {
           for (const thread of group) {
-            const head = yield* stopped.value.headContext(thread.id);
+            const head = yield* stopped.value.headContext(thread.id, rootProjectId);
             if (head?.branch === branch) return head;
           }
           return null;
@@ -172,11 +173,28 @@ export const make = Effect.gen(function* () {
     const { branch, worktreePath: folder } = group[0]!;
     if (branch === null || folder === null) return finishBackfill(group);
     const host = yield* hosts.forPath(folder).pipe(Effect.option);
-    if (Option.isNone(host)) return finishBackfill(group);
     const found = yield* Effect.forEach(input.roots, (root) =>
       Effect.gen(function* () {
         const rootProject = input.projects.get(root.projectId);
         if (rootProject === undefined) return null;
+        // A stopped machine is never woken: each repository asks the forge from the head saved
+        // at sleep in its root project's mirror, and only a found pull request is applied.
+        if (Option.isNone(host)) {
+          const head = yield* recordedHeadFor(group, branch, root.projectId);
+          if (head === null) return null;
+          const { project: resolvedRoot, repository } =
+            yield* resolveProjectForPullRequestDiscovery(rootProject, repositoryIdentities, {
+              refresh: input.refresh,
+            });
+          if (repository === null) return null;
+          const detected = yield* git.pullRequestForRecordedHead({
+            cwd: rootProject.workspaceRoot,
+            head,
+          });
+          if (detected === null || !pullRequestMatchesProject(detected, resolvedRoot)) return null;
+          const key = pullRequestKey(detected, resolvedRoot);
+          return key === null || group.every((thread) => hasPullRequest(thread, key)) ? null : key;
+        }
         const checkout = path.join(folder, root.name);
         const cwd = (yield* host.value.fileSystem
           .exists(path.join(checkout, ".git"))

@@ -9,7 +9,6 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
-  VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -151,11 +150,18 @@ export interface CheckpointServiceV2Shape {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
-  /** Commits a sandbox checkout's working tree to `ref`, replacing it; a local path is `missing`. */
+  /**
+   * Commits a sandbox checkout's working tree to `ref`, replacing it; a local path is `missing`.
+   * With roots, each repository commits to its own ref and `uncaptured` names those that did not.
+   */
   readonly captureSnapshot: (input: {
     readonly cwd: string;
+    readonly roots?: ReadonlyArray<string> | undefined;
     readonly ref: CheckpointRef;
-  }) => Effect.Effect<CheckpointCapture.TurnCapture["status"]>;
+  }) => Effect.Effect<{
+    readonly status: CheckpointCapture.TurnCapture["status"];
+    readonly uncaptured: ReadonlyArray<string>;
+  }>;
 }
 
 export class CheckpointServiceV2 extends Context.Service<
@@ -272,19 +278,6 @@ export const layer: Layer.Layer<
         Effect.map((host) => host.invoke),
         Effect.orElseSucceed(() => undefined),
       );
-    // The runner's capture knows one repository, so a workspace scope must never reach it.
-    const coarseForScope = (scope: OrchestrationV2CheckpointScope) =>
-      coarseFor(scope.cwd).pipe(
-        Effect.filterOrFail(
-          (coarse) => coarse === undefined || scope.roots === undefined,
-          () =>
-            new VcsUnsupportedOperationError({
-              operation: "CheckpointService.coarseCapture",
-              kind: "git",
-              detail: "A workspace's repositories cannot be checkpointed on a sandbox host.",
-            }),
-        ),
-      );
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
 
@@ -301,11 +294,12 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const coarse = yield* coarseForScope(input.scope);
+          const coarse = yield* coarseFor(input.scope.cwd);
           if (coarse !== undefined) {
             yield* coarse.checkpointCapture({
               _tag: "baseline",
               cwd: input.scope.cwd,
+              roots: input.scope.roots,
               checkpointRef,
             });
             return;
@@ -423,7 +417,7 @@ export const layer: Layer.Layer<
             });
           }
 
-          const coarse = yield* coarseForScope(input.scope);
+          const coarse = yield* coarseFor(input.scope.cwd);
           const captured =
             coarse === undefined
               ? yield* CheckpointCapture.captureTurn({
@@ -436,6 +430,7 @@ export const layer: Layer.Layer<
                   .checkpointCapture({
                     _tag: "turn",
                     cwd: input.scope.cwd,
+                    roots: input.scope.roots,
                     checkpointRef,
                     previousCheckpointRef,
                   })
@@ -549,16 +544,25 @@ export const layer: Layer.Layer<
       "CheckpointService.captureSnapshot",
     )(
       function* (input) {
+        const roots = input.roots ?? [];
         const coarse = yield* coarseFor(input.cwd);
-        if (coarse === undefined) return "missing" as const;
+        if (coarse === undefined) return { status: "missing" as const, uncaptured: roots };
         // `turn` overwrites the ref where `baseline` keeps it; previous = ref skips the file summary.
         const captured = yield* coarse.checkpointCapture({
           _tag: "turn",
           cwd: input.cwd,
+          roots: input.roots,
           checkpointRef: input.ref,
           previousCheckpointRef: input.ref,
         });
-        return captured.status;
+        const committed = new Set(
+          (captured.roots ?? []).flatMap((root) => (root.commitOid === null ? [] : [root.name])),
+        );
+        return {
+          status: captured.status,
+          uncaptured:
+            captured.status === "ready" ? roots.filter((name) => !committed.has(name)) : roots,
+        };
       },
       (effect, input) =>
         withWorkspaceLock(input.cwd, effect).pipe(
@@ -566,7 +570,7 @@ export const layer: Layer.Layer<
             Effect.logWarning("Could not snapshot a sandbox checkout", {
               cwd: input.cwd,
               cause,
-            }).pipe(Effect.as("error" as const)),
+            }).pipe(Effect.as({ status: "error" as const, uncaptured: input.roots ?? [] })),
           ),
         ),
     );

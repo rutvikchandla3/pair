@@ -40,6 +40,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
   projectTitle: Schema.optional(Schema.String),
   projectCwd: Schema.optional(Schema.String),
   workspaceMode: NewTaskWorkspaceMode,
+  workspace: Schema.optional(Schema.Boolean),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
@@ -80,6 +81,8 @@ export interface QueuedThreadCreation {
   readonly projectTitle?: string;
   readonly projectCwd?: string;
   readonly workspaceMode: NewTaskWorkspaceMode;
+  /** The project is a workspace: each repository starts from its own default branch. */
+  readonly workspace?: boolean;
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;

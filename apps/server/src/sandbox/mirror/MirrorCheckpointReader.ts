@@ -44,47 +44,82 @@ const makeMirrorDiffPlacement = Effect.gen(function* () {
     function* (threadId) {
       const thread = yield* projection.getThread(threadId);
       if (thread.sandboxId === undefined) return Option.none();
-      const { projectId } = thread;
-      const cwd = mirror.gitDir(projectId);
+      // A workspace thread's repositories each read their root project's mirror.
+      const mirrors = (thread.roots ?? [{ projectId: thread.projectId, name: "" }]).map((root) => ({
+        name: root.name,
+        cwd: mirror.gitDir(root.projectId),
+        projectId: root.projectId,
+        checkpoints,
+      }));
 
       // A pending sync leaves the refs out; the sandbox, if it is up, still has them. Any other failure surfaces.
-      const mirrorHolds = (from: string, to: string, operation: string) =>
-        mirror.tips(projectId, [from, to]).pipe(
-          Effect.map((tips) => tips.has(from) && tips.has(to)),
-          Effect.mapError(
-            (cause) =>
-              new VcsRepositoryDetectionError({
-                operation,
-                cwd,
-                detail: "The checkpoint mirror could not be read.",
-                cause,
-              }),
+      const heldBy = (from: string, to: string, operation: string) =>
+        Effect.forEach(mirrors, (entry) =>
+          mirror.tips(entry.projectId, [from, to]).pipe(
+            Effect.map((tips) => tips.has(from) && tips.has(to)),
+            Effect.mapError(
+              (cause) =>
+                new VcsRepositoryDetectionError({
+                  operation,
+                  cwd: entry.cwd,
+                  detail: "The checkpoint mirror could not be read.",
+                  cause,
+                }),
+            ),
           ),
         );
+      const single = mirrors[0]!;
+
+      /** Each repository from its mirror when that holds both refs, else from the machine. */
+      const presentFor = (
+        cwd: string,
+        held: ReadonlyArray<boolean>,
+      ): Effect.Effect<ReadonlyArray<CheckpointStore.PresentRoot>> => {
+        const onMachine = mirrors.filter((_, index) => !held[index]).map((entry) => entry.name);
+        return (
+          onMachine.length === 0 ? Effect.succeed([]) : checkpointStore.presentRoots(cwd, onMachine)
+        ).pipe(
+          Effect.map((machine) =>
+            mirrors.flatMap((entry, index) =>
+              held[index] ? [entry] : machine.filter((root) => root.name === entry.name),
+            ),
+          ),
+        );
+      };
 
       const reader: CheckpointDiffReader = {
         diffCheckpoints: (input) =>
-          mirrorHolds(
+          heldBy(
             input.fromCheckpointRef,
             input.toCheckpointRef,
             "MirrorCheckpointReader.diffCheckpoints",
           ).pipe(
             Effect.flatMap((held) =>
-              held
-                ? checkpoints.diffCheckpoints({ ...input, cwd })
-                : checkpointStore.diffCheckpoints(input),
+              !held.some(Boolean)
+                ? checkpointStore.diffCheckpoints(input)
+                : thread.roots === undefined
+                  ? checkpoints.diffCheckpoints({ ...input, cwd: single.cwd })
+                  : presentFor(input.cwd, held).pipe(
+                      Effect.flatMap((present) => CheckpointStore.diffRoots(present, input)),
+                    ),
             ),
           ),
         listAuthoredPaths: (input) =>
-          mirrorHolds(
+          heldBy(
             input.fromCheckpointRef,
             input.toCheckpointRef,
             "MirrorCheckpointReader.listAuthoredPaths",
           ).pipe(
             Effect.flatMap((held) =>
-              held
-                ? checkpoints.listAuthoredPaths({ ...input, cwd })
-                : checkpointStore.listAuthoredPaths(input),
+              !held.some(Boolean)
+                ? checkpointStore.listAuthoredPaths(input)
+                : thread.roots === undefined
+                  ? checkpoints.listAuthoredPaths({ ...input, cwd: single.cwd })
+                  : presentFor(input.cwd, held).pipe(
+                      Effect.flatMap((present) =>
+                        CheckpointStore.listAuthoredPathsInRoots(present, input),
+                      ),
+                    ),
             ),
           ),
       };

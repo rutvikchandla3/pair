@@ -1,4 +1,4 @@
-import type { CloudTarget } from "@t3tools/client-runtime/state/cloud-target";
+import type { CloudTarget, PairCloudWorkspace } from "@t3tools/client-runtime/state/cloud-target";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type EnvironmentId, type ProjectId, repositoryGroupingKeyOf } from "@t3tools/contracts";
 
@@ -6,6 +6,8 @@ interface NewTaskCloudOption {
   readonly environmentId: EnvironmentId;
   readonly title: string;
   readonly disabledReason: string | null;
+  /** Create this workspace on that Pair Cloud from its repositories there, then launch. */
+  readonly create?: { readonly label: string; readonly workspace: PairCloudWorkspace };
 }
 
 /** The selected project's Cloud entry, mapped from `resolveCloudTarget`. */
@@ -54,14 +56,27 @@ export function resolveNewTaskCloud(input: {
     target,
     option: {
       environmentId: target.environmentId,
-      title: several ? `Cloud on ${target.label}` : "Cloud",
+      title: target.createWorkspace
+        ? several
+          ? `Create on ${target.label}`
+          : "Create on Pair Cloud"
+        : several
+          ? `Cloud on ${target.label}`
+          : "Cloud",
       disabledReason:
         target.disabledReason ??
-        (target.projectId === null ? `Add ${repository} to ${target.label} first.` : null),
+        (target.projectId === null && !target.createWorkspace
+          ? `Add ${repository} to ${target.label} first.`
+          : null),
+      ...(target.createWorkspace
+        ? { create: { label: target.label, workspace: target.createWorkspace } }
+        : {}),
     } satisfies NewTaskCloudOption,
   }));
+  // A launchable target beats one that must create the workspace first.
   const chosen =
     options.find(({ target }) => target.environmentId === input.cloudEnvironmentId) ??
+    options.find(({ option, target }) => option.disabledReason === null && target.projectId) ??
     options.find(({ option }) => option.disabledReason === null) ??
     options[0];
   const launchable =
@@ -72,11 +87,16 @@ export function resolveNewTaskCloud(input: {
           label: chosen.target.label,
         }
       : null;
+  const message =
+    launchable !== null || chosen === undefined
+      ? null
+      : (chosen.option.disabledReason ??
+        (chosen.option.create ? `Create this workspace on ${chosen.target.label} first.` : null));
   return {
     offered: true,
     options: options.map(({ option }) => option),
     available: launchable !== null,
-    message: launchable === null ? (chosen?.option.disabledReason ?? null) : null,
+    message,
     target: launchable,
     routed: launchable !== null && launchable.environmentId !== project.environmentId,
   };

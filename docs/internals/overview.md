@@ -72,8 +72,12 @@ instead (`threadRepositories` in
 [client-runtime](../../packages/client-runtime/src/state/workspaces.ts), or the thread's `roots` on
 the server), or refuse. A workspace thread's checkpoint scope records its root names, and
 `CheckpointStore` alone fans each checkpoint operation out over them, so checkpoint and diff paths
-read `<root>/<path in repo>`. A thread's `roots` are copied at launch and don't follow later edits to the
-workspace, so read the thread's copy, not the project's. "Workspace" here is unrelated to
+read `<root>/<path in repo>`. On Pair Cloud each repository syncs into its own root project's
+mirror under the thread's ref names, so mirror reads, sleep snapshots, rebuilds and head records
+work per repository; a repository missing from the folder is rebuilt alone, and a sleep with one
+repository unsnapshotted records no snapshot, so reads fall back to checkpoints. A thread's `roots`
+are copied at launch and don't follow later edits to the workspace, so read the thread's copy, not
+the project's. "Workspace" here is unrelated to
 "workspace root" and to the workspace host above.
 
 ## Settings ownership

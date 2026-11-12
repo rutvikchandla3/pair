@@ -52,15 +52,20 @@ const make = Effect.gen(function* () {
       if (sandbox === null) return {};
       const attached = yield* projections.listSandboxThreads(sandboxId);
       const attachedIds = new Set(attached.map((row) => row.threadId));
-      let pushFor = threadId !== undefined && attachedIds.has(threadId) ? threadId : undefined;
-      if (pushFor === undefined) {
-        const threads = yield* Effect.forEach(attached, (row) =>
-          projections.getThread(row.threadId),
-        );
-        pushFor =
-          threads.find((thread) => thread.worktreePath === cwd)?.id ?? sandbox.ownerThreadId;
-      }
-      if (!(yield* isGitHubProject(sandbox.projectId))) {
+      const threads = yield* Effect.forEach(attached, (row) => projections.getThread(row.threadId));
+      // A workspace thread's repositories sit at `<worktreePath>/<root name>`.
+      const rootAt = (thread: (typeof threads)[number]) =>
+        thread.roots?.find((root) => `${thread.worktreePath}/${root.name}` === cwd);
+      const atCwd = threads.find(
+        (thread) => thread.worktreePath === cwd || rootAt(thread) !== undefined,
+      );
+      const pushFor =
+        threadId !== undefined && attachedIds.has(threadId)
+          ? threadId
+          : (atCwd?.id ?? sandbox.ownerThreadId);
+      const repositoryProject =
+        (atCwd === undefined ? undefined : rootAt(atCwd)?.projectId) ?? sandbox.projectId;
+      if (!(yield* isGitHubProject(repositoryProject))) {
         return yield* new GitManagerError({
           operation: OPERATION,
           cwd,

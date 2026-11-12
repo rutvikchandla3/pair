@@ -99,7 +99,7 @@ export class CloudMoves extends Context.Service<
 >()("t3/cloudMove/CloudMoves") {}
 
 const failed = (message: string) => () => new ThreadMoveError({ reason: "failed", message });
-const WORKSPACE_MESSAGE = "Workspaces don't run in Cloud yet.";
+const WORKSPACE_MESSAGE = "A workspace thread can't move between a Mac and Pair Cloud yet.";
 const refused = (reason: ThreadMoveError["reason"], message: string) =>
   new ThreadMoveError({ reason, message });
 const seedFailed = () => refused("seed-failed", CloudMoveClient.SEED_FAILED_MESSAGE);

@@ -1103,6 +1103,7 @@ export function createThreadOutboxDelivery(): {
         runtimeMode: sendSettings.runtimeMode,
         interactionMode: sendSettings.interactionMode,
         workspaceMode: workspace.workspaceMode,
+        ...(workspace.workspace ? { workspace: true } : {}),
         branch: workspace.branch,
         worktreePath: workspace.worktreePath,
         startFromOrigin: workspace.startFromOrigin ?? false,

@@ -1,7 +1,7 @@
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
 import { DraftThreadHeader } from "./DraftThreadHeader";
-import { WORKSPACE_WORKTREE_REASON } from "./workspace-repositories";
+import { WORKSPACE_CLOUD_REASON, WORKSPACE_WORKTREE_REASON } from "./workspace-repositories";
 import { threadHeaderAppearance } from "./thread-header-appearance";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useComposerAttachmentActions } from "../../state/use-composer-attachment-actions";
@@ -13,14 +13,18 @@ import { useRememberThreadProject } from "./useRememberThreadProject";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
 import { AppBar } from "../../components/ui/AppBar";
-import { ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   CommonActions,
   StackActions,
@@ -29,7 +33,7 @@ import {
   usePreventRemove,
   useRoute,
 } from "@react-navigation/native";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { KeyboardController } from "react-native-keyboard-controller";
@@ -58,6 +62,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
+import { uuidv4 } from "../../lib/uuid";
 
 import {
   clearComposerDraftContent,
@@ -65,7 +70,7 @@ import {
   updateComposerDraftSettings,
   scheduleUnusedComposerAttachmentCleanup,
 } from "../../state/use-composer-drafts";
-import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
+import { useEnvironmentServerConfig, useProjects, waitForProject } from "../../state/entities";
 import { useProjectClone } from "../../state/projectClones";
 import { projectEnvironment } from "../../state/projects";
 import { sourceControlEnvironment } from "../../state/sourceControl";
@@ -111,10 +116,12 @@ const WORKSPACE_MODE_MENU_ID = "workspace-mode:";
 /**
  * Cloud is a Pair Cloud project's only mode. A local project keeps its two modes and adds one
  * Cloud entry per Pair Cloud with the repo, each disabled with its reason when it can't launch.
+ * A workspace has no current checkout, and a Pair Cloud without it offers to create it.
  */
 function workspaceModeMenuActions(input: {
   readonly cloud: NewTaskCloud;
   readonly cloudLaunch: boolean;
+  readonly workspace: boolean;
   readonly workspaceMode: NewTaskWorkspaceMode;
 }): MenuAction[] {
   const { cloud } = input;
@@ -135,7 +142,7 @@ function workspaceModeMenuActions(input: {
       ? [cloudEntry("cloud", "Cloud", cloud.message, input.workspaceMode === "cloud")]
       : cloud.options.map((option) =>
           cloudEntry(
-            `cloud:${option.environmentId}`,
+            `${option.create ? "create" : "cloud"}:${option.environmentId}`,
             option.title,
             option.disabledReason,
             input.workspaceMode === "cloud" &&
@@ -149,6 +156,7 @@ function workspaceModeMenuActions(input: {
     image: mode === "local" ? "folder" : "arrow.triangle.branch",
     ...(input.workspaceMode === mode ? { state: "on" as const } : {}),
   });
+  if (input.workspace) return [localEntry("worktree"), ...cloudEntries];
   return [localEntry("local"), localEntry("worktree"), ...cloudEntries];
 }
 
@@ -617,13 +625,52 @@ export function NewTaskDraftScreen(props: {
     workspaceMode: flow.workspaceMode,
     pullRequestReference: flow.pullRequestReference,
   });
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const [creatingOnPairCloud, setCreatingOnPairCloud] = useState<string | null>(null);
+  // State lags a render behind, so a double tap could start a second create.
+  const creatingOnPairCloudRef = useRef(false);
+  const createOnPairCloud = async (
+    environmentId: EnvironmentId,
+    target: NonNullable<NewTaskCloud["options"][number]["create"]>,
+    pick: EnvironmentId | undefined,
+  ) => {
+    if (creatingOnPairCloudRef.current) return;
+    creatingOnPairCloudRef.current = true;
+    setCreatingOnPairCloud(target.label);
+    const projectId = ProjectId.make(uuidv4());
+    const title = `Could not create the workspace on ${target.label}`;
+    const describe = (error: unknown) =>
+      error instanceof Error ? error.message : "An error occurred.";
+    const create = async () => {
+      const result = await createProject({
+        environmentId,
+        input: { projectId, title: target.workspace.title, roots: target.workspace.roots },
+      });
+      if (AsyncResult.isFailure(result)) {
+        return isAtomCommandInterrupted(result) ? null : describe(squashAtomCommandFailure(result));
+      }
+      // Cloud then routes this draft to the new workspace, so the send launches there.
+      if ((await waitForProject({ environmentId, projectId }, 15_000)) === null) {
+        return "The workspace was created but has not reached this device yet. Choose Cloud once it appears.";
+      }
+      flow.setWorkspaceMode("cloud", pick);
+      return null;
+    };
+    // React Compiler cannot lower try/finally, so a rejection becomes a message instead.
+    const problem = await create().catch(describe);
+    if (problem !== null) Dialog.alert(title, problem);
+    creatingOnPairCloudRef.current = false;
+    setCreatingOnPairCloud(null);
+  };
   const workspaceLabel =
-    flow.workspaceMode === "cloud" && flow.cloud.options.length > 1 && flow.cloud.target
-      ? `Cloud on ${flow.cloud.target.label}`
-      : resolveNewTaskWorkspaceLabel({
-          workspaceMode: flow.workspaceMode,
-          worktreePath: flow.selectedWorktreePath,
-        });
+    creatingOnPairCloud !== null
+      ? `Creating on ${creatingOnPairCloud}…`
+      : flow.workspaceMode === "cloud" && flow.cloud.options.length > 1 && flow.cloud.target
+        ? `Cloud on ${flow.cloud.target.label}`
+        : resolveNewTaskWorkspaceLabel({
+            workspaceMode: flow.workspaceMode,
+            worktreePath: flow.selectedWorktreePath,
+          });
   const showBranchLoading =
     environmentConnected && flow.branchesLoading && flow.availableBranches.length === 0;
 
@@ -647,7 +694,8 @@ export function NewTaskDraftScreen(props: {
       cloneBlocksStart ||
       !isIncomingShareReady ||
       isImportingShare ||
-      isComposerInteractionLocked
+      isComposerInteractionLocked ||
+      creatingOnPairCloudRef.current
     ) {
       return null;
     }
@@ -774,13 +822,15 @@ export function NewTaskDraftScreen(props: {
         ? "Wait for the project clone to finish."
         : flow.submitting
           ? "Starting the thread…"
-          : flow.workspaceMode !== "local" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
-            ? flow.workspaceMode === "cloud"
-              ? "Choose a base branch before starting a machine."
-              : "Choose a base branch before creating a worktree."
-            : flow.cloudBranch?.kind === "block"
-              ? flow.cloudBranch.message
-              : null
+          : creatingOnPairCloud !== null
+            ? `Creating the workspace on ${creatingOnPairCloud}…`
+            : flow.workspaceMode !== "local" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
+              ? flow.workspaceMode === "cloud"
+                ? "Choose a base branch before starting a machine."
+                : "Choose a base branch before creating a worktree."
+              : flow.cloudBranch?.kind === "block"
+                ? flow.cloudBranch.message
+                : null
       : "Wait for shared content to finish importing.";
   const chooseProject = () => {
     if (isComposerInteractionLocked) {
@@ -900,7 +950,8 @@ export function NewTaskDraftScreen(props: {
       </NativeScrollEdgeEffectsContext>
     );
 
-  const workspaceDisabled = isComposerInteractionLocked || !flow.isGitRepo;
+  const workspaceDisabled =
+    isComposerInteractionLocked || !flow.isGitRepo || creatingOnPairCloud !== null;
   // Off a cloud-only server the control stays the two-way toggle it always was.
   const offersCloud = flow.cloud.offered;
   const workspaceControl = (
@@ -929,36 +980,41 @@ export function NewTaskDraftScreen(props: {
       showChevron={offersCloud}
     />
   );
+  const workspaceMenu = (control: ReactNode) =>
+    offersCloud && !workspaceDisabled ? (
+      <Menu
+        accessibilityLabel={workspaceLabel}
+        actions={workspaceModeMenuActions({
+          cloud: flow.cloud,
+          cloudLaunch: flow.cloudLaunch,
+          workspace: flow.isWorkspace,
+          workspaceMode: flow.workspaceMode,
+        })}
+        onPressAction={({ nativeEvent }) => {
+          const choice = nativeEvent.event.slice(WORKSPACE_MODE_MENU_ID.length);
+          if (choice === "local" || choice === "worktree") flow.setWorkspaceMode(choice);
+          const option = flow.cloud.options.find(
+            (candidate) =>
+              choice === `${candidate.create ? "create" : "cloud"}:${candidate.environmentId}`,
+          );
+          if (!option || option.disabledReason !== null) return;
+          // The pick is stored only among several Pair Clouds; one target is derived.
+          const pick = flow.cloud.options.length > 1 ? option.environmentId : undefined;
+          if (option.create) {
+            void createOnPairCloud(option.environmentId, option.create, pick);
+            return;
+          }
+          flow.setWorkspaceMode("cloud", pick);
+        }}
+      >
+        {control}
+      </Menu>
+    ) : (
+      control
+    );
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
-      {offersCloud && !workspaceDisabled ? (
-        <Menu
-          accessibilityLabel={workspaceLabel}
-          actions={workspaceModeMenuActions({
-            cloud: flow.cloud,
-            cloudLaunch: flow.cloudLaunch,
-            workspaceMode: flow.workspaceMode,
-          })}
-          onPressAction={({ nativeEvent }) => {
-            const choice = nativeEvent.event.slice(WORKSPACE_MODE_MENU_ID.length);
-            if (choice === "local" || choice === "worktree") flow.setWorkspaceMode(choice);
-            const option = flow.cloud.options.find(
-              (candidate) => choice === `cloud:${candidate.environmentId}`,
-            );
-            if (option && option.disabledReason === null) {
-              // The pick is stored only among several Pair Clouds; one target is derived.
-              flow.setWorkspaceMode(
-                "cloud",
-                flow.cloud.options.length > 1 ? option.environmentId : undefined,
-              );
-            }
-          }}
-        >
-          {workspaceControl}
-        </Menu>
-      ) : (
-        workspaceControl
-      )}
+      {workspaceMenu(workspaceControl)}
 
       <View className="min-w-0 shrink">
         <ComposerInlineControl
@@ -974,22 +1030,31 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
-  // A workspace starts each repository's worktree from its own default branch, so nothing is chosen.
+  // A workspace starts each repository from its own default branch, so no branch is chosen.
   const workspaceProjectControls = (
     <View className="gap-1 px-2">
       <View className="flex-row">
-        <ComposerInlineControl
-          accessibilityLabel={workspaceLabel}
-          static
-          renderIcon={(size) => (
-            <NewTaskWorkspaceIcon workspaceMode="worktree" worktreePath={null} size={size} />
-          )}
-          label={workspaceLabel}
-          maxWidth="100%"
-        />
+        {workspaceMenu(
+          <ComposerInlineControl
+            {...(offersCloud
+              ? { accessibilityHint: "Chooses where the thread runs", disabled: workspaceDisabled }
+              : { static: true })}
+            accessibilityLabel={workspaceLabel}
+            renderIcon={(size) => (
+              <NewTaskWorkspaceIcon
+                workspaceMode={flow.workspaceMode}
+                worktreePath={null}
+                size={size}
+              />
+            )}
+            label={workspaceLabel}
+            maxWidth="100%"
+            showChevron={offersCloud}
+          />,
+        )}
       </View>
       <Text textRole="footnote" className="px-1 text-foreground-muted">
-        {WORKSPACE_WORKTREE_REASON}
+        {flow.workspaceMode === "cloud" ? WORKSPACE_CLOUD_REASON : WORKSPACE_WORKTREE_REASON}
       </Text>
     </View>
   );

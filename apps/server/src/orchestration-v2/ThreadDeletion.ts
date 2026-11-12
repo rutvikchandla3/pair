@@ -233,18 +233,26 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     threadId: command.threadId,
     request: { type: "preview.cleanup" },
   });
-  // 07 §9: a deleted cloud thread's mirror refs go now; maintenance prunes their objects.
+  // 07 §9: a deleted cloud thread's mirror refs go now; maintenance prunes their objects. A
+  // workspace thread's refs are in each root project's mirror.
   if (projection.thread.sandboxId !== undefined) {
-    effects.push({
-      id: `effect:${command.commandId}:sandbox.mirror.forget-thread`,
-      commandId: command.commandId,
-      threadId: command.threadId,
-      request: {
-        type: "sandbox.mirror.forget-thread",
-        projectId: projection.thread.projectId,
-        checkpointRefs: projection.checkpoints.map((checkpoint) => checkpoint.ref),
-      },
-    });
+    const roots = projection.thread.roots;
+    const mirrors =
+      roots === undefined
+        ? [{ suffix: "", projectId: projection.thread.projectId }]
+        : roots.map((root) => ({ suffix: `:${root.name}`, projectId: root.projectId }));
+    for (const { suffix, projectId } of mirrors) {
+      effects.push({
+        id: `effect:${command.commandId}:sandbox.mirror.forget-thread${suffix}`,
+        commandId: command.commandId,
+        threadId: command.threadId,
+        request: {
+          type: "sandbox.mirror.forget-thread",
+          projectId,
+          checkpointRefs: projection.checkpoints.map((checkpoint) => checkpoint.ref),
+        },
+      });
+    }
   }
   const attachmentIds = Array.from(new Set(input.attachmentIds));
   if (attachmentIds.length > 0) {

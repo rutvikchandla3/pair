@@ -249,6 +249,193 @@ describe("resolveCloudTarget", () => {
   });
 });
 
+describe("resolveCloudTarget for a workspace", () => {
+  const workspace = (
+    id: string,
+    environmentId: EnvironmentId,
+    roots: ReadonlyArray<readonly [string, string]>,
+    extra: { readonly createdAt?: string } = {},
+  ): EnvironmentProject => ({
+    ...project(id, environmentId, null, extra),
+    title: "Shop",
+    roots: roots.map(([projectId, name]) => ({ projectId: ProjectId.make(projectId), name })),
+  });
+  const api = project("api", mac, "github.com/acme/api");
+  const web = project("web", mac, "github.com/Acme/Web");
+  const localWorkspace = workspace("ws", mac, [
+    ["api", "api"],
+    ["web", "web"],
+  ]);
+  const cloudApi = project("cloud-api", cloud, "github.com/acme/api");
+  const cloudWeb = project("cloud-web", cloud, "github.com/acme/web");
+  const cloudOther = project("cloud-other", cloud, "github.com/acme/other");
+  const local = [api, web, localWorkspace];
+  const option = (overrides: Partial<CloudTargetOption>): CloudTarget =>
+    targets({
+      environmentId: cloud,
+      label: "Pair Cloud",
+      projectId: null,
+      disabledReason: null,
+      ...overrides,
+    });
+  const create = option({
+    createWorkspace: {
+      title: "Shop",
+      roots: [
+        { projectId: cloudApi.id, name: "api" },
+        { projectId: cloudWeb.id, name: "web" },
+      ],
+    },
+  });
+
+  it.each([
+    {
+      name: "the same repositories in another order and folders",
+      projects: [
+        ...local,
+        cloudApi,
+        cloudWeb,
+        workspace("cloud-ws", cloud, [
+          ["cloud-web", "frontend"],
+          ["cloud-api", "backend"],
+        ]),
+      ],
+      expected: option({ projectId: ProjectId.make("cloud-ws") }),
+    },
+    {
+      name: "the oldest of two matches",
+      projects: [
+        ...local,
+        cloudApi,
+        cloudWeb,
+        workspace("cloud-ws", cloud, [
+          ["cloud-api", "api"],
+          ["cloud-web", "web"],
+        ]),
+        workspace(
+          "older-ws",
+          cloud,
+          [
+            ["cloud-api", "api"],
+            ["cloud-web", "web"],
+          ],
+          { createdAt: "2026-01-01T00:00:00.000Z" },
+        ),
+      ],
+      expected: option({ projectId: ProjectId.make("older-ws") }),
+    },
+    {
+      name: "a subset workspace, which is no match (create)",
+      projects: [
+        ...local,
+        cloudApi,
+        cloudWeb,
+        cloudOther,
+        workspace("sub", cloud, [
+          ["cloud-api", "api"],
+          ["cloud-other", "other"],
+        ]),
+      ],
+      expected: create,
+    },
+    {
+      name: "a superset workspace, which is no match (create)",
+      projects: [
+        ...local,
+        cloudApi,
+        cloudWeb,
+        cloudOther,
+        workspace("super", cloud, [
+          ["cloud-api", "api"],
+          ["cloud-web", "web"],
+          ["cloud-other", "other"],
+        ]),
+      ],
+      expected: create,
+    },
+    {
+      name: "every repository on Pair Cloud and no workspace (create)",
+      projects: [...local, cloudApi, cloudWeb],
+      expected: create,
+    },
+    {
+      name: "a repository missing from Pair Cloud",
+      projects: [...local, cloudApi],
+      expected: option({ disabledReason: "Add acme/web to Pair Cloud first." }),
+    },
+    {
+      name: "every repository missing from Pair Cloud",
+      projects: [...local, cloudOther],
+      expected: option({ disabledReason: "Add acme/api and acme/web to Pair Cloud first." }),
+    },
+    {
+      name: "a match with Cloud turned off for it",
+      environments: [macEnv, environment(cloud, "Pair Cloud", config(true, ["cloud-ws"]))],
+      projects: [
+        ...local,
+        cloudApi,
+        cloudWeb,
+        workspace("cloud-ws", cloud, [
+          ["cloud-api", "api"],
+          ["cloud-web", "web"],
+        ]),
+      ],
+      expected: option({
+        projectId: ProjectId.make("cloud-ws"),
+        disabledReason: "Cloud threads are turned off for this project.",
+      }),
+    },
+    {
+      name: "Pair Cloud offline",
+      environments: [macEnv, environment(cloud, "Pair Cloud", config(true), false)],
+      projects: [...local, cloudApi],
+      expected: option({ disabledReason: "Pair Cloud is offline." }),
+    },
+    {
+      name: "no Pair Cloud (hidden)",
+      environments: [macEnv],
+      projects: [...local, cloudApi, cloudWeb],
+      expected: { kind: "hidden" },
+    },
+    {
+      name: "a repository that isn't on github.com",
+      projects: [api, project("web", mac, "gitlab.com/acme/web"), localWorkspace, cloudApi],
+      expected: {
+        kind: "unavailable",
+        message: "web/ isn't a github.com repository, so this workspace can't run in Pair Cloud.",
+      },
+    },
+    {
+      name: "a repository whose project is gone",
+      projects: [api, localWorkspace, cloudApi, cloudWeb],
+      expected: {
+        kind: "unavailable",
+        message:
+          "web/ belongs to a project that no longer exists. Edit the workspace's repositories.",
+      },
+    },
+  ] as const)("resolves $name", ({ projects, expected, ...rest }) => {
+    const environments = "environments" in rest ? rest.environments : [macEnv, cloudEnv];
+    expect(resolveCloudTarget({ project: localWorkspace, environments, projects })).toEqual(
+      expected,
+    );
+  });
+
+  it("is its own target on Pair Cloud", () => {
+    const onCloud = workspace("cloud-ws", cloud, [
+      ["cloud-api", "api"],
+      ["cloud-web", "web"],
+    ]);
+    expect(
+      resolveCloudTarget({
+        project: onCloud,
+        environments: [macEnv, cloudEnv],
+        projects: [cloudApi, cloudWeb, onCloud],
+      }),
+    ).toEqual(option({ projectId: onCloud.id }));
+  });
+});
+
 describe("routedCloudLaunch", () => {
   it.each([
     { name: "the default branch", selectedBranch: "main", expected: { baseRef: "main" } },

@@ -727,7 +727,8 @@ function TaskForm({
   };
 
   const cloudLaunch = config?.environment.capabilities.cloudLaunch === true;
-  // A workspace runs only in a new worktree of each repository, each from its default branch.
+  // A workspace runs in a new worktree of each repository, each from its default branch; on a
+  // cloud-only environment those worktrees are on a machine.
   const selectedIsWorkspace = isWorkspaceProject(
     projects.find((project) => project.id === draft.projectId),
   );

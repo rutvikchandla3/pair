@@ -339,7 +339,7 @@ type Runtime = Effect.Success<ReturnType<typeof makeSandboxRuntime>>;
 
 type SnapshotStatus = Effect.Success<
   ReturnType<CheckpointService.CheckpointServiceV2["Service"]["captureSnapshot"]>
->;
+>["status"];
 
 /** The stop's snapshot services: `capture` answers each checkout, and every sync lands. */
 const makeSnapshotFakes = Effect.fn("SandboxLifecycleTest.makeSnapshotFakes")(function* (
@@ -353,6 +353,7 @@ const makeSnapshotFakes = Effect.fn("SandboxLifecycleTest.makeSnapshotFakes")(fu
       captureSnapshot: ({ cwd, ref }) =>
         Ref.update(captures, (all) => [...all, [cwd, ref] as const]).pipe(
           Effect.andThen(capture(cwd)),
+          Effect.map((status) => ({ status, uncaptured: [] })),
         ),
     }),
     Layer.mock(MirrorSyncWorker.MirrorSyncWorker)({

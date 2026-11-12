@@ -38,6 +38,7 @@ const SNAPSHOT_TIMEOUT = Duration.seconds(15);
 export const CLOUD_MOVE_SOURCE_MESSAGES = {
   "not-found": "This cloud thread no longer exists.",
   "side-chat": "Continue locally from the thread this one belongs to.",
+  workspace: "A workspace thread can't move between a Mac and Pair Cloud yet.",
   "not-cloned": "This thread's machine hasn't cloned the repository yet.",
   "run-active": "A turn is running or waiting for an answer. Continue locally once it ends.",
   "snapshot-missing":
@@ -144,6 +145,7 @@ const make = Effect.gen(function* () {
     if (!isListedThreadLineage(shell.lineage)) {
       return yield* fail(threadId, "not-movable", "side-chat")();
     }
+    if (shell.roots !== undefined) return yield* fail(threadId, "not-movable", "workspace")();
     const { sandboxId, branch, worktreePath } = shell;
     if (sandboxId === undefined || branch === null || worktreePath === null) {
       return yield* fail(threadId, "not-movable")();
@@ -200,7 +202,7 @@ const make = Effect.gen(function* () {
     if (record.state === "ready" && record.runnerLostAt === null) {
       const ref = sandboxSnapshotRef(namer);
       const synced = yield* checkpoints.captureSnapshot({ cwd: worktreePath, ref }).pipe(
-        Effect.flatMap((status) =>
+        Effect.flatMap(({ status }) =>
           status === "ready"
             ? mirrorWorker.syncRefs({
                 threadId: namer,

@@ -85,10 +85,29 @@ describe("resolvePendingDraftBranch", () => {
     expect(resolve({ draft: chosen, branches, projectCwd })).toBe("release");
   });
 
-  it("shows no branch for a workspace, whose repositories each start from their default", () => {
-    const workspace = { ...worktreeDefault, workspace: true };
-    const chosen = draft({ mode: "local", branch: "release", worktreePath: null });
-    expect(pendingDraftBranchNeedsRefs(chosen, workspace)).toBe(false);
-    expect(resolve({ draft: chosen, defaults: workspace, branches, projectCwd })).toBeNull();
+  // A workspace's repositories each start from their own default, wherever the task runs.
+  it.each([
+    { name: "on a local server with a matching Pair Cloud workspace", cloudAvailable: true },
+    { name: "on a local server where Pair Cloud can create it", cloudAvailable: false },
+    { name: "on a local server with repositories missing from Pair Cloud", cloudAvailable: false },
+    { name: "on a local server with no Pair Cloud", cloudAvailable: false },
+    { name: "on a cloud-only environment", cloudAvailable: true, cloudLaunch: true },
+  ])("shows no branch for a workspace $name", ({ cloudAvailable, cloudLaunch = false }) => {
+    const workspace = {
+      ...worktreeDefault,
+      canChooseWorkspace: false,
+      defaultMode: cloudLaunch ? ("cloud" as const) : ("worktree" as const),
+      cloudAvailable,
+      cloudLaunch,
+      workspace: true,
+    };
+    for (const pending of [
+      draft(),
+      draft({ mode: "cloud", branch: null, worktreePath: null }),
+      draft({ mode: "local", branch: "release", worktreePath: null }),
+    ]) {
+      expect(pendingDraftBranchNeedsRefs(pending, workspace)).toBe(false);
+      expect(resolve({ draft: pending, defaults: workspace, branches, projectCwd })).toBeNull();
+    }
   });
 });

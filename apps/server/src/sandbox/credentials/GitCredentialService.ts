@@ -63,6 +63,12 @@ const MISSING = refused(
   "github-credential-missing",
   "Connect GitHub to push: Settings → Team, your row.",
 );
+/** A workspace thread pushes to several repositories, so its refusal names the one that failed. */
+const missingFor = (repository: string) =>
+  refused(
+    "github-credential-missing",
+    `Connect GitHub to push to ${repository}: Settings → Team, your row.`,
+  );
 const NOT_THIS_THREAD = refused(
   "not-this-repository",
   "This process's thread does not run on this cloud machine.",
@@ -157,6 +163,25 @@ const make = Effect.gen(function* () {
     const identity = yield* identities.resolve(project.value.workspaceRoot);
     const key = identity?.canonicalKey.toLowerCase() ?? "";
     return key.startsWith(`${HOST}/`) ? repositoryFromPath(key.slice(HOST.length)) : null;
+  });
+
+  /**
+   * Each repository the thread may push to: its project's, or a workspace's roots' (the thread's
+   * copy once its checkout is recorded, else the workspace's own while it clones).
+   */
+  const threadRepositories = Effect.fn("GitCredentialService.threadRepositories")(function* (
+    projectId: ProjectId,
+    threadRoots: ReadonlyArray<{ readonly projectId: ProjectId }> | undefined,
+  ) {
+    const project = yield* projects.get(projectId);
+    if (Option.isNone(project)) return [];
+    const roots = threadRoots ?? project.value.roots;
+    if (roots === undefined) {
+      const repository = yield* projectRepository(projectId);
+      return repository === null ? [] : [repository];
+    }
+    const repositories = yield* Effect.forEach(roots, (root) => projectRepository(root.projectId));
+    return [...new Set(repositories.filter((repository) => repository !== null))];
   });
 
   const pick = Effect.fn("GitCredentialService.pick")(function* (
@@ -265,8 +290,9 @@ const make = Effect.gen(function* () {
   const toAnswer = Effect.fn("GitCredentialService.toAnswer")(function* (
     picked: Option.Option<PickedCredential>,
     context: AnswerContext,
+    missing: RunnerGitCredentialAnswer,
   ) {
-    if (Option.isNone(picked)) return MISSING;
+    if (Option.isNone(picked)) return missing;
     yield* record(picked.value, context);
     return {
       _tag: "Credential",
@@ -289,9 +315,9 @@ const make = Effect.gen(function* () {
       const attached = yield* projections.listSandboxThreads(input.sandboxId);
       if (!attached.some((row) => row.threadId === threadId)) return NOT_THIS_THREAD;
       const thread = yield* projections.getThread(threadId);
-      const project = yield* projectRepository(sandbox.projectId);
+      const repositories = yield* threadRepositories(sandbox.projectId, thread.roots);
       const requested = repositoryFromPath(input.path);
-      if (project === null) {
+      if (repositories.length === 0) {
         return refused(
           "not-this-repository",
           "This project has no github.com repository to push to.",
@@ -299,7 +325,9 @@ const make = Effect.gen(function* () {
       }
       const notThisRepository = refused(
         "not-this-repository",
-        `Cloud threads push only to ${project} and its forks.`,
+        repositories.length === 1
+          ? `Cloud threads push only to ${repositories[0]} and its forks.`
+          : `Cloud threads push only to ${repositories.join(", ")} and their forks.`,
       );
       if (requested === null) return notThisRepository;
       const context: AnswerContext = {
@@ -308,14 +336,25 @@ const make = Effect.gen(function* () {
         threadId,
         repository: requested,
       };
+      const missing = repositories.length === 1 ? MISSING : missingFor(requested);
       const ownerId = thread.ownerId ?? null;
-      const forProject = yield* pick(input.sandboxId, ownerId, project);
-      if (requested === project) return yield* toAnswer(forProject, context);
-      if (Option.isNone(forProject)) return MISSING;
-      if (!(yield* isForkOf(input.sandboxId, requested, project, forProject.value))) {
-        return notThisRepository;
+      if (repositories.includes(requested)) {
+        return yield* toAnswer(yield* pick(input.sandboxId, ownerId, requested), context, missing);
       }
-      return yield* toAnswer(yield* pick(input.sandboxId, ownerId, requested), context);
+      let checked = false;
+      for (const parent of repositories) {
+        const forParent = yield* pick(input.sandboxId, ownerId, parent);
+        if (Option.isNone(forParent)) continue;
+        checked = true;
+        if (yield* isForkOf(input.sandboxId, requested, parent, forParent.value)) {
+          return yield* toAnswer(
+            yield* pick(input.sandboxId, ownerId, requested),
+            context,
+            missing,
+          );
+        }
+      }
+      return checked ? notThisRepository : missing;
     },
     (effect, input) =>
       effect.pipe(

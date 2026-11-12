@@ -17,7 +17,9 @@ import {
   type CloudTarget,
   type CloudTargetOption,
   isCloudLaunchEnvironment,
+  type PairCloudWorkspace,
 } from "@t3tools/client-runtime/state/cloud-target";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import {
   deriveLogicalProjectKeyFromSettings,
   type ProjectGroupingSettings,
@@ -256,12 +258,18 @@ export function resolveCloudLaunchTarget(
 export interface CloudEnvModeRow {
   readonly value: string;
   readonly label: string;
-  /** Launch there (null: the only target), or add the repo to that Pair Cloud. */
+  /** Launch there (null: the only target), add the repo to that Pair Cloud, or create the workspace there. */
   readonly action:
     | { readonly kind: "launch"; readonly environmentId: EnvironmentId | null }
-    | { readonly kind: "add"; readonly environmentId: EnvironmentId; readonly label: string };
+    | { readonly kind: "add"; readonly environmentId: EnvironmentId; readonly label: string }
+    | {
+        readonly kind: "create";
+        readonly environmentId: EnvironmentId;
+        readonly label: string;
+        readonly workspace: PairCloudWorkspace;
+      };
   readonly disabled: boolean;
-  /** Shown on hover: why it is disabled, or what Add does. */
+  /** Shown on hover: why it is disabled, or what Add or Create does. */
   readonly reason: string | null;
 }
 
@@ -297,7 +305,7 @@ function repositoryName(project: Pick<EnvironmentProject, "repositoryIdentity"> 
 /** Cloud's rows in both workspace pickers: null hides them, so servers that aren't cloud-only look as before. */
 export function resolveCloudEnvModeItem(input: {
   cloud: CloudTarget;
-  project: Pick<EnvironmentProject, "environmentId" | "repositoryIdentity"> | null;
+  project: Pick<EnvironmentProject, "environmentId" | "repositoryIdentity" | "roots"> | null;
   cloudEnvironmentId: EnvironmentId | undefined;
   effectiveEnvMode: EnvMode;
   isServerThread: boolean;
@@ -327,17 +335,42 @@ export function resolveCloudEnvModeItem(input: {
   }
   const several = cloud.targets.length > 1;
   const repository = repositoryName(input.project);
+  const workspace = isWorkspaceProject(input.project);
+  // Why a target with no project there can't launch yet.
+  const notThereReason = (target: CloudTargetOption) =>
+    target.disabledReason ??
+    (target.createWorkspace
+      ? `Create this workspace on ${target.label} first.`
+      : `Add ${repository} to ${target.label} first.`);
   const rows = cloud.targets.map((target): CloudEnvModeRow => {
-    if (target.projectId === null) {
+    if (target.projectId === null && target.createWorkspace !== undefined) {
+      return {
+        value: `create:${target.environmentId}`,
+        label: several ? `Create on ${target.label}` : "Create on Pair Cloud",
+        action: {
+          kind: "create",
+          environmentId: target.environmentId,
+          label: target.label,
+          workspace: target.createWorkspace,
+        },
+        disabled: target.disabledReason !== null,
+        reason:
+          target.disabledReason ??
+          `Create this workspace on ${target.label} from its repositories there.`,
+      };
+    }
+    if (target.projectId === null && !workspace) {
       return {
         value: `add:${target.environmentId}`,
         label: several ? `Add to ${target.label}` : "Add to Pair Cloud",
         action: { kind: "add", environmentId: target.environmentId, label: target.label },
         disabled: target.disabledReason !== null,
-        reason: target.disabledReason ?? `Add ${repository} to ${target.label} first.`,
+        reason: notThereReason(target),
       };
     }
-    const reason = worktreeReason ?? target.disabledReason;
+    const reason =
+      worktreeReason ??
+      (target.projectId === null ? notThereReason(target) : target.disabledReason);
     return {
       value: several ? `cloud:${target.environmentId}` : "cloud",
       label: several ? `Cloud on ${target.label}` : resolveEnvModeLabel("cloud"),
@@ -348,13 +381,15 @@ export function resolveCloudEnvModeItem(input: {
   });
   const chosen = chooseCloudTarget(cloud, input.cloudEnvironmentId);
   const chosenRow = rows[chosen === null ? -1 : cloud.targets.indexOf(chosen)];
+  const shown = chosen ?? first;
   return {
     disabledReason:
       worktreeReason ??
-      (chosen === null
-        ? (rows[0]?.reason ?? null)
-        : (chosen.disabledReason ??
-          (chosen.projectId === null ? `Add ${repository} to ${chosen.label} first.` : null))),
+      (shown === undefined
+        ? null
+        : shown.projectId === null
+          ? notThereReason(shown)
+          : shown.disabledReason),
     only: false,
     rows,
     value: chosenRow?.action.kind === "launch" ? chosenRow.value : "cloud",
@@ -461,17 +496,17 @@ export function resolveEffectiveEnvMode(input: {
   cloudAvailable: boolean;
   /** The environment's `capabilities.cloudLaunch`: every draft there is cloud. */
   cloudLaunch: boolean;
-  /** A workspace thread runs only in a new folder of worktrees, whatever the draft holds. */
+  /** Off the cloud, a workspace thread runs only in a new folder of worktrees. */
   workspace?: boolean;
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode, preparingWorktree } = input;
-  if (input.workspace === true) return "worktree";
   if (hasServerThread && input.sandboxId !== undefined) return "cloud";
   if (!hasServerThread && input.cloudLaunch) return "cloud";
   // A cloud draft falls back in render when Cloud goes away; the stored draft keeps its choice.
   if (!hasServerThread && draftThreadEnvMode === "cloud") {
     return input.cloudAvailable ? "cloud" : "worktree";
   }
+  if (input.workspace === true) return "worktree";
   if (!hasServerThread) {
     if (activeWorktreePath) {
       return "local";

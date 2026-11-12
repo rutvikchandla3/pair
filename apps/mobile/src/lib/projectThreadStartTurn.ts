@@ -14,6 +14,7 @@ import {
   threadTitleTextFromPrompt,
 } from "@t3tools/client-runtime/operations";
 import { routedCloudLaunch } from "@t3tools/client-runtime/state/cloud-target";
+import { WORKSPACE_WORKTREE_BASE_REF } from "@t3tools/client-runtime/state/workspaces";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 import type { NewTaskWorkspaceMode } from "./newTaskWorkspaceMode";
@@ -33,6 +34,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceMode: NewTaskWorkspaceMode;
+  /** A workspace project: the server names one branch for every repository. */
+  readonly workspace?: boolean;
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
@@ -70,7 +73,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         modelSelection: spec.modelSelection,
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
-        branch: spec.branch,
+        branch: spec.workspace ? null : spec.branch,
         worktreePath: isLocal ? spec.worktreePath : null,
         createdAt: spec.createdAt,
       },
@@ -88,8 +91,9 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       // The server clones and sets up the workspace in the machine.
       ...(spec.workspaceMode === "cloud"
         ? {
-            prepareCloud:
-              spec.routedFromDefaultBranch === undefined
+            prepareCloud: spec.workspace
+              ? { baseRef: WORKSPACE_WORKTREE_BASE_REF }
+              : spec.routedFromDefaultBranch === undefined
                 ? { baseRef: spec.branch!, branch: spec.worktreeBranchName }
                 : routedCloudLaunch({
                     selectedBranch: spec.branch!,

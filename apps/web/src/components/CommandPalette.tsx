@@ -1291,10 +1291,9 @@ function OpenCommandPaletteDialog(props: {
     }
   };
 
-  // Cloud-launch servers refuse workspaces, and a workspace needs two projects to combine.
+  // A workspace needs two projects to combine.
   function canCreateWorkspace(environmentId: EnvironmentId): boolean {
     return (
-      !clonesWithoutDestination(environmentId) &&
       workspaceRepositoryCandidates(projects, environmentId).length >= MIN_WORKSPACE_REPOSITORIES
     );
   }

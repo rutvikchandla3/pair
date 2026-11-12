@@ -1,5 +1,10 @@
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
+import type { PairCloudWorkspace } from "@t3tools/client-runtime/state/cloud-target";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   isWorkspaceProject,
   type ThreadRepository,
@@ -30,7 +35,7 @@ import { flushSync } from "react-dom";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
+import { useProject, useThreadShellsForProjectRefs, waitForProject } from "../state/entities";
 import {
   ADD_TO_MACHINE_LABEL_CLASS,
   type CloudEnvModeItem,
@@ -59,6 +64,8 @@ import { addProjectToMachine } from "../lib/addProjectToMachine";
 import { newProjectId } from "../lib/utils";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useCloudTarget } from "../state/sandbox";
+import { projectEnvironment } from "../state/projects";
+import { useAtomCommand } from "../state/use-atom-command";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { BranchToolbarEnvModeSelector, CloudEnvModeTooltip } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
@@ -168,6 +175,8 @@ interface RunContextSelectorProps {
   workspaceRoot?: string;
   /** Why the run context is fixed to a new worktree, or null when it can change. */
   forcedWorktreeReason: string | null;
+  /** Why the current checkout is off while other modes stay open, or null. */
+  localDisabledReason: string | null;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
@@ -193,6 +202,7 @@ const RunContextSelector = memo(function RunContextSelector({
   displayMode = "toolbar",
   workspaceRoot,
   forcedWorktreeReason,
+  localDisabledReason,
   autoEnvironmentLabel,
   onAutoEnvironment,
   envLocked,
@@ -440,9 +450,9 @@ const RunContextSelector = memo(function RunContextSelector({
           >
             {cloudItem?.only ? null : (
               <>
-                <CloudEnvModeTooltip reason={forcedWorktreeReason}>
+                <CloudEnvModeTooltip reason={forcedWorktreeReason ?? localDisabledReason}>
                   <MenuRadioItem
-                    disabled={envModeLocked || forceNewWorktree}
+                    disabled={envModeLocked || forceNewWorktree || localDisabledReason !== null}
                     value="local"
                     closeOnClick
                   >
@@ -687,18 +697,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   const activeProjectRef = scopeProjectRef(environmentId, projectId);
   const activeProject = useProject(activeProjectRef);
   const workspace = isWorkspaceProject(activeProject);
-  // A started workspace thread already has its folder; only a new one is pinned to a new worktree.
-  const forcedWorktreeReason =
-    workspace && worktreePath === null
-      ? WORKSPACE_WORKTREE_REASON
-      : forceNewWorktree
-        ? MULTI_MODEL_WORKTREE_REASON
-        : null;
-  const forcesNewWorktree = forcedWorktreeReason !== null;
-  const activeWorktreePath = forcesNewWorktree ? null : worktreePath;
-  const effectiveEnvMode = forcesNewWorktree ? "worktree" : envMode;
-  const envModeLocked =
-    envLocked || (isServerThread && (activeWorktreePath !== null || envMode === "cloud"));
+  // A started workspace thread already has its folder; a new one never uses a checkout.
+  const workspaceDraft = workspace && worktreePath === null;
+  const multiModelReason = forceNewWorktree ? MULTI_MODEL_WORKTREE_REASON : null;
   const cloudEnvironmentId = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId)?.cloudEnvironmentId : undefined,
   );
@@ -706,10 +707,19 @@ export const BranchToolbar = memo(function BranchToolbar({
     cloud: useCloudTarget(isServerThread ? null : activeProjectRef),
     project: activeProject,
     cloudEnvironmentId,
-    effectiveEnvMode,
+    effectiveEnvMode: multiModelReason === null ? envMode : "worktree",
     isServerThread,
-    forcedWorktreeReason,
+    forcedWorktreeReason: multiModelReason,
   });
+  // With Cloud offered, a new workspace thread picks it or a new worktree; otherwise only the latter.
+  const forcedWorktreeReason =
+    multiModelReason ?? (workspaceDraft && cloudItem === null ? WORKSPACE_WORKTREE_REASON : null);
+  const localDisabledReason = workspaceDraft ? WORKSPACE_WORKTREE_REASON : null;
+  const forcesNewWorktree = forcedWorktreeReason !== null;
+  const activeWorktreePath = forcesNewWorktree ? null : worktreePath;
+  const effectiveEnvMode = forcesNewWorktree ? "worktree" : envMode;
+  const envModeLocked =
+    envLocked || (isServerThread && (activeWorktreePath !== null || envMode === "cloud"));
   const handleNewThread = useNewThreadHandler();
   const addingToPairCloud = useRef(false);
   const addToPairCloud = (target: { environmentId: EnvironmentId; label: string }) => {
@@ -741,9 +751,51 @@ export const BranchToolbar = memo(function BranchToolbar({
       },
     );
   };
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const creatingOnPairCloud = useRef(false);
+  const createOnPairCloud = async (target: {
+    environmentId: EnvironmentId;
+    label: string;
+    workspace: PairCloudWorkspace;
+  }) => {
+    if (creatingOnPairCloud.current) return;
+    creatingOnPairCloud.current = true;
+    const draftTarget = draftId ?? threadRef;
+    const newId = newProjectId();
+    const result = await createProject({
+      environmentId: target.environmentId,
+      input: { projectId: newId, title: target.workspace.title, roots: target.workspace.roots },
+    });
+    const report = (cause: unknown) =>
+      toastManager.add({
+        type: "error",
+        title: `Could not create the workspace on ${target.label}`,
+        description: cause instanceof Error ? cause.message : "An error occurred.",
+      });
+    try {
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) report(squashAtomCommandFailure(result));
+      } else {
+        // Cloud then routes this draft to the new workspace, so the next send launches there.
+        await waitForProject(scopeProjectRef(target.environmentId, newId));
+        setDraftThreadContext(draftTarget, {
+          cloudEnvironmentId: target.environmentId,
+          envMode: "cloud",
+        });
+      }
+    } catch (cause) {
+      report(cause);
+    }
+    // React Compiler cannot lower try/finally, so the reset follows the try/catch.
+    creatingOnPairCloud.current = false;
+  };
   const onCloudRow = (row: CloudEnvModeRow) => {
     if (row.action.kind === "add") {
       addToPairCloud(row.action);
+      return;
+    }
+    if (row.action.kind === "create") {
+      void createOnPairCloud(row.action);
       return;
     }
     if (row.action.environmentId !== null) {
@@ -752,7 +804,8 @@ export const BranchToolbar = memo(function BranchToolbar({
     onEnvModeChange("cloud");
   };
 
-  const canUsePreviousWorktree = !isServerThread && !envModeLocked && !forcesNewWorktree;
+  const canUsePreviousWorktree =
+    !isServerThread && !envModeLocked && !forcesNewWorktree && !workspace;
   const projectRefsForWorktreeLookup = canUsePreviousWorktree ? [activeProjectRef] : [];
   const projectThreads = useThreadShellsForProjectRefs(projectRefsForWorktreeLookup);
   const previousWorktreeSeed = canUsePreviousWorktree
@@ -819,6 +872,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             displayMode="panel"
             workspaceRoot={activeProject.workspaceRoot}
             forcedWorktreeReason={forcedWorktreeReason}
+            localDisabledReason={localDisabledReason}
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
             envLocked={envLocked}
@@ -873,6 +927,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         <div className="contents @xl/composer-surface:hidden">
           <RunContextSelector
             forcedWorktreeReason={forcedWorktreeReason}
+            localDisabledReason={localDisabledReason}
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
             envLocked={envLocked}
@@ -926,6 +981,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           {showGitControls ? (
             <BranchToolbarEnvModeSelector
               forcedWorktreeReason={forcedWorktreeReason}
+              localDisabledReason={localDisabledReason}
               envLocked={envModeLocked}
               effectiveEnvMode={effectiveEnvMode}
               activeWorktreePath={activeWorktreePath}

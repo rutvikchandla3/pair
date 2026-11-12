@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2Sandbox,
   ProjectId,
+  type ProjectRoot,
   SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -34,9 +35,16 @@ const sandboxB = SandboxId.make("sbx_000000000000000b1281");
 const ownerThread = ThreadId.make("thread-owner");
 const forkedThread = ThreadId.make("thread-fork-by-bob");
 const otherSandboxThread = ThreadId.make("thread-of-b");
+const workspaceThread = ThreadId.make("thread-workspace");
 const alice = MemberId.make("member-alice");
 const bob = MemberId.make("member-bob");
 const projectId = ProjectId.make("project");
+const apiProjectId = ProjectId.make("project-api");
+/** A workspace thread's repositories: Org/Repo and Org/Api. */
+const workspaceRoots: ReadonlyArray<ProjectRoot> = [
+  { projectId, name: "repo" },
+  { projectId: apiProjectId, name: "api" },
+];
 const expiresAt = DateTime.makeUnsafe("2026-11-07T13:00:00.000Z");
 
 const sandbox = (id: SandboxId, ownerThreadId: ThreadId): OrchestrationV2Sandbox => ({
@@ -59,13 +67,14 @@ const sandbox = (id: SandboxId, ownerThreadId: ThreadId): OrchestrationV2Sandbox
 
 /** Sandbox A runs alice's thread and bob's fork of it; sandbox B runs a thread of its own. */
 const threadsBySandbox = new Map([
-  [sandboxA, [ownerThread, forkedThread]],
+  [sandboxA, [ownerThread, forkedThread, workspaceThread]],
   [sandboxB, [otherSandboxThread]],
 ]);
 const owners = new Map([
   [ownerThread, alice],
   [forkedThread, bob],
   [otherSandboxThread, alice],
+  [workspaceThread, alice],
 ]);
 
 type AppOutcome = "token" | GitHubAppInstallationError["reason"];
@@ -173,6 +182,7 @@ const harness = (input: Case) => {
             Effect.succeed({
               id: threadId,
               ownerId: owners.get(threadId),
+              ...(threadId === workspaceThread ? { roots: workspaceRoots } : {}),
             } as OrchestrationV2AppThread),
         }),
         Layer.mock(ProjectStoreV2)({
@@ -180,23 +190,30 @@ const harness = (input: Case) => {
             Effect.succeed(
               id === projectId
                 ? Option.some({ projectId, workspaceRoot: "/work/repo" } as ProjectRow)
-                : Option.none(),
+                : id === apiProjectId
+                  ? Option.some({
+                      projectId: apiProjectId,
+                      workspaceRoot: "/work/api",
+                    } as ProjectRow)
+                  : Option.none(),
             ),
         }),
         Layer.mock(RepositoryIdentityResolver)({
-          resolve: (cwd) =>
-            Effect.succeed(
-              cwd === "/work/repo"
-                ? {
-                    canonicalKey: "github.com/org/repo",
+          resolve: (cwd) => {
+            const name = { "/work/repo": "Repo", "/work/api": "Api" }[cwd];
+            return Effect.succeed(
+              name === undefined
+                ? null
+                : {
+                    canonicalKey: `github.com/org/${name.toLowerCase()}`,
                     locator: {
                       source: "git-remote" as const,
                       remoteName: "origin",
-                      remoteUrl: "https://github.com/Org/Repo.git",
+                      remoteUrl: `https://github.com/Org/${name}.git`,
                     },
-                  }
-                : null,
-            ),
+                  },
+            );
+          },
         }),
       ),
     ),
@@ -217,7 +234,7 @@ const harness = (input: Case) => {
             password: Redacted.value(result.password),
             expires: result.expiresAt !== null,
           }
-        : { refused: result.code },
+        : { refused: result.code, message: result.message },
     ),
     Effect.provide(
       layer.pipe(
@@ -316,10 +333,36 @@ describe("GitCredentialService", () => {
       { app: "token", protocol: "http" },
       { refused: "unsupported-host" },
     ],
+    [
+      "a workspace thread's first repository",
+      { app: "token", threadId: workspaceThread },
+      { password: "ghs_org/repo", expires: true },
+    ],
+    [
+      "a workspace thread's second repository",
+      { app: "token", threadId: workspaceThread, path: "Org/Api.git" },
+      { password: "ghs_org/api", expires: true },
+    ],
+    [
+      "a refusal for a repository outside a workspace thread's",
+      { app: "token", threadId: workspaceThread, path: "other/repo.git" },
+      {
+        refused: "not-this-repository",
+        message: "Cloud threads push only to org/repo, org/api and their forks.",
+      },
+    ],
+    [
+      "a refusal naming the workspace repository nobody has a credential for",
+      { app: "unset", threadId: workspaceThread, path: "Org/Api.git" },
+      {
+        refused: "github-credential-missing",
+        message: "Connect GitHub to push to org/api: Settings → Team, your row.",
+      },
+    ],
   ])("answers %s", ([_name, input, expected]) =>
     Effect.gen(function* () {
       const { answer, logs } = harness(input);
-      expect(yield* answer).toEqual(expected);
+      expect(yield* answer).toMatchObject(expected as object);
       expect(logs.join("\n")).not.toMatch(/gh[su]_/u);
     }),
   );
@@ -416,7 +459,7 @@ describe("GitCredentialService", () => {
         app: "token",
         threadId: otherSandboxThread,
       });
-      expect(yield* answer).toEqual({ refused: "not-this-repository" });
+      expect(yield* answer).toMatchObject({ refused: "not-this-repository" });
       expect(tokenRequests).toEqual([]);
       expect(forkChecks).toEqual([]);
       expect(records).toEqual([]);

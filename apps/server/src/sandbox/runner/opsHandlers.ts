@@ -91,12 +91,14 @@ export const layer = RunnerOpsRpcGroup.toLayer(
       if (input._tag === "baseline") {
         const baseline = yield* CheckpointCapture.captureBaseline({
           cwd: input.cwd,
+          roots: input.roots,
           checkpointRef: input.checkpointRef,
         });
         return { ...baseline, files: [], warnings: [] };
       }
       const turn = yield* CheckpointCapture.captureTurn({
         cwd: input.cwd,
+        roots: input.roots,
         checkpointRef: input.checkpointRef,
         previousCheckpointRef: input.previousCheckpointRef,
       });

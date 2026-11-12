@@ -562,10 +562,9 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
     cloudLaunch: selectedEnvironment?.cloudLaunch === true,
   });
   const projects = useProjects();
-  // As on web: only where projects have folders of their own, with enough of them to combine.
+  // As on web: only with enough projects to combine.
   const offersWorkspace =
     selectedEnvironment !== null &&
-    !selectedEnvironment.cloudLaunch &&
     workspaceRepositoryCandidates(projects, selectedEnvironment.environmentId).length >=
       MIN_WORKSPACE_REPOSITORIES;
 

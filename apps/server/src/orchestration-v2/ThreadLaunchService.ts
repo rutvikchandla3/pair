@@ -291,6 +291,57 @@ const rebuildNotice = (checkout: SandboxCheckout) => {
   return `Checked out again from the remote: the machine's disk was lost and no copy of ${checkout.branch} was saved. Unpushed commits and uncommitted changes were not kept.`;
 };
 
+type WorkspaceCheckout = Effect.Success<
+  ReturnType<typeof CloudPreparation.checkoutWorkspaceInSandbox>
+>;
+
+const listRoots = (names: ReadonlyArray<string>) => names.map((name) => `${name}/`).join(", ");
+
+/** `rebuildNotice` for a workspace folder, naming each rebuilt repository; null when none was. */
+const workspaceRebuildNotice = (checkout: WorkspaceCheckout) => {
+  const rebuilt = checkout.roots.filter(
+    (root) => root.restoredFrom !== null && root.restoredFrom !== "disk",
+  );
+  if (rebuilt.length === 0) return null;
+  const named = (keep: (root: (typeof rebuilt)[number]) => boolean) =>
+    listRoots(rebuilt.filter(keep).map((root) => root.name));
+  const snapshots = new Map<string, Array<string>>();
+  for (const root of rebuilt) {
+    if (root.restoredFrom !== "mirror" || root.snapshotAt === null) continue;
+    const at = DateTime.formatIso(root.snapshotAt).slice(0, 16).replace("T", " ");
+    snapshots.set(at, [...(snapshots.get(at) ?? []), root.name]);
+  }
+  const commits = named((root) => root.restoredFrom === "mirror" && root.snapshotAt === null);
+  const branches = named((root) => root.restoredFrom === "branch");
+  const remote = named((root) => root.restoredFrom === "origin");
+  const lost =
+    rebuilt.length === checkout.roots.length
+      ? "the machine's disk was lost"
+      : "they were missing from the machine's disk";
+  return [
+    `Rebuilt ${listRoots(rebuilt.map((root) => root.name))}: ${lost}.`,
+    ...[...snapshots].map(
+      ([at, names]) => `${listRoots(names)} came back from the snapshot of ${at} UTC.`,
+    ),
+    ...(commits === ""
+      ? []
+      : [
+          `${commits} came back from the last saved commit on ${checkout.branch}; uncommitted changes were not kept.`,
+        ]),
+    ...(branches === ""
+      ? []
+      : [
+          `${branches} checked out ${checkout.branch} again on the machine; uncommitted changes were not kept.`,
+        ]),
+    ...(remote === ""
+      ? []
+      : [
+          `${remote} checked out again from the remote: no copy of ${checkout.branch} was saved, so unpushed commits and uncommitted changes were not kept.`,
+        ]),
+    "Ignored files and caches were not kept.",
+  ].join(" ");
+};
+
 /** A launch a workspace cannot take; the message is for the user. */
 export class WorkspaceLaunchRefusedError extends Schema.TaggedError<WorkspaceLaunchRefusedError>()(
   "WorkspaceLaunchRefusedError",
@@ -385,19 +436,27 @@ const make = Effect.gen(function* () {
       input.sandboxId,
       CloudPreparation.checkoutInSandbox(input).pipe(Effect.provide(cloudServices)),
     );
-  const recordRebuild = (commandId: CommandId, threadId: ThreadId, checkout: SandboxCheckout) =>
-    threads
+  const recordRebuild = (
+    commandId: CommandId,
+    threadId: ThreadId,
+    checkout: SandboxCheckout | WorkspaceCheckout,
+  ) => {
+    const message =
+      "roots" in checkout ? workspaceRebuildNotice(checkout) : rebuildNotice(checkout);
+    if (message === null) return Effect.void;
+    return threads
       .dispatch({
         type: "thread.notice.record",
         commandId: CommandId.make(`${commandId}:rebuilt`),
         threadId,
-        message: rebuildNotice(checkout),
+        message,
       })
       .pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Could not record a rebuilt checkout", { threadId, cause }),
         ),
       );
+  };
   // Only the first checkout of a project on a machine clones it, so this records once per both.
   const recordNotInImage = Effect.fn("ThreadLaunchService.recordNotInImage")(
     function* (commandId: CommandId, threadId: ThreadId, sandboxId: SandboxId, title: string) {
@@ -430,6 +489,35 @@ const make = Effect.gen(function* () {
         cause,
       });
 
+  /** Each root of a cloud workspace is a project whose checkout's origin is on github.com. */
+  const checkWorkspaceRoots = Effect.fn("ThreadLaunchService.checkWorkspaceRoots")(function* (
+    projectId: ProjectId,
+    roots: ReadonlyArray<ProjectRoot>,
+  ) {
+    for (const root of roots) {
+      const rootProject = yield* projects
+        .getById(root.projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(rootProject)) {
+        return yield* new CloudPreparation.CloudLaunchError({
+          projectId,
+          reason: "workspace-root-missing",
+          root: root.name,
+        });
+      }
+      const url = yield* git
+        .readRemoteUrl({ cwd: rootProject.value.workspaceRoot, remoteName: "origin" })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (url === null || PairCloudProjects.parsePairCloudRemote(url) === null) {
+        return yield* new CloudPreparation.CloudLaunchError({
+          projectId,
+          reason: "workspace-root-not-github",
+          root: root.name,
+        });
+      }
+    }
+  });
+
   const checkCloudLaunch: ThreadLaunchService["Service"]["checkCloudLaunch"] = Effect.fn(
     "ThreadLaunchService.checkCloudLaunch",
   )(function* (input) {
@@ -437,10 +525,7 @@ const make = Effect.gen(function* () {
       .getById(input.projectId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isSome(project) && project.value.roots !== undefined) {
-      return yield* new CloudPreparation.CloudLaunchError({
-        projectId: input.projectId,
-        reason: "workspace",
-      });
+      yield* checkWorkspaceRoots(input.projectId, project.value.roots);
     }
     return yield* CloudPreparation.resolveCloudLaunch(input.projectId, input.instanceId).pipe(
       Effect.provide(cloudServices),
@@ -484,6 +569,31 @@ const make = Effect.gen(function* () {
         Effect.logWarning("Could not ask origin for a cloud launch's branch", { cause }),
     }),
   );
+
+  /** A workspace checks out an existing branch where origin has it; one root must have it. */
+  const checkExistingWorkspaceBranch = Effect.fn(
+    "ThreadLaunchService.checkExistingWorkspaceBranch",
+  )(function* (roots: ReadonlyArray<ProjectRoot>, branch: string, memberId: MemberId | undefined) {
+    const refusals: Array<CloudPreparation.CloudLaunchError> = [];
+    for (const root of roots) {
+      const rootProject = yield* projects
+        .getById(root.projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(rootProject)) continue;
+      const checked = yield* Effect.result(
+        checkExistingBranch({
+          projectId: root.projectId,
+          workspaceRoot: rootProject.value.workspaceRoot,
+          branch,
+          memberId,
+        }),
+      );
+      if (checked._tag === "Success") return;
+      if (checked.failure._tag === "CloudLaunchError") refusals.push(checked.failure);
+      else return yield* checked.failure;
+    }
+    if (refusals[0] !== undefined) return yield* refusals[0];
+  });
 
   /** A seed that is not staged for this member refuses the launch; only a failed read stays an error. */
   const seedStaged = Effect.fn("ThreadLaunchService.seedStaged")(function* (
@@ -742,7 +852,7 @@ const make = Effect.gen(function* () {
     let threadRoots: ReadonlyArray<ProjectRoot> | undefined;
     if (project.roots !== undefined) {
       const strategy = input.workspaceStrategy;
-      if (strategy.type === "root" || input.sandboxId !== undefined) {
+      if (strategy.type === "root") {
         return yield* mapError(
           input,
           "provision-worktree",
@@ -765,6 +875,12 @@ const make = Effect.gen(function* () {
           )(new WorkspaceLaunchRefusedError({ projectId: project.id, reason: "workspace-folder" }));
         }
         threadRoots = shell.roots;
+      } else if (input.sandboxId !== undefined && (input.existingWorktreePath ?? null) !== null) {
+        // A retry on the machine keeps the roots its folder was made with.
+        const shell = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        threadRoots = shell?.roots ?? project.roots;
       } else {
         threadRoots = project.roots;
       }
@@ -778,6 +894,8 @@ const make = Effect.gen(function* () {
     let createdWorktreePath: string | null = null;
     let createdBranch: string | null = null;
     let createdWorkspaceRoots: ReadonlyArray<ProjectRoot> | null = null;
+    // A cloud workspace's repositories are worktrees of the machine's clones, not of the roots.
+    let sandboxWorkspaceRoots: ReadonlyArray<CloudPreparation.SandboxWorkspaceRoot> | null = null;
     const setupTerminalIds: Array<string> = [];
     let workspaceRecorded = false;
     let runReleased = false;
@@ -862,7 +980,106 @@ const make = Effect.gen(function* () {
                 phase,
               })
               .pipe(Effect.asVoid, Effect.mapError(mapError(input, "update-thread", threadId)));
-      if (input.workspaceStrategy.type === "worktree" && sandboxId !== undefined) {
+      if (
+        input.workspaceStrategy.type === "worktree" &&
+        sandboxId !== undefined &&
+        threadRoots !== undefined
+      ) {
+        const roots = threadRoots;
+        const memberId = input.actorId ?? input.ownerId;
+        const rootProjects = yield* Effect.forEach(roots, (root) =>
+          projects.getById(root.projectId).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.fail(
+                    new CloudPreparation.CloudLaunchError({
+                      projectId: input.projectId,
+                      reason: "workspace-root-missing",
+                      root: root.name,
+                    }),
+                  ),
+                onSome: (rootProject) =>
+                  Effect.succeed({ ...root, projectRoot: rootProject.workspaceRoot }),
+              }),
+            ),
+            Effect.mapError(mapError(input, "provision-worktree", threadId)),
+          ),
+        );
+        const fetchCheckouts = Option.isSome(pairCloudProjects)
+          ? Effect.forEach(
+              rootProjects,
+              (root) =>
+                pairCloudProjects.value.fetchCheckout({
+                  projectId: root.projectId,
+                  workspaceRoot: root.projectRoot,
+                  memberId,
+                }),
+              { concurrency: "unbounded", discard: true },
+            )
+          : Effect.void;
+        yield* Effect.all(
+          [
+            fetchCheckouts,
+            CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: progress }).pipe(
+              Effect.provide(cloudServices),
+              Effect.mapError(mapError(input, "provision-worktree", threadId)),
+            ),
+          ],
+          { concurrency: "unbounded", discard: true },
+        );
+        yield* progress("clone");
+        yield* setupTracker.stageStatus(threadId, "fetch", "running");
+        const checkout = yield* sandboxCheckouts
+          .withLock(
+            sandboxId,
+            CloudPreparation.checkoutWorkspaceInSandbox({
+              sandboxId,
+              threadId,
+              projectId: input.projectId,
+              roots: rootProjects,
+              branch: branch!,
+              existingWorktreePath: input.existingWorktreePath ?? null,
+            }).pipe(Effect.provide(cloudServices)),
+          )
+          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        yield* Effect.logInfo("Prepared a cloud workspace checkout", {
+          threadId,
+          cloneSources: checkout.roots.map((root) => `${root.name}:${root.cloneSource}`),
+        });
+        const cloned = checkout.roots.filter((root) => root.cloneSource === "origin");
+        if (cloned.length > 0) {
+          const titles = yield* Effect.forEach(cloned, (root) =>
+            projects.getById(root.projectId).pipe(
+              Effect.map((rootProject) =>
+                Option.isSome(rootProject) ? rootProject.value.title : root.name,
+              ),
+              Effect.orElseSucceed(() => root.name),
+            ),
+          );
+          yield* recordNotInImage(input.commandId, threadId, sandboxId, titles.join(", "));
+        }
+        yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        worktreePath = checkout.folder;
+        branch = checkout.branch;
+        if (checkout.created) {
+          createdWorktreePath = worktreePath;
+          createdBranch = branch;
+          createdWorkspaceRoots = roots;
+          sandboxWorkspaceRoots = checkout.roots;
+        }
+        const rebuilt = checkout.roots.some(
+          (root) => root.restoredFrom !== null && root.restoredFrom !== "disk",
+        );
+        if (checkout.created || rebuilt) {
+          yield* workspaceCheckouts
+            .writeGuidance({ folder: checkout.folder, roots })
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        }
+        if (rebuilt) yield* recordRebuild(input.commandId, threadId, checkout);
+        yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
+        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+      } else if (input.workspaceStrategy.type === "worktree" && sandboxId !== undefined) {
         const fetchCheckout = Option.isSome(pairCloudProjects)
           ? pairCloudProjects.value.fetchCheckout({
               projectId: input.projectId,
@@ -1303,31 +1520,40 @@ const make = Effect.gen(function* () {
             const removedPath = createdWorktreePath;
             const removedBranch = createdBranch;
             const removedRoots = createdWorkspaceRoots;
+            const removedSandboxRoots = sandboxWorkspaceRoots;
             const removal: Effect.Effect<
               void,
-              GitCommandError | WorkspaceCheckouts.WorkspaceCheckoutError
+              | GitCommandError
+              | WorkspaceCheckouts.WorkspaceCheckoutError
+              | CloudPreparation.SandboxWorkspaceRemoveError
             > =
-              removedRoots === null
-                ? git
-                    .removeWorktree({ cwd: worktreeRepository, path: removedPath, force: true })
-                    .pipe(
-                      Effect.andThen(
-                        removedBranch === null
-                          ? Effect.void
-                          : git
-                              .deleteLocalBranch({
-                                cwd: worktreeRepository,
-                                refName: removedBranch,
-                                force: true,
-                              })
-                              .pipe(Effect.ignoreCause({ log: true })),
-                      ),
-                    )
-                : workspaceCheckouts.remove({
+              removedSandboxRoots !== null
+                ? CloudPreparation.removeWorkspaceCheckout({
                     folder: removedPath,
-                    roots: removedRoots,
+                    roots: removedSandboxRoots,
                     branch: removedBranch,
-                  });
+                  }).pipe(Effect.provide(cloudServices))
+                : removedRoots === null
+                  ? git
+                      .removeWorktree({ cwd: worktreeRepository, path: removedPath, force: true })
+                      .pipe(
+                        Effect.andThen(
+                          removedBranch === null
+                            ? Effect.void
+                            : git
+                                .deleteLocalBranch({
+                                  cwd: worktreeRepository,
+                                  refName: removedBranch,
+                                  force: true,
+                                })
+                                .pipe(Effect.ignoreCause({ log: true })),
+                        ),
+                      )
+                  : workspaceCheckouts.remove({
+                      folder: removedPath,
+                      roots: removedRoots,
+                      branch: removedBranch,
+                    });
             // Forget worktrees only after removal succeeds; failed removals must not reuse partially written checkouts.
             yield* removal.pipe(
               Effect.andThen(
@@ -1524,21 +1750,32 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-      if (project.roots !== undefined && input.workspaceStrategy.type !== "worktree") {
-        return yield* mapError(
-          input,
-          "resolve-project",
-        )(
-          input.workspaceStrategy.type === "cloud"
-            ? new CloudPreparation.CloudLaunchError({
-                projectId: input.projectId,
-                reason: "workspace",
-              })
-            : new WorkspaceLaunchRefusedError({
-                projectId: input.projectId,
-                reason: "needs-worktree",
-              }),
-        );
+      if (project.roots !== undefined) {
+        const strategyType = input.workspaceStrategy.type;
+        if (strategyType !== "worktree" && strategyType !== "cloud") {
+          return yield* mapError(
+            input,
+            "resolve-project",
+          )(
+            new WorkspaceLaunchRefusedError({
+              projectId: input.projectId,
+              reason: "needs-worktree",
+            }),
+          );
+        }
+        const seeded =
+          input.workspaceStrategy.type === "cloud" && input.workspaceStrategy.seedRef !== undefined;
+        if (seeded || input.contextExportRef !== undefined || input.contextExport !== undefined) {
+          return yield* mapError(
+            input,
+            "resolve-project",
+          )(
+            new CloudPreparation.CloudLaunchError({
+              projectId: input.projectId,
+              reason: "workspace-move",
+            }),
+          );
+        }
       }
       if (input.reuseExistingThread === true && input.threadId === undefined) {
         return yield* mapError(
@@ -1601,12 +1838,18 @@ const make = Effect.gen(function* () {
         }
         // Only a new launch asks: a replay never re-asks origin.
         if (Option.isNone(launchReceipt)) {
-          yield* checkExistingBranch({
-            projectId: input.projectId,
-            workspaceRoot: project.workspaceRoot,
-            branch: strategy.branch,
-            memberId: input.actorId ?? input.ownerId,
-          }).pipe(Effect.mapError(mapError(input, "resolve-project")));
+          const branch = strategy.branch;
+          const memberId = input.actorId ?? input.ownerId;
+          yield* (
+            project.roots === undefined
+              ? checkExistingBranch({
+                  projectId: input.projectId,
+                  workspaceRoot: project.workspaceRoot,
+                  branch,
+                  memberId,
+                })
+              : checkExistingWorkspaceBranch(project.roots, branch, memberId)
+          ).pipe(Effect.mapError(mapError(input, "resolve-project")));
         }
       }
       // Only a new launch checks: a replay's claim finds the export already claimed for it.
@@ -1915,6 +2158,106 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** Rebuilds each repository missing from a workspace thread's folder, then reruns its setup. */
+  const restoreWorkspace = Effect.fn("ThreadLaunchService.restoreWorkspace")(function* (input: {
+    readonly commandId: CommandId;
+    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
+    readonly roots: ReadonlyArray<ProjectRoot>;
+    readonly sandboxId: SandboxId;
+    readonly folder: string;
+    readonly branch: string;
+  }) {
+    const rootProjects = yield* Effect.forEach(input.roots, (root) =>
+      projects
+        .getById(root.projectId)
+        .pipe(Effect.map(Option.map((project) => ({ ...root, project })))),
+    );
+    const present = rootProjects.flatMap((root) => (Option.isSome(root) ? [root.value] : []));
+    if (present.length < input.roots.length) {
+      return yield* Effect.logWarning("A workspace thread's repository has no project to rebuild", {
+        threadId: input.threadId,
+      });
+    }
+    yield* CloudPreparation.awaitSandboxReady({
+      sandboxId: input.sandboxId,
+      onWaiting: () => Effect.void,
+    }).pipe(Effect.provide(cloudServices));
+    const checkout = yield* sandboxCheckouts.withLock(
+      input.sandboxId,
+      CloudPreparation.checkoutWorkspaceInSandbox({
+        sandboxId: input.sandboxId,
+        threadId: input.threadId,
+        projectId: input.projectId,
+        roots: present.map((root) => ({
+          projectId: root.projectId,
+          name: root.name,
+          projectRoot: root.project.workspaceRoot,
+        })),
+        branch: input.branch,
+        existingWorktreePath: input.folder,
+      }).pipe(Effect.provide(cloudServices)),
+    );
+    const rebuilt = checkout.roots.filter(
+      (root) => root.restoredFrom !== null && root.restoredFrom !== "disk",
+    );
+    yield* Effect.logInfo("Restored a cloud workspace checkout", {
+      threadId: input.threadId,
+      restoredFrom: checkout.roots.map((root) => `${root.name}:${root.restoredFrom}`),
+    });
+    if (rebuilt.length === 0) return;
+    yield* workspaceCheckouts.writeGuidance({ folder: input.folder, roots: input.roots }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not rewrite a rebuilt workspace's guidance", {
+          threadId: input.threadId,
+          cause,
+        }),
+      ),
+    );
+    const workspace = yield* projects.getById(input.projectId);
+    const setups = [
+      ...present.flatMap((root) =>
+        rebuilt.some((entry) => entry.name === root.name)
+          ? [
+              {
+                project: root.project,
+                worktreePath: `${input.folder}/${root.name}`,
+                terminalSuffix: root.name,
+              },
+            ]
+          : [],
+      ),
+      // The folder's own setup reruns once every repository came back.
+      ...(rebuilt.length === checkout.roots.length && Option.isSome(workspace)
+        ? [{ project: workspace.value, worktreePath: input.folder, terminalSuffix: undefined }]
+        : []),
+    ];
+    for (const setup of setups) {
+      yield* setupScripts
+        .runForThread({
+          threadId: input.threadId,
+          projectId: setup.project.id,
+          projectCwd: setup.project.workspaceRoot,
+          worktreePath: setup.worktreePath,
+          ...(setup.terminalSuffix === undefined ? {} : { terminalSuffix: setup.terminalSuffix }),
+          project: {
+            id: setup.project.id,
+            workspaceRoot: setup.project.workspaceRoot,
+            scripts: setup.project.scripts,
+          },
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("A rebuilt checkout's setup script failed", {
+              threadId: input.threadId,
+              cause,
+            }),
+          ),
+        );
+    }
+    yield* recordRebuild(input.commandId, input.threadId, checkout);
+  });
+
   const restoreInBackground = Effect.fn("ThreadLaunchService.restoreInBackground")(
     function* (input: { readonly commandId: CommandId; readonly threadId: ThreadId }) {
       const shell = yield* threads.getThreadShell(input.threadId);
@@ -1928,6 +2271,17 @@ const make = Effect.gen(function* () {
         return;
       }
       const { sandboxId, worktreePath, branch } = shell;
+      if (shell.roots !== undefined) {
+        return yield* restoreWorkspace({
+          commandId: input.commandId,
+          threadId: input.threadId,
+          projectId: shell.projectId,
+          roots: shell.roots,
+          sandboxId,
+          folder: worktreePath,
+          branch,
+        });
+      }
       const { runs } = yield* threads.getThreadRecords(input.threadId, ["runs"]);
       const firstCheckout = runs
         .toSorted((left, right) => left.ordinal - right.ordinal)

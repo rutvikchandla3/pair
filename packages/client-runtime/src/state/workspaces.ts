@@ -18,8 +18,8 @@ export const MAX_WORKSPACE_REPOSITORIES = 8;
 const REPOSITORY_FOLDER_NAME = /^[A-Za-z0-9._-]+$/;
 
 /**
- * The server ignores a workspace worktree's base, since each repository starts from its own
- * default branch, but the launch schema still requires one.
+ * The server ignores a workspace worktree's or cloud launch's base, since each repository starts
+ * from its own default branch, but the launch schema still requires one.
  */
 export const WORKSPACE_WORKTREE_BASE_REF = "HEAD";
 

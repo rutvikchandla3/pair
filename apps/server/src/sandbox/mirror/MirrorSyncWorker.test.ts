@@ -54,7 +54,7 @@ const makeHarness = Effect.fn("MirrorSyncWorkerTest.makeHarness")(function* (
               yield* Queue.offer(calls, threadId);
               const [next = "ok", ...rest] = (yield* Ref.get(outcomes)).get(threadId) ?? [];
               yield* Ref.update(outcomes, (current) => new Map(current).set(threadId, rest));
-              if (next === "ok") return ProjectId.make("project:worker");
+              if (next === "ok") return [ProjectId.make("project:worker")];
               return yield* new MirrorSync.MirrorSyncError({ threadId, reason: next });
             }),
         }),

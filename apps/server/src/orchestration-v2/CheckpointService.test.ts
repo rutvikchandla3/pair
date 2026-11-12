@@ -106,71 +106,92 @@ it.effect(
     }),
 );
 
-it.effect("captures a sandbox's baseline and turn in its runner, not with the server's git", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-loopback-" });
-    const git = (...args: ReadonlyArray<string>) =>
-      spawner.string(
-        ChildProcess.make("git", ["-c", "user.email=t@t", "-c", "user.name=T", ...args], { cwd }),
-      );
-    yield* git("init");
-    yield* fs.writeFileString(`${cwd}/a.txt`, "one\n");
-    yield* git("add", ".");
-    yield* git("commit", "-m", "initial");
+it.effect.each([
+  { name: "a repository", roots: undefined },
+  { name: "a workspace's repositories", roots: ["api", "web"] },
+])(
+  "captures a sandbox's baseline and turn of $name in its runner, not with the server's git",
+  ({ roots }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-loopback-" });
+      const repositories = roots ?? [""];
+      const at = (root: string) => (root === "" ? cwd : `${cwd}/${root}`);
+      for (const root of repositories) {
+        const git = (...args: ReadonlyArray<string>) =>
+          spawner.string(
+            ChildProcess.make("git", ["-c", "user.email=t@t", "-c", "user.name=T", ...args], {
+              cwd: at(root),
+            }),
+          );
+        yield* fs.makeDirectory(at(root), { recursive: true });
+        yield* git("init");
+        yield* fs.writeFileString(`${at(root)}/a.txt`, "one\n");
+        yield* git("add", ".");
+        yield* git("commit", "-m", "initial");
+      }
 
-    const scope: OrchestrationV2CheckpointScope = {
-      id: CheckpointScopeId.make("checkpoint-scope:loopback"),
-      threadId: ThreadId.make("thread:loopback"),
-      runId: RunId.make("run:loopback:1"),
-      nodeId: NodeId.make("node:loopback:1"),
-      parentScopeId: null,
-      providerThreadId: ProviderThreadId.make("provider-thread:loopback"),
-      kind: "root_run",
-      ordinalWithinParent: 0,
-      advancesAppRunCount: true,
-      cwd,
-      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
-    };
-    const serverGit = () => Effect.die("a sandbox capture must not run the server's git");
-    yield* Effect.gen(function* () {
-      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
-      yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
-      yield* fs.writeFileString(`${cwd}/a.txt`, "one\ntwo\n");
-      const checkpoint = yield* checkpoints.capture({
-        scope,
-        ordinalWithinScope: 1,
-        runId: scope.runId!,
-        nodeId: scope.nodeId!,
-        appRunOrdinal: 1,
-        capturedAt: scope.createdAt,
-      });
-      assert.equal(checkpoint.status, "ready");
-      assert.deepEqual(checkpoint.files, [
-        { path: "a.txt", kind: "modified", additions: 1, deletions: 0 },
-      ]);
-    }).pipe(
-      Effect.provide(
-        CheckpointService.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeCrypto.layer,
-              Layer.mock(CheckpointStore.CheckpointStore)({
-                isGitRepository: serverGit,
-                captureCheckpoint: serverGit,
-                hasCheckpointRef: serverGit,
-                listAuthoredPaths: serverGit,
-              }),
+      const scope: OrchestrationV2CheckpointScope = {
+        id: CheckpointScopeId.make("checkpoint-scope:loopback"),
+        threadId: ThreadId.make("thread:loopback"),
+        runId: RunId.make("run:loopback:1"),
+        nodeId: NodeId.make("node:loopback:1"),
+        parentScopeId: null,
+        providerThreadId: ProviderThreadId.make("provider-thread:loopback"),
+        kind: "root_run",
+        ordinalWithinParent: 0,
+        advancesAppRunCount: true,
+        cwd,
+        ...(roots === undefined ? {} : { roots }),
+        createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+      };
+      const serverGit = () => Effect.die("a sandbox capture must not run the server's git");
+      yield* Effect.gen(function* () {
+        const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+        yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
+        for (const root of repositories) {
+          yield* fs.writeFileString(`${at(root)}/a.txt`, "one\ntwo\n");
+        }
+        const checkpoint = yield* checkpoints.capture({
+          scope,
+          ordinalWithinScope: 1,
+          runId: scope.runId!,
+          nodeId: scope.nodeId!,
+          appRunOrdinal: 1,
+          capturedAt: scope.createdAt,
+        });
+        assert.equal(checkpoint.status, "ready");
+        assert.deepEqual(
+          checkpoint.files,
+          repositories.map((root) => ({
+            path: root === "" ? "a.txt" : `${root}/a.txt`,
+            kind: "modified",
+            additions: 1,
+            deletions: 0,
+          })),
+        );
+      }).pipe(
+        Effect.provide(
+          CheckpointService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                IdAllocator.layer,
+                NodeCrypto.layer,
+                Layer.mock(CheckpointStore.CheckpointStore)({
+                  isGitRepository: serverGit,
+                  captureCheckpoint: serverGit,
+                  hasCheckpointRef: serverGit,
+                  listAuthoredPaths: serverGit,
+                }),
+              ),
             ),
+            Layer.provide(WorkspaceHostLoopback.layerLoopback(NodeOS.tmpdir())),
+            Layer.provide(NodeServices.layer),
           ),
-          Layer.provide(WorkspaceHostLoopback.layerLoopback(NodeOS.tmpdir())),
-          Layer.provide(NodeServices.layer),
         ),
-      ),
-    );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("a second snapshot of a sandbox checkout moves its ref to the newer tree", () =>
@@ -187,6 +208,11 @@ it.effect("a second snapshot of a sandbox checkout moves its ref to the newer tr
     yield* git("add", ".");
     yield* git("commit", "-m", "initial");
     const ref = CheckpointRef.make("refs/t3/sandbox/dGhyZWFk/snapshot");
+    // A workspace folder whose `web` repository is missing from the disk.
+    const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-workspace-" });
+    yield* fs.makeDirectory(`${folder}/api`);
+    yield* spawner.string(ChildProcess.make("git", ["init"], { cwd: `${folder}/api` }));
+    yield* fs.writeFileString(`${folder}/api/a.txt`, "api\n");
 
     const snapshots = yield* Effect.gen(function* () {
       const checkpoints = yield* CheckpointService.CheckpointServiceV2;
@@ -194,7 +220,12 @@ it.effect("a second snapshot of a sandbox checkout moves its ref to the newer tr
       const first = yield* checkpoints.captureSnapshot({ cwd, ref });
       yield* fs.writeFileString(`${cwd}/b.txt`, "new\n");
       const second = yield* checkpoints.captureSnapshot({ cwd, ref });
-      return [first, second];
+      const workspace = yield* checkpoints.captureSnapshot({
+        cwd: folder,
+        roots: ["api", "web"],
+        ref,
+      });
+      return [first.status, second.status, workspace];
     }).pipe(
       Effect.provide(
         CheckpointService.layer.pipe(
@@ -211,7 +242,7 @@ it.effect("a second snapshot of a sandbox checkout moves its ref to the newer tr
       ),
     );
 
-    assert.deepEqual(snapshots, ["ready", "ready"]);
+    assert.deepEqual(snapshots, ["ready", "ready", { status: "ready", uncaptured: ["web"] }]);
     assert.equal(yield* git("show", `${ref}:a.txt`), "one\ntwo\n");
     assert.equal(yield* git("show", `${ref}:b.txt`), "new\n");
     assert.equal(

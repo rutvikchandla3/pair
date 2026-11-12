@@ -241,6 +241,7 @@ interface ImplementPlanInNewThreadInput extends PlanSendBase {
   readonly activeProject: EnvironmentProject | null;
   readonly activeEnvironmentUnavailable: boolean;
   readonly defaultRuntimeMode: RuntimeMode;
+  readonly cloudThread: boolean;
 }
 
 /**
@@ -262,6 +263,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
     activeProject,
     activeEnvironmentUnavailable,
     defaultRuntimeMode,
+    cloudThread,
   } = input;
   const navigate = useNavigate();
   const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
@@ -303,7 +305,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = sendCtx.selectedModelSelection;
 
-    // A workspace thread cannot share another thread's folder; it gets new worktrees instead.
+    // A workspace thread cannot share another thread's folder; it gets new worktrees or a machine.
     const workspace = isWorkspaceProject(activeProject);
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
@@ -344,17 +346,19 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
             threadId: activeThread.id,
             planId: activeProposedPlan.id,
           },
-          ...(workspace
-            ? {
-                bootstrap: {
-                  prepareWorktree: {
-                    projectCwd: activeProject.workspaceRoot,
-                    baseBranch: WORKSPACE_WORKTREE_BASE_REF,
+          ...(workspace && cloudThread
+            ? { bootstrap: { prepareCloud: { baseRef: WORKSPACE_WORKTREE_BASE_REF } } }
+            : workspace
+              ? {
+                  bootstrap: {
+                    prepareWorktree: {
+                      projectCwd: activeProject.workspaceRoot,
+                      baseBranch: WORKSPACE_WORKTREE_BASE_REF,
+                    },
+                    runSetupScript: true,
                   },
-                  runSetupScript: true,
-                },
-              }
-            : {}),
+                }
+              : {}),
           createdAt,
         },
       });

@@ -545,12 +545,6 @@ export const make = Effect.gen(function* () {
         reason: "A workspace's folder is chosen by the server; leave the folder out.",
       });
     }
-    if (cloudOnly) {
-      return yield* new ProjectWorkspaceError({
-        projectId: input.projectId,
-        reason: "Workspaces don't run in Cloud yet.",
-      });
-    }
     // A retried command finds its committed project instead of claiming a second folder.
     const existing = yield* readRow(input.projectId, { includeDeleted: true });
     if (Option.isSome(existing) && existing.value.roots !== undefined) {

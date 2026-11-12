@@ -1133,10 +1133,22 @@ describe("planComposerTurn", () => {
     }
   });
 
-  it("starts a workspace's worktrees without a base branch, since each repository uses its own", () => {
+  it("starts a workspace's worktrees or machine without a base branch, since each repository uses its own", () => {
     expect(planComposerTurn({ ...base, activeThreadBranch: null, workspace: true })).toMatchObject({
       missingWorktreeBaseBranch: false,
       baseBranchForWorktree: "HEAD",
+    });
+    expect(
+      planComposerTurn({
+        ...base,
+        sendEnvMode: "cloud",
+        activeThreadBranch: null,
+        workspace: true,
+      }),
+    ).toMatchObject({
+      missingWorktreeBaseBranch: false,
+      baseBranchForWorktree: null,
+      baseRefForCloud: "HEAD",
     });
     expect(
       planComposerTurn({ ...base, workspace: true, isServerThread: true, activeMessageCount: 2 }),

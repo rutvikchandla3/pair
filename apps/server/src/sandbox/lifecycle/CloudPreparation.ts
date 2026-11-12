@@ -18,6 +18,7 @@ import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared
 import { cloudAvailability, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
 import * as Context from "effect/Context";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
@@ -62,7 +63,9 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "seed-on-base",
     "seed-unavailable",
     "export-unavailable",
-    "workspace",
+    "workspace-move",
+    "workspace-root-not-github",
+    "workspace-root-missing",
   ]),
   baseRef: Schema.optional(Schema.String),
   /** For `base-ref-missing`: the base is a branch on the host that origin lacks. */
@@ -72,6 +75,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
   remote: Schema.optional(Schema.String),
   /** Git's redacted reason a clone failed. */
   detail: Schema.optional(Schema.String),
+  /** For a workspace refusal: the repository's folder name in the thread's folder. */
+  root: Schema.optional(Schema.String),
   failure: Schema.optional(SandboxFailure),
 }) {
   override get message(): string {
@@ -110,8 +115,12 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return "The work uploaded for this move is no longer on Pair Cloud. Continue in cloud again.";
       case "export-unavailable":
         return "The conversation uploaded for this move is no longer on Pair Cloud. Continue in cloud again.";
-      case "workspace":
-        return "Workspaces don't run in Cloud yet.";
+      case "workspace-move":
+        return "A workspace thread can't move between a Mac and Pair Cloud yet.";
+      case "workspace-root-not-github":
+        return `${this.root ?? "A repository"}/ isn't a github.com repository, so this workspace can't run in Pair Cloud.`;
+      case "workspace-root-missing":
+        return `${this.root ?? "A repository"}/ belongs to a project that no longer exists. Edit the workspace's repositories.`;
     }
   }
 }
@@ -353,42 +362,51 @@ const copyImageClone = Effect.fn("CloudPreparation.copyImageClone")(function* (
  * and checks the thread out of the mirror (a `seeded` launch never falls back to origin), else adds
  * a worktree from `origin/<branch>` or `origin/<baseRef>` (an `existingBranch` must be pushed).
  */
-export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")(function* (input: {
+/** A thread's checkout on the machine: one folder per branch under the sandbox root. */
+const worktreePathFor = (checkoutRoot: string, branch: string) =>
+  `${checkoutRoot}/worktrees/${branch.replaceAll("/", "-")}`;
+
+/** Where the machine keeps a project's clone, from its checkout's origin. */
+const cloneTarget = Effect.fn("CloudPreparation.cloneTarget")(function* (input: {
   readonly sandboxId: SandboxId;
-  readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly projectRoot: string;
-  readonly baseRef: string;
-  readonly branch: string;
-  readonly existingBranch: boolean;
-  readonly existingWorktreePath: string | null;
-  readonly seeded: boolean;
+  /** Names a workspace's repository in a refusal. */
+  readonly root?: string;
 }) {
   const git = yield* GitWorkflow.GitWorkflowService;
   const root = (yield* SandboxCheckoutRoot)(input.sandboxId);
-  const worktreePathFor = (checkoutRoot: string, branch: string) =>
-    `${checkoutRoot}/worktrees/${branch.replaceAll("/", "-")}`;
-  const isCheckout = (cwd: string) => git.isRepository(cwd).pipe(Effect.orElseSucceed(() => false));
   const url = yield* git.readRemoteUrl({ cwd: input.projectRoot, remoteName: "origin" });
   if (url === null) {
-    return yield* new CloudLaunchError({ projectId: input.projectId, reason: "no-origin" });
+    return yield* new CloudLaunchError({
+      projectId: input.projectId,
+      reason: "no-origin",
+      ...(input.root === undefined ? {} : { root: input.root }),
+    });
   }
-  const clonePath = clonePathFor(root, url, input.projectId);
-  // A kept disk still has the thread's checkout; a new machine starts without one.
-  if (input.existingWorktreePath !== null && (yield* isCheckout(input.existingWorktreePath))) {
-    return {
-      clonePath,
-      worktreePath: input.existingWorktreePath,
-      branch: input.branch,
-      created: false,
-      restoredFrom: "disk" as const,
-      snapshotAt: null,
-      cloneSource: "existing" as const,
-    };
-  }
-  let cloneSource: "image" | "origin" | "existing" = (yield* isCheckout(clonePath))
-    ? "existing"
-    : "origin";
+  return { root, url, clonePath: clonePathFor(root, url, input.projectId) };
+});
+
+const isCheckout = (cwd: string) =>
+  GitWorkflow.GitWorkflowService.use((git) => git.isRepository(cwd)).pipe(
+    Effect.orElseSucceed(() => false),
+  );
+
+type CloneSource = "image" | "origin" | "existing";
+
+/**
+ * Brings the machine's clone of a project up to date: fetches a clone it has, else copies the
+ * team image's clone and fetches, else clones origin.
+ */
+const cloneOrFetch = Effect.fn("CloudPreparation.cloneOrFetch")(function* (input: {
+  readonly projectId: ProjectId;
+  readonly root: string;
+  readonly url: string;
+  readonly clonePath: string;
+}) {
+  const git = yield* GitWorkflow.GitWorkflowService;
+  const { root, url, clonePath } = input;
+  let cloneSource: CloneSource = (yield* isCheckout(clonePath)) ? "existing" : "origin";
   // The server provides the hosts. `forPath` cannot route the image's path, so the copy runs on
   // the host of the sandbox's own root.
   const hosts = yield* Effect.serviceOption(WorkspaceHosts.WorkspaceHosts);
@@ -419,6 +437,40 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
       ? git.cloneRepository({ cwd: root, url, path: clonePath })
       : git.fetchRemote({ cwd: clonePath, remoteName: "origin" })
   ).pipe(Effect.mapError(cloneOrFetchFailed));
+  return cloneSource;
+});
+
+/**
+ * Keeps a kept disk's checkout, else copies the team image's clone (or clones origin), fetches,
+ * and checks the thread out of the mirror (a `seeded` launch never falls back to origin), else adds
+ * a worktree from `origin/<branch>` or `origin/<baseRef>` (an `existingBranch` must be pushed).
+ */
+export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")(function* (input: {
+  readonly sandboxId: SandboxId;
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly projectRoot: string;
+  readonly baseRef: string;
+  readonly branch: string;
+  readonly existingBranch: boolean;
+  readonly existingWorktreePath: string | null;
+  readonly seeded: boolean;
+}) {
+  const git = yield* GitWorkflow.GitWorkflowService;
+  const { root, url, clonePath } = yield* cloneTarget(input);
+  // A kept disk still has the thread's checkout; a new machine starts without one.
+  if (input.existingWorktreePath !== null && (yield* isCheckout(input.existingWorktreePath))) {
+    return {
+      clonePath,
+      worktreePath: input.existingWorktreePath,
+      branch: input.branch,
+      created: false,
+      restoredFrom: "disk" as const,
+      snapshotAt: null,
+      cloneSource: "existing" as const,
+    };
+  }
+  const cloneSource = yield* cloneOrFetch({ projectId: input.projectId, root, url, clonePath });
   const mirror = yield* Effect.serviceOption(MirrorSync.MirrorSync);
   if (Option.isSome(mirror)) {
     const rebuilt = input.existingWorktreePath !== null;
@@ -490,3 +542,247 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
     cloneSource,
   };
 });
+
+export class SandboxWorkspaceRemoveError extends Schema.TaggedError<SandboxWorkspaceRemoveError>()(
+  "SandboxWorkspaceRemoveError",
+  { folder: Schema.String, roots: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `Failed to remove ${this.roots.map((name) => `${name}/`).join(", ")} from ${this.folder}.`;
+  }
+}
+
+export interface SandboxWorkspaceRoot {
+  readonly name: string;
+  readonly clonePath: string;
+}
+
+/**
+ * Removes a workspace thread's folder from the machine: each repository's worktree through its
+ * clone, with its branch, then the folder. A worktree git could not remove keeps the folder.
+ */
+export const removeWorkspaceCheckout = Effect.fn("CloudPreparation.removeWorkspaceCheckout")(
+  function* (input: {
+    readonly folder: string;
+    readonly roots: ReadonlyArray<SandboxWorkspaceRoot>;
+    readonly branch: string | null;
+  }) {
+    const git = yield* GitWorkflow.GitWorkflowService;
+    const failed: Array<string> = [];
+    for (const root of input.roots) {
+      yield* git
+        .removeWorktree({ cwd: root.clonePath, path: `${input.folder}/${root.name}`, force: true })
+        .pipe(
+          Effect.andThen(
+            input.branch === null
+              ? Effect.void
+              : git
+                  .deleteLocalBranch({ cwd: root.clonePath, refName: input.branch, force: true })
+                  .pipe(Effect.ignoreCause({ log: true })),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to remove a workspace repository from the machine", {
+              folder: input.folder,
+              root: root.name,
+              cause,
+            }).pipe(Effect.andThen(Effect.sync(() => failed.push(root.name)))),
+          ),
+        );
+    }
+    if (failed.length > 0) {
+      return yield* new SandboxWorkspaceRemoveError({ folder: input.folder, roots: failed });
+    }
+    const hosts = yield* Effect.serviceOption(WorkspaceHosts.WorkspaceHosts);
+    if (Option.isSome(hosts)) {
+      yield* hosts.value.forPath(input.folder).pipe(
+        Effect.flatMap((host) =>
+          host.fileSystem.remove(input.folder, { recursive: true, force: true }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to remove a workspace folder from the machine", {
+            folder: input.folder,
+            cause,
+          }),
+        ),
+      );
+    }
+  },
+);
+
+/** Where a rebuilt workspace repository came from; a new launch's are null. */
+export type WorkspaceRootRestore = "disk" | "mirror" | "branch" | "origin";
+
+/**
+ * A workspace thread's folder on the machine, each root a worktree of its project's clone at
+ * `<folder>/<name>`; a failed launch removes every repository it added. With
+ * `existingWorktreePath`, a repository still on disk is kept and a missing one is rebuilt alone:
+ * mirror, then its branch left in the clone, then origin.
+ */
+export const checkoutWorkspaceInSandbox = Effect.fn("CloudPreparation.checkoutWorkspaceInSandbox")(
+  function* (input: {
+    readonly sandboxId: SandboxId;
+    readonly threadId: ThreadId;
+    /** The workspace project. */
+    readonly projectId: ProjectId;
+    readonly roots: ReadonlyArray<{
+      readonly projectId: ProjectId;
+      readonly name: string;
+      /** The root project's checkout on the server. */
+      readonly projectRoot: string;
+    }>;
+    readonly branch: string;
+    readonly existingWorktreePath: string | null;
+  }) {
+    const git = yield* GitWorkflow.GitWorkflowService;
+    const targets = yield* Effect.forEach(input.roots, (root) =>
+      cloneTarget({
+        sandboxId: input.sandboxId,
+        projectId: root.projectId,
+        projectRoot: root.projectRoot,
+        root: root.name,
+      }).pipe(Effect.map((target) => ({ ...root, ...target }))),
+    );
+    const sandboxRoot = (yield* SandboxCheckoutRoot)(input.sandboxId);
+    const folder = input.existingWorktreePath ?? worktreePathFor(sandboxRoot, input.branch);
+    const rootsOf = (cloneSource: (target: (typeof targets)[number]) => CloneSource) =>
+      targets.map((target) => ({
+        projectId: target.projectId,
+        name: target.name,
+        clonePath: target.clonePath,
+        cloneSource: cloneSource(target),
+        restoredFrom: null as WorkspaceRootRestore | null,
+        snapshotAt: null as DateTime.Utc | null,
+      }));
+    const baseBranch = Effect.fn("CloudPreparation.baseBranch")(function* (
+      target: (typeof targets)[number],
+    ) {
+      // The server's checkout of a Pair Cloud project sits on its default branch.
+      const base =
+        (yield* git.defaultBranch(target.clonePath).pipe(Effect.orElseSucceed(() => null))) ??
+        (yield* git.currentBranch(target.projectRoot).pipe(Effect.orElseSucceed(() => null))) ??
+        "main";
+      if (!(yield* hasRemoteBranch(target, base))) {
+        return yield* new CloudLaunchError({
+          projectId: target.projectId,
+          reason: "base-ref-missing",
+          baseRef: base,
+          remote: normalizeGitRemoteUrl(target.url),
+          root: target.name,
+        });
+      }
+      return base;
+    });
+    const hasRemoteBranch = (target: (typeof targets)[number], refName: string) =>
+      git.hasCommit({ cwd: target.clonePath, refName: `refs/remotes/origin/${refName}` });
+
+    if (input.existingWorktreePath !== null) {
+      const mirror = yield* Effect.serviceOption(MirrorSync.MirrorSync);
+      const roots = rootsOf(() => "existing");
+      // A rebuild never deletes the work it brought back, so a failure keeps earlier repositories.
+      for (const [index, target] of targets.entries()) {
+        const path = `${folder}/${target.name}`;
+        if (yield* isCheckout(path)) {
+          roots[index] = { ...roots[index]!, restoredFrom: "disk" };
+          continue;
+        }
+        const cloneSource = yield* cloneOrFetch({ ...target, root: sandboxRoot });
+        yield* git.pruneWorktrees({ cwd: target.clonePath });
+        const restored = Option.isSome(mirror)
+          ? yield* mirror.value.restore({
+              threadId: input.threadId,
+              projectId: target.projectId,
+              clonePath: target.clonePath,
+              worktreePath: path,
+              branch: input.branch,
+            })
+          : null;
+        if (restored !== null) {
+          roots[index] = {
+            ...roots[index]!,
+            cloneSource,
+            restoredFrom: "mirror",
+            snapshotAt: restored.snapshotAt,
+          };
+          continue;
+        }
+        // Its own branch still in the clone keeps the commits the remote may lack.
+        const hasBranch = yield* git.hasCommit({
+          cwd: target.clonePath,
+          refName: `refs/heads/${input.branch}`,
+        });
+        if (hasBranch) {
+          yield* git.createWorktree({ cwd: target.clonePath, refName: input.branch, path });
+        } else {
+          const base = yield* baseBranch(target);
+          const pushed = yield* hasRemoteBranch(target, input.branch);
+          yield* git.createWorktree({
+            cwd: target.clonePath,
+            refName: `origin/${pushed ? input.branch : base}`,
+            newRefName: input.branch,
+            baseRefName: `refs/remotes/origin/${base}`,
+            path,
+          });
+        }
+        roots[index] = {
+          ...roots[index]!,
+          cloneSource,
+          restoredFrom: hasBranch ? "branch" : "origin",
+        };
+      }
+      return { folder, branch: input.branch, created: false, roots };
+    }
+    const added: Array<SandboxWorkspaceRoot> = [];
+    const cloneSources = new Map<string, CloneSource>();
+    let branch = input.branch;
+    yield* Effect.gen(function* () {
+      for (const target of targets) {
+        cloneSources.set(target.name, yield* cloneOrFetch({ ...target, root: sandboxRoot }));
+        const path = `${folder}/${target.name}`;
+        // An attempt that failed after `worktree add` left this path; start it again.
+        if (yield* isCheckout(path)) {
+          yield* git.removeWorktree({ cwd: target.clonePath, path, force: true });
+        }
+        const base = yield* baseBranch(target);
+        const pushed = yield* hasRemoteBranch(target, input.branch);
+        const created = yield* git.createWorktree(
+          {
+            cwd: target.clonePath,
+            refName: `origin/${pushed ? input.branch : base}`,
+            newRefName: input.branch,
+            baseRefName: `refs/remotes/origin/${base}`,
+            path,
+          },
+          {
+            progress: {
+              onWorktreeClaimed: () =>
+                Effect.sync(() => {
+                  added.push({ name: target.name, clonePath: target.clonePath });
+                }),
+            },
+          },
+        );
+        if (!added.some((root) => root.name === target.name)) {
+          added.push({ name: target.name, clonePath: target.clonePath });
+        }
+        branch = created.worktree.refName;
+      }
+    }).pipe(
+      Effect.onError(() =>
+        removeWorkspaceCheckout({ folder, roots: added, branch: input.branch }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to remove a partly created workspace checkout", {
+              folder,
+              cause,
+            }),
+          ),
+        ),
+      ),
+    );
+    return {
+      folder,
+      branch,
+      created: true,
+      roots: rootsOf((target) => cloneSources.get(target.name) ?? "existing"),
+    };
+  },
+);
