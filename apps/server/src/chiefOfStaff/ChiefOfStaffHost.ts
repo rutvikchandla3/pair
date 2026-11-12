@@ -201,8 +201,7 @@ const make = Effect.gen(function* () {
     const visible = snapshot.threads.filter(
       (shell) =>
         isListedThreadLineage(shell.lineage) &&
-        (access === undefined ||
-          access.allowsThread(memberId, { sandboxId: shell.sandboxId, ownerId: shell.ownerId })),
+        (access === undefined || access.allowsThread(memberId, shell)),
     );
     const projectIds = [...new Set(visible.map((shell) => shell.projectId))];
     const titles = new Map(

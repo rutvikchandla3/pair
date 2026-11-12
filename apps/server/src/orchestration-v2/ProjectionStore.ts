@@ -466,6 +466,8 @@ export interface ActiveShellIndexEntry extends Pick<
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
+  /** The thread's place in a space, as far as access reads it. */
+  readonly space?: { readonly spaceId: SpaceId; readonly kind: "room" | "task" };
 }
 
 export interface OlderSettledThreadsQuery {
@@ -7632,6 +7634,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly snoozed_until: string | null;
         readonly owner_id: string | null;
         readonly sandbox_id: string | null;
+        readonly space_id: SpaceId | null;
+        readonly space_kind: "room" | "task" | null;
         readonly may_be_live: number;
       }>`
         SELECT
@@ -7645,6 +7649,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.ownerId') AS owner_id,
           json_extract(t.payload_json, '$.sandboxId') AS sandbox_id,
+          json_extract(t.payload_json, '$.space.spaceId') AS space_id,
+          json_extract(t.payload_json, '$.space.kind') AS space_kind,
           -- Pinned or snoozed by the holder or by any member.
           (
             SELECT MIN(pinned_at) FROM (
@@ -7723,6 +7729,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
         ownerId: row.owner_id === null ? null : MemberId.make(row.owner_id),
         ...(row.sandbox_id === null ? {} : { sandboxId: SandboxIdSchema.make(row.sandbox_id) }),
+        ...(row.space_id === null || row.space_kind === null
+          ? {}
+          : { space: { spaceId: row.space_id, kind: row.space_kind } }),
         mayBeLive: row.may_be_live === 1,
       }));
     }, Effect.mapError(shellSnapshotReadError));

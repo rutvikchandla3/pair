@@ -31,6 +31,7 @@ import {
   RunAttemptId,
   RunId,
   SandboxId,
+  SpaceId,
   ThreadId,
   TurnItemId,
   type ThreadPullRequestLink,
@@ -50,6 +51,7 @@ import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
@@ -151,6 +153,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
       | "pinnedAt"
       | "snoozedUntil"
       | "ownerId"
+      | "space"
     >,
   ) => ({
     id: row.id,
@@ -161,6 +164,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     pinnedAt: iso(row.pinnedAt),
     snoozedUntil: iso(row.snoozedUntil),
     ownerId: row.ownerId ?? null,
+    space: row.space === undefined ? null : { spaceId: row.space.spaceId, kind: row.space.kind },
   });
   // The index also counts any member's pin or snooze; the shell shows only the holder's.
   const withMemberPinsAndSnoozes = yield* Effect.forEach(shells, (shell) =>
@@ -2003,6 +2007,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly ownerId?: MemberId;
       readonly followedBy?: MemberId;
       readonly sandboxId?: SandboxId;
+      readonly space?: OrchestrationV2AppThread["space"];
     }) =>
       Effect.gen(function* () {
         const payload: OrchestrationV2AppThread = {
@@ -2034,6 +2039,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
           deletedAt: null,
           ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }),
           ...(input.sandboxId === undefined ? {} : { sandboxId: input.sandboxId }),
+          ...(input.space === undefined ? {} : { space: input.space }),
         };
         yield* store.apply({
           id: EventId.make(`event:older:${input.name}`),
@@ -2218,6 +2224,33 @@ it.effect("SQL list older settled threads below a cursor", () =>
     assert.deepEqual(yield* countFor(alice), cloudCount(6));
     assert.deepEqual(yield* countFor(bob), cloudCount(4));
     assert.deepEqual(yield* countFor(carol), cloudCount(2));
+
+    // Subscriber trims filter the shell index, so it must carry a task's space for its members.
+    const spaceId = SpaceId.make("spc_0123456789abcdef0123");
+    yield* createThread({
+      name: "space-task",
+      settledDay: null,
+      project: "project:space",
+      ownerId: bob,
+      space: {
+        kind: "task",
+        spaceId,
+        createdBy: alice,
+        description: "Fix the build",
+        base: { baseRef: "main" },
+      },
+    });
+    yield* assertShellIndexCoversShells();
+    const task = (yield* store.listActiveShellIndex()).find((row) => row.id === id("space-task"));
+    const roster = {
+      cloudOnly: true,
+      serverOwnerId: serverOwner!.id,
+      isActive: () => true,
+      isSpaceMember: (space: SpaceId, member: MemberId) =>
+        space === spaceId && (member === alice || member === bob),
+    };
+    assert.isTrue(ThreadAccess.threadAllows(roster, task!, undefined, alice));
+    assert.isFalse(ThreadAccess.threadAllows(roster, task!, undefined, carol));
     // A removed member opens nothing, even a team machine or their own thread.
     yield* sql`UPDATE members SET removed_at = ${DateTime.formatIso(now)} WHERE id = ${bob}`;
     assert.deepEqual(yield* pageIds(bob, null), []);
