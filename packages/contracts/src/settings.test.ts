@@ -584,3 +584,50 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("Chief of staff settings", () => {
+  it("starts off, read-only and unset on servers that never saved the settings", () => {
+    expect(decodeServerSettings({}).chiefOfStaff).toEqual({
+      enabled: false,
+      providerInstanceId: "",
+      voice: "",
+      model: "",
+      toolAccess: "read-only",
+      realtimeBaseUrl: "",
+    });
+  });
+
+  it("patches one field without clearing the others", () => {
+    const patch = decodeServerSettingsPatch({
+      chiefOfStaff: { realtimeBaseUrl: " https://chatgpt.com/backend-api/codex " },
+    });
+    expect(patch.chiefOfStaff).toEqual({
+      realtimeBaseUrl: "https://chatgpt.com/backend-api/codex",
+    });
+    expect(() => decodeServerSettingsPatch({ chiefOfStaff: { toolAccess: "root" } })).toThrow();
+  });
+
+  it("decodes an avatar look from a newer client to the default instead of failing", () => {
+    const defaults = decodeClientSettings({});
+    expect([
+      defaults.chiefOfStaffAvatarStyle,
+      defaults.chiefOfStaffAvatarAccentColor,
+      defaults.chiefOfStaffAvatarSize,
+    ]).toEqual(["pet", "", "medium"]);
+    const newer = decodeClientSettings({
+      chiefOfStaffAvatarStyle: "dragon",
+      chiefOfStaffAvatarSize: "huge",
+      chiefOfStaffAvatarAccentColor: "#ff8800",
+      notificationMode: "off",
+    });
+    expect([
+      newer.chiefOfStaffAvatarStyle,
+      newer.chiefOfStaffAvatarAccentColor,
+      newer.chiefOfStaffAvatarSize,
+    ]).toEqual(["pet", "#ff8800", "medium"]);
+    expect(decodeClientSettings({ chiefOfStaffAvatarStyle: "wave" }).chiefOfStaffAvatarStyle).toBe(
+      "wave",
+    );
+    expect(() => decodeClientSettingsPatch({ chiefOfStaffAvatarStyle: "dragon" })).toThrow();
+  });
+});

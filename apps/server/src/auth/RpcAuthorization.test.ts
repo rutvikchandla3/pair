@@ -151,6 +151,20 @@ describe("RPC authorization scopes", () => {
     ]);
   });
 
+  it("lets members talk to the Chief of staff and keeps listing its voices, which boots a provider, admin only", () => {
+    for (const method of [WS_METHODS.chiefOfStaffStart, WS_METHODS.chiefOfStaffStop]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(clientRpcRequiredScopes(method, {})).toEqual([AuthOrchestrationOperateScope]);
+    }
+    expect(requiredScopeForRpcMethod(WS_METHODS.chiefOfStaffSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.chiefOfStaffListVoices)).toBe(
+      AuthSettingsWriteScope,
+    );
+    expect(MEMBER_SCOPES).not.toContain(AuthSettingsWriteScope);
+  });
+
   it("keeps draining, which holds every member's new cloud turns, admin only", () => {
     expect(MEMBER_SCOPES).not.toContain(AuthEnvironmentMaintainScope);
     expect(ADMIN_SCOPES).toContain(AuthEnvironmentMaintainScope);

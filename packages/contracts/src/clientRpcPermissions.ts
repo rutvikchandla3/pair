@@ -40,6 +40,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.threadMoveToLocal]: AuthOrchestrationOperateScope,
   // A move starts a thread on Pair Cloud through this server's link.
   [WS_METHODS.threadMoveToCloud]: AuthOrchestrationOperateScope,
+  // A voice session runs the Chief of staff's provider and lends it MCP tools.
+  [WS_METHODS.chiefOfStaffStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.chiefOfStaffStop]: AuthOrchestrationOperateScope,
+  // Listing boots a provider process for the settings page.
+  [WS_METHODS.chiefOfStaffListVoices]: AuthSettingsWriteScope,
   // Draining holds every member's new cloud turns, as an update restarts the server.
   [WS_METHODS.serverDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCancelDrain]: AuthEnvironmentMaintainScope,

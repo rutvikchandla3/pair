@@ -2,7 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MemberId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -221,4 +221,36 @@ it.effect.each(["provider-session", "thread", "all"] as const)(
       yield* registry.touch(threadId);
       expect(yield* registry.resolve(token)).toBeUndefined();
     }),
+);
+
+it.effect("issues a client credential for a member that only its own revocation ends", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const memberId = MemberId.make("member-1");
+    const issued = yield* registry.issueClient({
+      label: "Chief of staff",
+      access: "read-only",
+      memberId,
+    });
+    const token = issued.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    expect(yield* registry.resolve(token)).toBeUndefined();
+    const resolved = yield* registry.resolveClient(token);
+    expect(resolved?.thread).toBeUndefined();
+    expect(resolved?.client).toEqual({
+      sessionId: issued.sessionId,
+      memberId,
+      label: "Chief of staff",
+      access: "read-only",
+    });
+    expect(resolved?.requestNamespace).toBe(`client:${issued.sessionId}`);
+    expect(resolved?.capabilities.has("preview")).toBe(false);
+
+    yield* registry.revokeThread(ThreadId.make("thread-1"));
+    yield* registry.revokeProviderSession(issued.sessionId);
+    expect(yield* registry.resolveClient(token)).toBeDefined();
+
+    yield* registry.revokeClient(issued.sessionId);
+    expect(yield* registry.resolveClient(token)).toBeUndefined();
+  }),
 );

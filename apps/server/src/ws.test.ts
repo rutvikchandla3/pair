@@ -51,6 +51,7 @@ import * as Statement from "effect/sql/Statement";
 import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as CloudOnly from "./environment/CloudOnly.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
@@ -1117,6 +1118,7 @@ it.effect.each([
         Layer.mergeAll(
           Layer.fresh(layerConfigSources),
           Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ChiefOfStaffVoice.ChiefOfStaffVoice)({}),
           Layer.mock(ServerBrowser.ServerBrowser)({}),
         ),
       ),
@@ -1237,6 +1239,7 @@ const configRpcServer = Effect.fn("test.configRpcServer")(function* (options: {
 const layerConfigRpcTest = Layer.mergeAll(
   Layer.fresh(layerConfigSources),
   Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+  Layer.mock(ChiefOfStaffVoice.ChiefOfStaffVoice)({}),
   Layer.mock(ServerBrowser.ServerBrowser)({}),
 );
 
@@ -1638,6 +1641,7 @@ const callCloudOnly = <R extends Rpc.Any>(
       Layer.mergeAll(
         Layer.fresh(layerConfigSources),
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ChiefOfStaffVoice.ChiefOfStaffVoice)({}),
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),
     ),

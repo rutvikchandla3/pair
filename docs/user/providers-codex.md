@@ -95,6 +95,25 @@ in the thread on web, desktop, or mobile. Some tools offer access for one reques
 the current session, or permanently. See [Permission modes](./permission-modes.md)
 for command and file approvals.
 
+## Talk to Chief of staff
+
+Chief of staff is a voice assistant that runs on Codex's realtime voice. Ask it
+what your threads are doing, or to find a project, and it answers aloud while
+the sidebar shows what it heard and what it is checking.
+
+Turn it on in **Settings → Chief of staff** for each environment, then start it
+from the avatar in the sidebar footer or with **Start Chief of staff** in the
+command palette, or press Cmd+Option+V (Ctrl+Alt+V on Windows and Linux) to
+start or stop it. It runs in the environment you are viewing, and one session
+runs at a time. The browser asks for the microphone the first time; a web page
+needs HTTPS or localhost to use it.
+
+It starts with read-only tool access. Raise **Tool access** if you want it to
+change threads for you. **Realtime base URL** overrides Codex's base URL for
+voice only; left empty, voice uses Codex's own. If Codex goes through a proxy
+that does not support voice, set it to `https://chatgpt.com/backend-api/codex`.
+The avatar's look, color, and size are set per device on the same page.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and

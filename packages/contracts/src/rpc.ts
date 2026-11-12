@@ -65,6 +65,14 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
+import {
+  ChiefOfStaffError,
+  ChiefOfStaffEvent,
+  ChiefOfStaffSessionInput,
+  ChiefOfStaffStartInput,
+  ChiefOfStaffStartResult,
+  ChiefOfStaffVoiceList,
+} from "./chiefOfStaff.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -576,6 +584,10 @@ export const WS_METHODS = {
   threadMoveToLocal: "threadMove.toLocal",
   threadMovePreview: "threadMove.preview",
   threadMoveToCloud: "threadMove.toCloud",
+  chiefOfStaffStart: "chiefOfStaff.start",
+  chiefOfStaffStop: "chiefOfStaff.stop",
+  chiefOfStaffSubscribe: "chiefOfStaff.subscribe",
+  chiefOfStaffListVoices: "chiefOfStaff.listVoices",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -932,6 +944,30 @@ const WsThreadMoveToCloudRpc = Rpc.make(WS_METHODS.threadMoveToCloud, {
   payload: ThreadMoveToCloudInput,
   success: ThreadMoveToCloudResult,
   error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
+});
+
+const WsChiefOfStaffStartRpc = Rpc.make(WS_METHODS.chiefOfStaffStart, {
+  payload: ChiefOfStaffStartInput,
+  success: ChiefOfStaffStartResult,
+  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
+});
+
+const WsChiefOfStaffStopRpc = Rpc.make(WS_METHODS.chiefOfStaffStop, {
+  payload: ChiefOfStaffSessionInput,
+  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
+});
+
+/** Replays the current state first; ends after the `closed` state. */
+const WsChiefOfStaffSubscribeRpc = Rpc.make(WS_METHODS.chiefOfStaffSubscribe, {
+  payload: ChiefOfStaffSessionInput,
+  success: ChiefOfStaffEvent,
+  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsChiefOfStaffListVoicesRpc = Rpc.make(WS_METHODS.chiefOfStaffListVoices, {
+  success: ChiefOfStaffVoiceList,
+  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
 });
 
 const WsPeerLinksLinkRpc = Rpc.make(WS_METHODS.peerLinksLink, {
@@ -2419,6 +2455,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadMoveToLocalRpc,
   WsThreadMovePreviewRpc,
   WsThreadMoveToCloudRpc,
+  WsChiefOfStaffStartRpc,
+  WsChiefOfStaffStopRpc,
+  WsChiefOfStaffSubscribeRpc,
+  WsChiefOfStaffListVoicesRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

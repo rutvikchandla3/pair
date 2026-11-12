@@ -1,4 +1,9 @@
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  type AuthMcpClientAccess,
+  type MemberId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -26,16 +31,36 @@ export interface McpIssuedCredential {
   readonly config: McpProviderSession.McpProviderSessionConfig;
 }
 
+/** A client caller held in memory, for a process this server runs on a member's behalf. */
+export interface McpClientCredentialRequest {
+  readonly label: string;
+  readonly access: AuthMcpClientAccess;
+  readonly memberId: MemberId;
+}
+
+export interface McpIssuedClientCredential {
+  readonly sessionId: string;
+  readonly endpoint: string;
+  readonly authorizationHeader: string;
+}
+
 export interface McpSessionRegistryShape {
   /** The `/mcp` URL issued configs carry; sandbox forwards proxy to it. */
   readonly endpoint: string;
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
+  readonly issueClient: (
+    request: McpClientCredentialRequest,
+  ) => Effect.Effect<McpIssuedClientCredential>;
   readonly resolve: (
     rawToken: string,
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
+  readonly resolveClient: (
+    rawToken: string,
+  ) => Effect.Effect<McpInvocationContext.McpInvocationScope | undefined>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly revokeClient: (sessionId: string) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
 }
 
@@ -46,7 +71,7 @@ export class McpSessionRegistry extends Context.Service<
 
 interface CredentialRecord {
   readonly tokenHash: string;
-  readonly scope: McpInvocationContext.McpThreadInvocationScope;
+  readonly scope: McpInvocationContext.McpInvocationScope;
   readonly lastAliveAt: number;
 }
 
@@ -96,11 +121,20 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       .digest(Digest.sha256, new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
+  const store = (tokenHash: string, scope: McpInvocationContext.McpInvocationScope) =>
+    SynchronizedRef.update(state, ({ records }) => {
+      const next = new Map(records);
+      next.set(tokenHash, { tokenHash, scope, lastAliveAt: scope.issuedAt });
+      return { records: next };
+    });
+
+  const newToken = random.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
+
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
       const providerSessionId = yield* random.uuidV4();
-      const rawToken = yield* random.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
+      const rawToken = yield* newToken;
       const tokenHash = yield* hashToken(rawToken);
       const browserToolsAvailable = request.browserToolsAvailable ?? true;
       const scope: McpInvocationContext.McpThreadInvocationScope = {
@@ -121,11 +155,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         ]),
         issuedAt,
       };
-      yield* SynchronizedRef.update(state, ({ records }) => {
-        const next = new Map(records);
-        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
-        return { records: next };
-      });
+      yield* store(tokenHash, scope);
       return {
         config: {
           environmentId,
@@ -141,22 +171,63 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     },
   );
 
+  const issueClient: McpSessionRegistryShape["issueClient"] = Effect.fn(
+    "McpSessionRegistry.issueClient",
+  )(function* (request) {
+    const issuedAt = yield* currentTimeMillis;
+    const sessionId = yield* random.uuidV4();
+    const rawToken = yield* newToken;
+    yield* store(yield* hashToken(rawToken), {
+      environmentId,
+      requestNamespace: `client:${sessionId}`,
+      thread: undefined,
+      client: {
+        sessionId,
+        memberId: request.memberId,
+        label: request.label,
+        access: request.access,
+      },
+      capabilities: new Set<McpInvocationContext.McpCapability>([
+        "orchestration",
+        "worktree",
+        "pull-requests",
+      ]),
+      issuedAt,
+    });
+    return { sessionId, endpoint, authorizationHeader: `Bearer ${rawToken}` };
+  });
+
+  // Untraced: `resolve` and `resolveClient` are the spans.
+  const lookup = Effect.fnUntraced(function* (rawToken: string) {
+    if (rawToken.length === 0) return undefined;
+    const tokenHash = yield* hashToken(rawToken);
+    const timestamp = yield* currentTimeMillis;
+    return yield* SynchronizedRef.modify(state, ({ records }) => {
+      const record = records.get(tokenHash);
+      if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
+        return [undefined, { records }] as const;
+      }
+      const next = new Map(records);
+      next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+      return [record.scope, { records: next }] as const;
+    });
+  });
+
   const resolve: McpSessionRegistryShape["resolve"] = Effect.fn("McpSessionRegistry.resolve")(
     function* (rawToken) {
-      if (rawToken.length === 0) return undefined;
-      const tokenHash = yield* hashToken(rawToken);
-      const timestamp = yield* currentTimeMillis;
-      return yield* SynchronizedRef.modify(state, ({ records }) => {
-        const record = records.get(tokenHash);
-        if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
-          return [undefined, { records }] as const;
-        }
-        const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
-      });
+      const scope = yield* lookup(rawToken);
+      return scope?.thread === undefined
+        ? undefined
+        : (scope as McpInvocationContext.McpThreadInvocationScope);
     },
   );
+
+  const resolveClient: McpSessionRegistryShape["resolveClient"] = Effect.fn(
+    "McpSessionRegistry.resolveClient",
+  )(function* (rawToken) {
+    const scope = yield* lookup(rawToken);
+    return scope?.client === undefined ? undefined : scope;
+  });
 
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
@@ -164,7 +235,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
         for (const [tokenHash, record] of records) {
-          if (record.scope.thread.threadId === threadId) {
+          if (record.scope.thread?.threadId === threadId) {
             next.set(tokenHash, { ...record, lastAliveAt: timestamp });
           }
         }
@@ -181,15 +252,22 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   return McpSessionRegistry.of({
     endpoint,
     issue,
+    issueClient,
     resolve,
+    resolveClient,
     touch,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
-        yield* revokeWhere((record) => record.scope.thread.providerSessionId === providerSessionId);
+        yield* revokeWhere(
+          (record) => record.scope.thread?.providerSessionId === providerSessionId,
+        );
       },
     ),
     revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
-      yield* revokeWhere((record) => record.scope.thread.threadId === threadId);
+      yield* revokeWhere((record) => record.scope.thread?.threadId === threadId);
+    }),
+    revokeClient: Effect.fn("McpSessionRegistry.revokeClient")(function* (sessionId) {
+      yield* revokeWhere((record) => record.scope.client?.sessionId === sessionId);
     }),
     revokeAll: SynchronizedRef.set(state, { records: new Map() }),
   });

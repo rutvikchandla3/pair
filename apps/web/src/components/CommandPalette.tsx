@@ -1,6 +1,10 @@
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
+import { isChiefOfStaffLive } from "../chiefOfStaff/chiefOfStaff.logic";
+import { startChiefOfStaff, stopChiefOfStaff, useChiefOfStaffStore } from "../chiefOfStaff/session";
+import { useChiefOfStaffTarget } from "../chiefOfStaff/useChiefOfStaffTarget";
+
 import {
   scopedThreadKey,
   scopeProjectRef,
@@ -84,6 +88,8 @@ import {
   UsersIcon,
   EyeIcon,
   EyeOffIcon,
+  MicIcon,
+  MicOffIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
@@ -498,6 +504,8 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
+  const chiefOfStaffTarget = useChiefOfStaffTarget();
+  const chiefOfStaffLive = isChiefOfStaffLive(useChiefOfStaffStore((view) => view.phase));
   const projects = useProjects();
   const referenceThreadRef =
     pathname === "/pull-requests"
@@ -1815,6 +1823,26 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (chiefOfStaffLive || chiefOfStaffTarget.available) {
+    const startIn = chiefOfStaffTarget.environmentId;
+    actionItems.push({
+      kind: "action",
+      value: "action:chief-of-staff",
+      searchTerms: ["chief of staff", "voice", "talk", "speak", "assistant", "microphone"],
+      title: chiefOfStaffLive ? "Stop Chief of staff" : "Start Chief of staff",
+      shortcutCommand: "chiefOfStaff.toggle",
+      icon: chiefOfStaffLive ? (
+        <MicOffIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <MicIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => {
+        if (chiefOfStaffLive) stopChiefOfStaff();
+        else if (startIn !== null) startChiefOfStaff(startIn);
+      },
+    });
+  }
 
   for (const direction of [1, -1] as const) {
     const title = direction === 1 ? "Focus Next Workspace Area" : "Focus Previous Workspace Area";

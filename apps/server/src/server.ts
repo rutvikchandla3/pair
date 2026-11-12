@@ -155,6 +155,8 @@ import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
 import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
 import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
+import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
+import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as StagedCloudImports from "./cloudMove/StagedCloudImports.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
@@ -1030,6 +1032,8 @@ const layerMakeRoutes = Layer.mergeAll(
       CloudMoves.layer.pipe(Layer.provide(CloudMoveClient.layer)),
     ).pipe(Layer.provideMerge(PeerMcpClient.layer), Layer.provideMerge(PeerLinks.layer)),
   ),
+  // One voice session per member, shared by all of a member's connections.
+  Layer.provide(ChiefOfStaffVoice.layer.pipe(Layer.provide(ChiefOfStaffHost.layer))),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),

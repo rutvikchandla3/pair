@@ -29,6 +29,7 @@ export type SettingsPath =
   | "/settings/browser"
   | "/settings/devices"
   | "/settings/scheduled-tasks"
+  | "/settings/chief-of-staff"
   | "/settings/source-control"
   | "/settings/worktrees"
   | "/settings/connections"
@@ -116,6 +117,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/browser": "Browser",
   "/settings/devices": "Devices",
   "/settings/scheduled-tasks": "Scheduled tasks",
+  "/settings/chief-of-staff": "Chief of staff",
   "/settings/source-control": "Source control",
   "/settings/worktrees": "Worktrees",
   "/settings/connections": "Environments",
@@ -153,6 +155,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/browser",
       "/settings/devices",
       "/settings/scheduled-tasks",
+      "/settings/chief-of-staff",
     ],
   },
   {
@@ -507,6 +510,66 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     searchTerms: ["beta alpha simlock callstack simulator emulator ios android pool lease gateway"],
+  },
+  {
+    id: "chief-of-staff-enabled",
+    title: "Chief of staff",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["voice assistant talk speak microphone realtime codex"],
+  },
+  {
+    id: "chief-of-staff-provider",
+    title: "Voice Codex instance",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["chief of staff provider codex instance voice"],
+  },
+  {
+    id: "chief-of-staff-voice",
+    title: "Voice",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["chief of staff voice speech sound"],
+  },
+  {
+    id: "chief-of-staff-model",
+    title: "Model",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["chief of staff voice codex model fast default"],
+  },
+  {
+    id: "chief-of-staff-tool-access",
+    title: "Voice tool access",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["chief of staff voice tools permissions read only access mcp"],
+  },
+  {
+    id: "chief-of-staff-base-url",
+    title: "Realtime base URL",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["chief of staff voice proxy realtime base url endpoint chatgpt codex override"],
+  },
+  {
+    id: "chief-of-staff-avatar-style",
+    title: "Chief of staff avatar",
+    to: "/settings/chief-of-staff",
+    searchTerms: ["voice avatar style pet orb bot dots wave look character"],
+  },
+  {
+    id: "chief-of-staff-avatar-color",
+    title: "Avatar accent color",
+    to: "/settings/chief-of-staff",
+    searchTerms: ["chief of staff voice avatar colour color accent"],
+  },
+  {
+    id: "chief-of-staff-avatar-size",
+    title: "Avatar size",
+    to: "/settings/chief-of-staff",
+    searchTerms: ["chief of staff voice avatar size small medium large"],
   },
   {
     id: "auto-settle-inactive-threads",
@@ -1370,6 +1433,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/access": "connections",
   "/settings/secrets": null,
   "/settings/scheduled-tasks": null,
+  "/settings/chief-of-staff": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
   "/settings/about": null,

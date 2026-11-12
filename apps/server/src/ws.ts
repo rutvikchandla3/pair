@@ -5,6 +5,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
+import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1679,6 +1680,11 @@ export const layerWsRpc = (
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const cloudMoves = yield* CloudMoves.CloudMoves;
+      const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
+      const chiefOfStaffCaller = {
+        memberId: currentSession.memberId,
+        scopes: currentSession.scopes,
+      };
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -3081,6 +3087,11 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.threadMoveToLocal]: (input) =>
           cloudMoves.continueLocally({ ...input, actorId: currentSession.memberId }),
+        [WS_METHODS.chiefOfStaffStart]: (input) => chiefOfStaff.start(chiefOfStaffCaller, input),
+        [WS_METHODS.chiefOfStaffStop]: (input) => chiefOfStaff.stop(chiefOfStaffCaller, input),
+        [WS_METHODS.chiefOfStaffSubscribe]: (input) =>
+          chiefOfStaff.subscribe(chiefOfStaffCaller, input),
+        [WS_METHODS.chiefOfStaffListVoices]: () => chiefOfStaff.listVoices,
         [WS_METHODS.threadMovePreview]: (input) => cloudMoves.preview(input),
         [WS_METHODS.threadMoveToCloud]: (input) =>
           cloudMoves.continueInCloud({
@@ -4026,6 +4037,7 @@ export const layer = Layer.unwrap(
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const cloudMoves = yield* CloudMoves.CloudMoves;
+    const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
     const projections = yield* ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -4129,6 +4141,7 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(CloudMoves.CloudMoves, cloudMoves)),
+              Layer.provide(Layer.succeed(ChiefOfStaffVoice.ChiefOfStaffVoice, chiefOfStaff)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(ProjectionStoreV2, projections)),
               Layer.provide(
