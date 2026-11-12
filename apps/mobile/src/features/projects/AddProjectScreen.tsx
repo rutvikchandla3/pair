@@ -1367,12 +1367,16 @@ export function AddProjectWorkspaceScreen(props: { readonly environmentId?: stri
   });
   const problem = workspaceRepositoriesProblem(repositories);
 
-  const toggle = (projectId: ProjectId, workspaceRoot: string) => {
+  const toggle = (project: {
+    readonly id: ProjectId;
+    readonly title: string;
+    readonly workspaceRoot: string;
+  }) => {
     setError(null);
     setSelected((current) =>
-      current.some((repository) => repository.projectId === projectId)
-        ? current.filter((repository) => repository.projectId !== projectId)
-        : [...current, { projectId, name: defaultWorkspaceRepositoryName(workspaceRoot) }],
+      current.some((repository) => repository.projectId === project.id)
+        ? current.filter((repository) => repository.projectId !== project.id)
+        : [...current, { projectId: project.id, name: defaultWorkspaceRepositoryName(project) }],
     );
   };
   const rename = (projectId: ProjectId, name: string) => {
@@ -1478,7 +1482,7 @@ export function AddProjectWorkspaceScreen(props: { readonly environmentId?: stri
                       disabled={isSubmitting}
                       isFirst={index === 0}
                       right={null}
-                      onPress={() => toggle(project.id, project.workspaceRoot)}
+                      onPress={() => toggle(project)}
                     />
                     {repository ? (
                       <View className="flex-row items-center gap-3 bg-grouped-card px-3.5 pb-3">

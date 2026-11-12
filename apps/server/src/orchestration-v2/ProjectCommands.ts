@@ -142,8 +142,10 @@ const ROOT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const FALLBACK_ROOT_NAME = "repository";
 
 // Mirrored by defaultWorkspaceRepositoryName in client-runtime, which previews it.
-const defaultRootName = (workspaceRoot: string) => {
-  const name = (workspaceRoot.split(/[\\/]+/).findLast((segment) => segment.length > 0) ?? "")
+// A Pair Cloud checkout's folder is named by the project id, so its title names the repository.
+const defaultRootName = (row: Pick<ProjectRow, "projectId" | "title" | "workspaceRoot">) => {
+  const folder = row.workspaceRoot.split(/[\\/]+/).findLast((segment) => segment.length > 0) ?? "";
+  const name = (folder === row.projectId ? row.title : folder)
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return name === "" || name === "." || name === ".." ? FALLBACK_ROOT_NAME : name;
@@ -180,7 +182,7 @@ function resolveProjectRoots(input: {
     if (row.roots !== undefined) {
       return invalid(`"${row.title}" is a workspace, so it cannot be a repository in another.`);
     }
-    const name = root.name ?? defaultRootName(row.workspaceRoot);
+    const name = root.name ?? defaultRootName(row);
     if (!ROOT_NAME_PATTERN.test(name) || name === "." || name === "..") {
       return invalid(
         `Folder name "${name}" for "${row.title}" may use only letters, digits, ".", "_" and "-".`,

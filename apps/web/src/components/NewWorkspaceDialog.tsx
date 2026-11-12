@@ -83,12 +83,15 @@ function NewWorkspaceDialog({ environmentId }: { environmentId: EnvironmentId })
   });
   const problem = workspaceRepositoriesProblem(repositories);
 
-  const toggle = (projectId: ProjectId, workspaceRoot: string, checked: boolean) => {
+  const toggle = (
+    project: { readonly id: ProjectId; readonly title: string; readonly workspaceRoot: string },
+    checked: boolean,
+  ) => {
     setError(null);
     setSelected((current) =>
       checked
-        ? [...current, { projectId, name: defaultWorkspaceRepositoryName(workspaceRoot) }]
-        : current.filter((repository) => repository.projectId !== projectId),
+        ? [...current, { projectId: project.id, name: defaultWorkspaceRepositoryName(project) }]
+        : current.filter((repository) => repository.projectId !== project.id),
     );
   };
   const rename = (projectId: ProjectId, name: string) => {
@@ -203,9 +206,7 @@ function NewWorkspaceDialog({ environmentId }: { environmentId: EnvironmentId })
                         <label className="flex cursor-pointer items-center gap-2 text-sm">
                           <Checkbox
                             checked={repository !== undefined}
-                            onCheckedChange={(checked) =>
-                              toggle(project.id, project.workspaceRoot, checked)
-                            }
+                            onCheckedChange={(checked) => toggle(project, checked)}
                           />
                           <span className="min-w-0 shrink-0 truncate font-medium">
                             {project.title}

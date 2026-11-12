@@ -32,9 +32,18 @@ export function isWorkspaceProject<T extends WithRoots>(
   return project?.roots !== undefined;
 }
 
-/** The folder name the server gives a repository when the client names none. */
-export function defaultWorkspaceRepositoryName(workspaceRoot: string): string {
-  const name = (workspaceRoot.split(/[\\/]+/).findLast((segment) => segment.length > 0) ?? "")
+/**
+ * The folder name the server gives a repository when the client names none: its folder's name,
+ * or its title when the folder is named by the project id, as a Pair Cloud checkout's is.
+ */
+export function defaultWorkspaceRepositoryName(project: {
+  readonly id: string;
+  readonly title: string;
+  readonly workspaceRoot: string;
+}): string {
+  const folder =
+    project.workspaceRoot.split(/[\\/]+/).findLast((segment) => segment.length > 0) ?? "";
+  const name = (folder === project.id ? project.title : folder)
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return name === "" || name === "." || name === ".." ? "repository" : name;

@@ -157,6 +157,7 @@ describe("planProjectCommand", () => {
       repo("spaced", "/code/My App (v2)"),
       repo("spaced-copy", "/other/My App  v2"),
       repo("symbols", "/code/###"),
+      repo("checkout", "/data/checkouts/checkout", { title: "shop-api" }),
       repo("gone", "/code/gone", { deletedAt: "2026-01-01T00:00:00.000Z" }),
       repo("nested", "/managed/nested", {
         roots: [{ projectId: ProjectId.make("api"), name: "api" }],
@@ -178,6 +179,11 @@ describe("planProjectCommand", () => {
     assert.deepEqual(payloadOf(create([{ projectId: "api" }, { projectId: "web" }])).roots, [
       { projectId: "api", name: "api" },
       { projectId: "web", name: "Web" },
+    ]);
+    // A Pair Cloud checkout's folder is its project id, so the title names it.
+    assert.deepEqual(payloadOf(create([{ projectId: "api" }, { projectId: "checkout" }])).roots, [
+      { projectId: "api", name: "api" },
+      { projectId: "checkout", name: "shop-api" },
     ]);
     assert.deepEqual(payloadOf(create([{ projectId: "spaced" }, { projectId: "symbols" }])).roots, [
       { projectId: "spaced", name: "My-App-v2" },

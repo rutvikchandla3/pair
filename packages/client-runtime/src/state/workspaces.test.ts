@@ -16,12 +16,15 @@ const web = ProjectId.make("web");
 
 describe("defaultWorkspaceRepositoryName", () => {
   it.each([
-    ["/code/api/", "api"],
-    ["C:\\code\\Web", "Web"],
-    ["/code/My App (v2)", "My-App-v2"],
-    ["/code/###", "repository"],
-  ])("names %s %s", (workspaceRoot, expected) => {
-    expect(defaultWorkspaceRepositoryName(workspaceRoot)).toBe(expected);
+    ["/code/api/", "Api service", "api"],
+    ["C:\\code\\Web", "Web", "Web"],
+    ["/code/My App (v2)", "App", "My-App-v2"],
+    ["/code/###", "Hash", "repository"],
+    ["/data/checkouts/project-1", "shop-api", "shop-api"],
+  ])("names %s (%s) %s", (workspaceRoot, title, expected) => {
+    expect(defaultWorkspaceRepositoryName({ id: "project-1", title, workspaceRoot })).toBe(
+      expected,
+    );
   });
 });
 

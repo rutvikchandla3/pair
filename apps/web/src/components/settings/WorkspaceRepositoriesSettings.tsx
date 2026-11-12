@@ -142,7 +142,7 @@ export function WorkspaceRepositoriesSettings({
                     ...roots,
                     {
                       projectId: project.id,
-                      name: defaultWorkspaceRepositoryName(project.workspaceRoot),
+                      name: defaultWorkspaceRepositoryName(project),
                     },
                   ]);
                 }}
