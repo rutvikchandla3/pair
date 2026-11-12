@@ -187,8 +187,9 @@ T3 Code throughout.
 - **In Cloud.** A workspace thread runs on one machine that holds every repository. Pair Cloud
   has its own workspaces, and a Cloud pick on a local workspace goes to the one with the same
   repositories, or offers to create it. Sleep, wake and rebuild work per repository.
-- Not built yet: moving a workspace thread between a Mac and Pair Cloud, and the diff panel's
-  uncommitted and commit views.
+- Continue in cloud moves a workspace thread to the Pair Cloud workspace with the same
+  repositories, one seed per repository. Not built yet: continuing a cloud workspace thread on a
+  Mac, and the diff panel's uncommitted and commit views.
 - User guide: [Workspaces](../user/workspaces.md).
 
 ## Not planned

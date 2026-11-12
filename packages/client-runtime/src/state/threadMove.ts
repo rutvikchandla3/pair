@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { type ThreadMovePreview, WS_METHODS } from "@t3tools/contracts";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import type { Atom } from "effect/reactivity";
 
@@ -17,6 +17,22 @@ export const MOVE_IN_PROGRESS_NOTE = "This thread is already moving to the cloud
 /** Files exist but are all left out, so "clean" would be wrong. */
 export const moveNothingToUpload = (branch: string) =>
   `Nothing to upload. The cloud thread starts from ${branch} on origin.`;
+
+/** The preview's subtitle: the branch and its base, or a workspace's repositories. */
+export function movePreviewSubtitle(
+  preview: Pick<ThreadMovePreview, "branch" | "baseRef" | "repositories">,
+): string {
+  const repositories = preview.repositories;
+  if (repositories === undefined) return `${preview.branch} from ${preview.baseRef}`;
+  return `${preview.branch} in ${repositories.map((repository) => `${repository.name}/`).join(", ")}`;
+}
+
+/** A workspace always uploads each repository, so only a repository's move skips the upload. */
+export const moveSkipsUpload = (
+  preview: Pick<ThreadMovePreview, "pushed" | "files" | "repositories">,
+  allExcluded: boolean,
+) =>
+  preview.repositories === undefined && preview.pushed && preview.files.length > 0 && allExcluded;
 
 /** Moves between a member's own server and Pair Cloud, sent to the member's own server. */
 export function createThreadMoveAtoms<R, E>(

@@ -75,34 +75,89 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
 
-  const findProject = Effect.fn("CloudMoveLaunch.findProject")(function* (
-    input: CloudMoveCheckInput,
-  ) {
-    const originKey = input.originKey.toLowerCase();
-    const live = (yield* projects.snapshot.pipe(
-      Effect.mapError(failed("Couldn't read Pair Cloud's projects.")),
-    )).projects.filter(
-      (project) =>
-        !project.archivedAt && project.deletedAt === null && originKeyOf(project) === originKey,
-    );
-    const named = live.find((project) => project.id === input.projectId);
-    if (named !== undefined) return named;
-    const oldest = live.reduce<Project | null>(
+  const liveProjects = projects.snapshot.pipe(
+    Effect.mapError(failed("Couldn't read Pair Cloud's projects.")),
+    Effect.map(({ projects }) =>
+      projects.filter((project) => !project.archivedAt && project.deletedAt === null),
+    ),
+  );
+
+  const oldest = (candidates: ReadonlyArray<Project>) =>
+    candidates.reduce<Project | null>(
       (found, project) => (found === null || project.createdAt < found.createdAt ? project : found),
       null,
     );
-    if (oldest !== null) return oldest;
+
+  const findProject = Effect.fn("CloudMoveLaunch.findProject")(function* (
+    input: CloudMoveCheckInput & { readonly originKey: string },
+  ) {
+    const originKey = input.originKey.toLowerCase();
+    const live = (yield* liveProjects).filter(
+      (project) => project.roots === undefined && originKeyOf(project) === originKey,
+    );
+    const found = live.find((project) => project.id === input.projectId) ?? oldest(live);
+    if (found !== null) return { project: found, roots: null };
     return yield* new CloudMoveLaunchError({
       reason: "unknown-project",
       message: `Add ${input.originKey.replace(/^[^/]*\//, "")} to Pair Cloud first.`,
     });
   });
 
+  /** The workspace with the same set of origins, the named one first, and its repositories. */
+  const findWorkspace = Effect.fn("CloudMoveLaunch.findWorkspace")(function* (
+    input: CloudMoveCheckInput & { readonly origins: ReadonlyArray<string> },
+  ) {
+    const wanted = new Set(input.origins.map((origin) => origin.toLowerCase()));
+    const live = yield* liveProjects;
+    const byId = new Map(live.map((project) => [project.id, project]));
+    const rootsOf = (workspace: Project) => {
+      const roots = (workspace.roots ?? []).map((root) => {
+        const rootProject = byId.get(root.projectId);
+        const key = rootProject === undefined ? null : originKeyOf(rootProject);
+        return key === null ? null : { originKey: key, projectId: root.projectId };
+      });
+      if (roots.some((root) => root === null)) return null;
+      const keys = new Set(roots.map((root) => root!.originKey));
+      return keys.size === wanted.size && [...wanted].every((key) => keys.has(key))
+        ? (roots as ReadonlyArray<{ originKey: string; projectId: Project["id"] }>)
+        : null;
+    };
+    const matches = live.filter(
+      (project) => project.roots !== undefined && rootsOf(project) !== null,
+    );
+    const found = matches.find((project) => project.id === input.projectId) ?? oldest(matches);
+    if (found === null) {
+      return yield* new CloudMoveLaunchError({
+        reason: "unknown-project",
+        message:
+          "Pair Cloud has no workspace with these repositories. Create it there, then try again.",
+      });
+    }
+    const roots = rootsOf(found)!;
+    return {
+      project: found,
+      roots: input.origins.map((origin) => {
+        const root = roots.find((candidate) => candidate.originKey === origin.toLowerCase())!;
+        return { originKey: origin, projectId: root.projectId };
+      }),
+    };
+  });
+
   const check: CloudMoveLaunch["Service"]["check"] = Effect.fn("CloudMoveLaunch.check")(function* ({
     memberId,
     input,
   }) {
-    const project = yield* findProject(input);
+    const { originKey, origins } = input;
+    const found =
+      origins !== undefined
+        ? yield* findWorkspace({ ...input, origins })
+        : originKey !== undefined
+          ? yield* findProject({ ...input, originKey })
+          : yield* new CloudMoveLaunchError({
+              reason: "unknown-project",
+              message: "The move named no repository.",
+            });
+    const { project } = found;
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError(failed("Couldn't read Pair Cloud's settings.")),
     );
@@ -122,7 +177,11 @@ const make = Effect.gen(function* () {
           (error) => new CloudMoveLaunchError({ reason: "refused", message: error.message }),
         ),
       );
-    return { projectId: project.id, modelSelection };
+    return {
+      projectId: project.id,
+      modelSelection,
+      ...(found.roots === null ? {} : { roots: found.roots }),
+    };
   });
 
   const launch: CloudMoveLaunch["Service"]["launch"] = Effect.fn("CloudMoveLaunch.launch")(
@@ -143,7 +202,8 @@ const make = Effect.gen(function* () {
             baseRef: input.baseRef,
             ...(input.branch === undefined ? {} : { branch: input.branch }),
             ...(input.existingBranch === undefined ? {} : { existingBranch: true }),
-            ...(input.seeded ? { seedRef: key } : {}),
+            ...(input.seeded && input.rootSeeds === undefined ? { seedRef: key } : {}),
+            ...(input.rootSeeds === undefined ? {} : { rootSeeds: input.rootSeeds }),
           },
           contextExportRef: key,
           initialMessage: { text: input.message, attachments: [] },

@@ -99,7 +99,7 @@ export class CloudMoves extends Context.Service<
 >()("t3/cloudMove/CloudMoves") {}
 
 const failed = (message: string) => () => new ThreadMoveError({ reason: "failed", message });
-const WORKSPACE_MESSAGE = "A workspace thread can't move between a Mac and Pair Cloud yet.";
+const WORKSPACE_MESSAGE = "A workspace thread can't continue locally yet.";
 const refused = (reason: ThreadMoveError["reason"], message: string) =>
   new ThreadMoveError({ reason, message });
 const seedFailed = () => refused("seed-failed", CloudMoveClient.SEED_FAILED_MESSAGE);
@@ -403,11 +403,44 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(failed("Couldn't read the project here."))),
     );
     if (project === undefined) return yield* failed("This thread's project is gone.")();
-    if (project.roots !== undefined || shell.roots !== undefined) {
-      return yield* new ThreadMoveError({ reason: "unsupported", message: WORKSPACE_MESSAGE });
+    const roots = shell.roots ?? project.roots;
+    if (roots === undefined) {
+      return {
+        shell,
+        project,
+        cwd: shell.worktreePath ?? project.workspaceRoot,
+        repositories: null,
+      };
     }
-    return { shell, project, cwd: shell.worktreePath ?? project.workspaceRoot };
+    const folder = shell.worktreePath;
+    if (folder === null) {
+      return yield* refused(
+        "no-repository",
+        "This workspace thread has no folder yet. Send it a message, then try again.",
+      );
+    }
+    const repositories = yield* Effect.forEach(roots, (root) =>
+      projects.getResolvedShell(root.projectId).pipe(
+        Effect.mapError(failed("Couldn't read the project here.")),
+        Effect.flatMap(
+          Option.match({
+            onNone: failed(`${root.name}/ belongs to a project that no longer exists.`),
+            onSome: (rootProject) =>
+              Effect.succeed({
+                name: root.name,
+                project: rootProject,
+                cwd: path.join(folder, root.name),
+              }),
+          }),
+        ),
+      ),
+    );
+    return { shell, project, cwd: folder, repositories };
   });
+
+  /** A repository's refusal, named for its folder. */
+  const inRepository = (name: string) => (error: ThreadMoveError) =>
+    new ThreadMoveError({ reason: error.reason, message: `${name}/: ${error.message}` });
 
   /** The recorded base when origin has it, else origin's default branch. Without `origin/`. */
   const resolveBase = Effect.fn("CloudMoves.resolveBase")(function* (cwd: string, branch: string) {
@@ -465,36 +498,79 @@ const make = Effect.gen(function* () {
     new Map<ThreadId, Deferred.Deferred<ThreadMoveToCloudResult, ThreadMoveError>>(),
   );
 
+  const readLink = Effect.fn("CloudMoves.readLink")(function* (cloudEnvironmentId: EnvironmentId) {
+    const messages = yield* linkMessages;
+    const stored = yield* links
+      .get(cloudEnvironmentId)
+      .pipe(Effect.mapError(failed("Couldn't read this computer's links.")));
+    const now = yield* DateTime.now;
+    return Option.match(stored, {
+      onNone: (): ThreadMovePreview["link"] => ({ status: "missing", message: messages.missing }),
+      onSome: (peer): ThreadMovePreview["link"] =>
+        DateTime.isLessThanOrEqualTo(peer.expiresAt, now)
+          ? { status: "expired", message: messages.expired(peer.label) }
+          : { status: "linked" },
+    });
+  });
+
+  const readCommits = (cwd: string, base: string) =>
+    gitDriver
+      .getReviewBranchCommits({ cwd, baseRef: `origin/${base}` })
+      .pipe(Effect.mapError(failed("Couldn't read this thread's commits.")));
+
   const preview: CloudMoves["Service"]["preview"] = Effect.fn("CloudMoves.preview")(
     function* (input) {
-      const { cwd } = yield* readThread(input.threadId);
-      const checkout = yield* readCheckout(cwd);
-      const commits = yield* gitDriver
-        .getReviewBranchCommits({ cwd, baseRef: `origin/${checkout.base}` })
-        .pipe(Effect.mapError(failed("Couldn't read this thread's commits.")));
-      const messages = yield* linkMessages;
-      const stored = yield* links
-        .get(input.cloudEnvironmentId)
-        .pipe(Effect.mapError(failed("Couldn't read this computer's links.")));
-      const now = yield* DateTime.now;
-      const link: ThreadMovePreview["link"] = Option.match(stored, {
-        onNone: () => ({ status: "missing", message: messages.missing }),
-        onSome: (peer) =>
-          DateTime.isLessThanOrEqualTo(peer.expiresAt, now)
-            ? { status: "expired", message: messages.expired(peer.label) }
-            : { status: "linked" },
-      });
-      const files = checkout.status.workingTree.files;
+      const { shell, cwd, repositories } = yield* readThread(input.threadId);
+      const link = yield* readLink(input.cloudEnvironmentId);
+      const moving = (yield* SynchronizedRef.get(inflight)).has(input.threadId);
+      if (repositories === null) {
+        const checkout = yield* readCheckout(cwd);
+        const commits = yield* readCommits(cwd, checkout.base);
+        const files = checkout.status.workingTree.files;
+        return {
+          branch: checkout.branch,
+          baseRef: checkout.base,
+          pushed: checkout.pushed,
+          commits: commits.commits.map(({ sha, subject }) => ({ sha, subject })),
+          commitsTruncated: commits.truncated,
+          files: files.slice(0, MOVE_PREVIEW_FILE_LIMIT),
+          filesTruncated: files.length > MOVE_PREVIEW_FILE_LIMIT,
+          link,
+          moving,
+        };
+      }
+      const read = yield* Effect.forEach(repositories, (repository) =>
+        Effect.gen(function* () {
+          const checkout = yield* readCheckout(repository.cwd);
+          const commits = yield* readCommits(repository.cwd, checkout.base);
+          return { name: repository.name, checkout, commits };
+        }).pipe(Effect.mapError(inRepository(repository.name))),
+      );
+      const files = read.flatMap(({ name, checkout }) =>
+        checkout.status.workingTree.files.map((file) => ({
+          ...file,
+          path: `${name}/${file.path}`,
+        })),
+      );
+      const first = read[0]!;
       return {
-        branch: checkout.branch,
-        baseRef: checkout.base,
-        pushed: checkout.pushed,
-        commits: commits.commits.map(({ sha, subject }) => ({ sha, subject })),
-        commitsTruncated: commits.truncated,
+        branch: shell.branch ?? first.checkout.branch,
+        baseRef: first.checkout.base,
+        pushed: read.every(({ checkout }) => checkout.pushed),
+        commits: read.flatMap(({ name, commits }) =>
+          commits.commits.map(({ sha, subject }) => ({ sha, subject, repository: name })),
+        ),
+        commitsTruncated: read.some(({ commits }) => commits.truncated),
         files: files.slice(0, MOVE_PREVIEW_FILE_LIMIT),
         filesTruncated: files.length > MOVE_PREVIEW_FILE_LIMIT,
         link,
-        moving: (yield* SynchronizedRef.get(inflight)).has(input.threadId),
+        moving,
+        repositories: read.map(({ name, checkout }) => ({
+          name,
+          branch: checkout.branch,
+          baseRef: checkout.base,
+          pushed: checkout.pushed,
+        })),
       };
     },
   );
@@ -502,6 +578,7 @@ const make = Effect.gen(function* () {
   /** The given Pair Cloud, or the one linked here that takes moves. */
   const resolveLink = Effect.fn("CloudMoves.resolveLink")(function* (
     environmentId: EnvironmentId | undefined,
+    workspace: boolean,
   ) {
     const messages = yield* linkMessages;
     const resolveOne = (id: EnvironmentId) =>
@@ -512,7 +589,9 @@ const make = Effect.gen(function* () {
             : refused("link-failed", error.message),
         ),
         Effect.filterOrFail(
-          (resolved) => resolved.capabilities.cloudImport === true,
+          (resolved) =>
+            resolved.capabilities.cloudImport === true &&
+            (!workspace || resolved.capabilities.cloudWorkspaceImport === true),
           (resolved) =>
             refused(
               "unsupported",
@@ -547,6 +626,12 @@ const make = Effect.gen(function* () {
     );
     return CloudStagingKey.make(`mv_${Hex.encode(hash).slice(0, 32)}`);
   });
+
+  /** A workspace repository's seed key, derived from the move's so retries reuse it too. */
+  const rootKeyFor = (key: CloudStagingKey, name: string) =>
+    digest
+      .digest(Digest.sha256, new TextEncoder().encode(`${key}\0${name}`))
+      .pipe(Effect.map((hash) => CloudStagingKey.make(`mv_${Hex.encode(hash).slice(0, 32)}`)));
 
   /** The local instance's driver, as `cloudModelDisabledReason` reads it. */
   const driverOf = Effect.fn("CloudMoves.driverOf")(function* (instanceId: string) {
@@ -667,20 +752,176 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const recordMove = Effect.fn("CloudMoves.recordMove")(function* (
+    input: ContinueInCloudInput,
+    key: CloudStagingKey,
+    link: PeerLinks.ResolvedPeerLink,
+    threadId: ThreadId,
+  ) {
+    const cloudThread = { environmentId: link.link.environmentId, threadId };
+    yield* threads
+      .dispatch({
+        type: "thread.move.record",
+        commandId: CommandId.make(`cloud-move:${key}:local`),
+        threadId: input.threadId,
+        to: cloudThread,
+        message: `Continued in cloud on ${link.link.label}`,
+        ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+      })
+      .pipe(
+        Effect.mapError(
+          failed("The cloud thread started, but this thread couldn't record it. Try again."),
+        ),
+      );
+    return cloudThread;
+  });
+
+  /**
+   * Every repository goes up as its own seed, into its own project's mirror on Pair Cloud, so the
+   * cloud thread's checkout never depends on what origin has. All of them land on one branch.
+   */
+  const moveWorkspace = Effect.fn("CloudMoves.moveWorkspace")(function* (
+    input: ContinueInCloudInput,
+    metrics: MoveMetrics,
+    thread: {
+      readonly shell: Effect.Success<ReturnType<typeof readThread>>["shell"];
+      readonly repositories: NonNullable<
+        Effect.Success<ReturnType<typeof readThread>>["repositories"]
+      >;
+    },
+  ) {
+    const { shell } = thread;
+    const repositories = yield* Effect.forEach(thread.repositories, (repository) =>
+      Effect.gen(function* () {
+        const originKey = originKeyOf(repository.project);
+        if (originKey === null || !originKey.toLowerCase().startsWith("github.com/")) {
+          return yield* refused(
+            "not-on-github",
+            `${repository.name}/ isn't a github.com repository, so this workspace can't run in Pair Cloud.`,
+          );
+        }
+        const checkout = yield* readCheckout(repository.cwd).pipe(
+          Effect.mapError(inRepository(repository.name)),
+        );
+        const defaultBranch = yield* gitDriver
+          .resolveDefaultBranchName(repository.cwd, "origin")
+          .pipe(Effect.orElseSucceed(() => null));
+        return { ...repository, originKey, checkout, defaultBranch };
+      }),
+    );
+    const link = yield* resolveLink(input.cloudEnvironmentId, true);
+    const key = yield* stagingKeyFor(input.threadId);
+    metrics.key = key;
+
+    const accepted = yield* client.check(link, {
+      ...(input.cloudProjectId === undefined ? {} : { projectId: input.cloudProjectId }),
+      origins: repositories.map((repository) => repository.originKey),
+      model: {
+        driver: yield* driverOf(shell.modelSelection.instanceId),
+        model: shell.modelSelection.model,
+      },
+    });
+    const seeds = yield* Effect.forEach(repositories, (repository) =>
+      Effect.gen(function* () {
+        const cloudRoot = accepted.roots?.find(
+          (root) => root.originKey.toLowerCase() === repository.originKey.toLowerCase(),
+        );
+        if (cloudRoot === undefined) {
+          return yield* refused(
+            "refused",
+            `${link.link.label}'s workspace has no ${repository.originKey.replace(/^[^/]*\//, "")}.`,
+          );
+        }
+        return {
+          repository,
+          projectId: cloudRoot.projectId,
+          seedRef: yield* rootKeyFor(key, repository.name),
+        };
+      }),
+    );
+
+    // Pair Cloud checks a seeded branch out of the mirror, which can't be a clone's base branch.
+    const bases = new Set(
+      repositories.flatMap(({ checkout, defaultBranch }) =>
+        defaultBranch === null ? [checkout.base] : [checkout.base, defaultBranch],
+      ),
+    );
+    const branch =
+      shell.branch !== null && !bases.has(shell.branch) ? shell.branch : `t3/${key.slice(3, 11)}`;
+
+    let claimed = false;
+    for (const seed of seeds) {
+      const prefix = `${seed.repository.name}/`;
+      const outcome = yield* sendSeed({
+        cwd: seed.repository.cwd,
+        key: seed.seedRef,
+        base: seed.repository.checkout.base,
+        branch: seed.repository.checkout.branch,
+        excludePaths: input.excludePaths.flatMap((entry) =>
+          entry.startsWith(prefix) ? [entry.slice(prefix.length)] : [],
+        ),
+        projectId: seed.projectId,
+        link,
+        metrics,
+      }).pipe(Effect.mapError(inRepository(seed.repository.name)));
+      metrics.seeded = true;
+      // A launch already took these seeds, so only the launch is resent, and it replays.
+      if (outcome === "claimed") {
+        claimed = true;
+        break;
+      }
+    }
+    if (!claimed) {
+      const value = yield* contextExports
+        .build(input.threadId)
+        .pipe(Effect.mapError(failed("Couldn't read this thread's conversation.")));
+      const sent = yield* client.putContextExport(link, {
+        key,
+        projectId: accepted.projectId,
+        value,
+      });
+      metrics.exportBytes = sent.bytes;
+    }
+
+    const launched = yield* client.launch(link, {
+      key,
+      body: {
+        projectId: accepted.projectId,
+        modelSelection: accepted.modelSelection,
+        title: shell.title,
+        baseRef: repositories[0]!.checkout.base,
+        branch,
+        seeded: true,
+        rootSeeds: seeds.map(({ projectId, seedRef }) => ({ projectId, seedRef })),
+        runtimeMode: shell.runtimeMode,
+        interactionMode: shell.interactionMode,
+        message: input.message,
+        createdBy: input.createdBy,
+        creationSource: input.creationSource,
+      },
+    });
+    if (launched === "branch-not-pushed") {
+      return yield* refused("refused", "Pair Cloud couldn't start the thread. Try again.");
+    }
+    const cloudThread = yield* recordMove(input, key, link, launched.threadId);
+    return { cloudThread, seeded: true };
+  });
+
   const move = Effect.fn("CloudMoves.move")(function* (
     input: ContinueInCloudInput,
     metrics: MoveMetrics,
   ) {
-    const { shell, project, cwd } = yield* readThread(input.threadId);
+    const { shell, project, cwd, repositories } = yield* readThread(input.threadId);
     if (shell.activeRunId !== null && shell.activeRunId !== input.allowRunId) {
       return yield* refused("run-active", RUN_ACTIVE_MESSAGE);
     }
+    if (repositories !== null) return yield* moveWorkspace(input, metrics, { shell, repositories });
     const checkout = yield* readCheckout(cwd);
     const originKey = originKeyOf(project);
     if (originKey === null || !originKey.toLowerCase().startsWith("github.com/")) {
       return yield* refused("not-on-github", "Cloud needs this project's origin on github.com.");
     }
-    const link = yield* resolveLink(input.cloudEnvironmentId);
+    const link = yield* resolveLink(input.cloudEnvironmentId, false);
     const key = yield* stagingKeyFor(input.threadId);
     metrics.key = key;
 
@@ -761,21 +1002,7 @@ const make = Effect.gen(function* () {
       return yield* refused("refused", `${checkout.branch} is no longer on origin. Try again.`);
     }
 
-    const cloudThread = { environmentId: link.link.environmentId, threadId: launched.threadId };
-    yield* threads
-      .dispatch({
-        type: "thread.move.record",
-        commandId: CommandId.make(`cloud-move:${key}:local`),
-        threadId: input.threadId,
-        to: cloudThread,
-        message: `Continued in cloud on ${link.link.label}`,
-        ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
-      })
-      .pipe(
-        Effect.mapError(
-          failed("The cloud thread started, but this thread couldn't record it. Try again."),
-        ),
-      );
+    const cloudThread = yield* recordMove(input, key, link, launched.threadId);
     return { cloudThread, seeded: metrics.seeded };
   });
 

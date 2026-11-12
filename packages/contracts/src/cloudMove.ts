@@ -148,7 +148,14 @@ export const ThreadMovePreview = Schema.Struct({
   baseRef: TrimmedNonEmptyString,
   /** origin/<branch> is at the local tip. */
   pushed: Schema.Boolean,
-  commits: Schema.Array(Schema.Struct({ sha: Schema.String, subject: Schema.String })),
+  commits: Schema.Array(
+    Schema.Struct({
+      sha: Schema.String,
+      subject: Schema.String,
+      /** A workspace's repository folder. */
+      repository: Schema.optionalKey(Schema.String),
+    }),
+  ),
   commitsTruncated: Schema.Boolean,
   files: Schema.Array(
     Schema.Struct({
@@ -164,6 +171,20 @@ export const ThreadMovePreview = Schema.Struct({
   ]),
   /** This thread's move is running. */
   moving: Schema.Boolean,
+  /**
+   * A workspace thread's repositories. `branch` and `baseRef` are then the thread's, `pushed` is
+   * every repository's, and `files` paths start with the repository's folder.
+   */
+  repositories: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        name: TrimmedNonEmptyString,
+        branch: TrimmedNonEmptyString,
+        baseRef: TrimmedNonEmptyString,
+        pushed: Schema.Boolean,
+      }),
+    ),
+  ),
 });
 export type ThreadMovePreview = typeof ThreadMovePreview.Type;
 
@@ -187,7 +208,10 @@ export type ThreadMoveToCloudResult = typeof ThreadMoveToCloudResult.Type;
 /** Asked before anything uploads: Pair Cloud names the project and the account it would use. */
 export const CloudMoveCheckInput = Schema.Struct({
   projectId: Schema.optionalKey(ProjectId),
-  originKey: TrimmedNonEmptyString,
+  /** A repository's move. */
+  originKey: Schema.optionalKey(TrimmedNonEmptyString),
+  /** A workspace's move: the origin of each repository. Only with `cloudWorkspaceImport`. */
+  origins: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1))),
   /** The local thread's; Pair Cloud picks its own instance (its ids differ from the laptop's). */
   model: Schema.Struct({ driver: ProviderDriverKind, model: TrimmedNonEmptyString }),
 });
@@ -196,6 +220,10 @@ export type CloudMoveCheckInput = typeof CloudMoveCheckInput.Type;
 export const CloudMoveCheckResult = Schema.Struct({
   projectId: ProjectId,
   modelSelection: ModelSelection,
+  /** For `origins`: the workspace's repository project on Pair Cloud for each origin. */
+  roots: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ originKey: TrimmedNonEmptyString, projectId: ProjectId })),
+  ),
 });
 export type CloudMoveCheckResult = typeof CloudMoveCheckResult.Type;
 
@@ -208,6 +236,10 @@ export const CloudMoveLaunchInput = Schema.Struct({
   branch: Schema.optionalKey(TrimmedNonEmptyString),
   existingBranch: Schema.optionalKey(Schema.Literal(true)),
   seeded: Schema.Boolean,
+  /** A workspace's move: one staged seed for each repository project, under its own key. */
+  rootSeeds: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ projectId: ProjectId, seedRef: CloudStagingKey })),
+  ),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   message: CLOUD_MOVE_MESSAGE,

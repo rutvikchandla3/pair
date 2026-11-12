@@ -731,25 +731,29 @@ describe("continueInCloudOffer", () => {
 });
 
 describe("resolveContinueInCloud", () => {
-  const presentations = new Map(
-    [
-      [mac, "Mac", config(false)],
-      [cloud, "Pair Cloud", config(true, [])],
-    ].map(([environmentId, label, serverConfig]) => {
-      const capabilities = (serverConfig as ServerConfig).environment.capabilities;
-      return [
-        environmentId as EnvironmentId,
-        {
-          entry: { target: { label } },
-          connection: { phase: "connected" },
-          serverConfig: {
-            ...(serverConfig as ServerConfig),
-            environment: { capabilities: { ...capabilities, cloudImport: true } },
+  const presentationsWith = (cloudWorkspaceImport: boolean) =>
+    new Map(
+      [
+        [mac, "Mac", config(false)],
+        [cloud, "Pair Cloud", config(true, [])],
+      ].map(([environmentId, label, serverConfig]) => {
+        const capabilities = (serverConfig as ServerConfig).environment.capabilities;
+        return [
+          environmentId as EnvironmentId,
+          {
+            entry: { target: { label } },
+            connection: { phase: "connected" },
+            serverConfig: {
+              ...(serverConfig as ServerConfig),
+              environment: {
+                capabilities: { ...capabilities, cloudImport: true, cloudWorkspaceImport },
+              },
+            },
           },
-        },
-      ];
-    }),
-  ) as unknown as Parameters<typeof resolveContinueInCloud>[0]["presentations"];
+        ];
+      }),
+    ) as unknown as Parameters<typeof resolveContinueInCloud>[0]["presentations"];
+  const presentations = presentationsWith(true);
   const shell = (activeRunId: RunId | null) =>
     ({
       environmentId: mac,
@@ -768,10 +772,38 @@ describe("resolveContinueInCloud", () => {
     expect(resolveContinueInCloud({ ...input, thread: shell(null), projects: [] })).toEqual({
       kind: "hidden",
     });
-    const workspace = { ...local, roots: [] } as EnvironmentProject;
+  });
+
+  it("offers a workspace thread the Pair Cloud workspace with the same repositories", () => {
+    const workspace = {
+      ...local,
+      id: ProjectId.make("workspace"),
+      repositoryIdentity: null,
+      roots: [{ projectId: local.id, name: "app" }],
+    } as EnvironmentProject;
+    const cloudWorkspace = {
+      ...onCloud,
+      id: ProjectId.make("cloud-workspace"),
+      repositoryIdentity: null,
+      roots: [{ projectId: onCloud.id, name: "app" }],
+    } as EnvironmentProject;
+    const thread = { ...shell(null), projectId: workspace.id };
+    const projects = [local, onCloud, workspace, cloudWorkspace];
+    expect(resolveContinueInCloud({ presentations, thread, projects })).toMatchObject({
+      kind: "ready",
+      targets: [{ environmentId: cloud, projectId: cloudWorkspace.id }],
+    });
     expect(
-      resolveContinueInCloud({ ...input, thread: shell(null), projects: [workspace, onCloud] }),
+      resolveContinueInCloud({ presentations: presentationsWith(false), thread, projects }),
     ).toEqual({ kind: "hidden" });
+    expect(
+      resolveContinueInCloud({ presentations, thread, projects: [local, onCloud, workspace] }),
+    ).toEqual({
+      kind: "disabled",
+      label: "not available",
+      reason:
+        "Pair Cloud has no workspace with these repositories. Start a Cloud thread in this workspace to create it, then try again.",
+    });
   });
 });
 

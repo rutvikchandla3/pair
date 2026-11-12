@@ -71,9 +71,15 @@ export function isCloudLaunchEnvironment(
   return serverConfig?.environment.capabilities.cloudLaunch === true;
 }
 
-/** Pair Cloud takes moves from other machines (3.20's routes). */
-function isCloudImportEnvironment(serverConfig: Pick<ServerConfig, "environment"> | null): boolean {
-  return serverConfig?.environment.capabilities.cloudImport === true;
+/** Pair Cloud takes moves from other machines (3.20's routes); a workspace's needs more. */
+function isCloudImportEnvironment(
+  serverConfig: Pick<ServerConfig, "environment"> | null,
+  workspace = false,
+): boolean {
+  const capabilities = serverConfig?.environment.capabilities;
+  return (
+    capabilities?.cloudImport === true && (!workspace || capabilities.cloudWorkspaceImport === true)
+  );
 }
 
 function unavailableReason(
@@ -440,7 +446,11 @@ export function continueInCloudOffer(input: {
   return {
     kind: "disabled",
     label: "not available",
-    reason: first.disabledReason ?? `Add ${repository} to ${first.label} first.`,
+    reason:
+      first.disabledReason ??
+      (first.createWorkspace === undefined
+        ? `Add ${repository} to ${first.label} first.`
+        : `${first.label} has no workspace with these repositories. Start a Cloud thread in this workspace to create it, then try again.`),
   };
 }
 
@@ -459,8 +469,8 @@ export function resolveContinueInCloud(input: {
     (candidate) =>
       candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
   );
-  // The server can't move a workspace thread between a Mac and Pair Cloud yet.
-  if (project === undefined || isWorkspaceProject(project)) return HIDDEN_OFFER;
+  if (project === undefined) return HIDDEN_OFFER;
+  const workspace = isWorkspaceProject(project);
   return continueInCloudOffer({
     thread: {
       environmentId: thread.environmentId,
@@ -476,7 +486,10 @@ export function resolveContinueInCloud(input: {
       projects: input.projects,
     }),
     importsTo: (environmentId) =>
-      isCloudImportEnvironment(input.presentations.get(environmentId)?.serverConfig ?? null),
+      isCloudImportEnvironment(
+        input.presentations.get(environmentId)?.serverConfig ?? null,
+        workspace,
+      ),
   });
 }
 

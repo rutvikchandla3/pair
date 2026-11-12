@@ -10,6 +10,8 @@ import {
   MOVE_IN_PROGRESS_NOTE,
   MOVE_STAYS_NOTE,
   moveNothingToUpload,
+  movePreviewSubtitle,
+  moveSkipsUpload,
 } from "@t3tools/client-runtime/state/threadMove";
 import {
   type AuthMcpClientAccess,
@@ -219,7 +221,7 @@ function ContinueInCloudDialog({
             <DialogDescription>
               {data === null
                 ? "Reading this thread's branch and changes…"
-                : `${data.branch} from ${data.baseRef}`}
+                : movePreviewSubtitle(data)}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -316,7 +318,11 @@ function ContinueInCloudDialog({
                   <ul className="space-y-0.5 text-xs text-muted-foreground">
                     {data.commits.map((commit) => (
                       <li key={commit.sha} className="truncate">
-                        <span className="font-mono">{commit.sha.slice(0, 7)}</span> {commit.subject}
+                        <span className="font-mono">{commit.sha.slice(0, 7)}</span>{" "}
+                        {commit.repository === undefined ? null : (
+                          <span className="font-mono">{commit.repository}/ </span>
+                        )}
+                        {commit.subject}
                       </li>
                     ))}
                     {data.commitsTruncated ? <li>and more</li> : null}
@@ -349,7 +355,7 @@ function ContinueInCloudDialog({
                   <p className="text-xs text-muted-foreground">{MOVE_EXCLUDE_NOTE}</p>
                 </div>
               ) : null}
-              {data !== null && data.pushed && data.files.length > 0 && allExcluded ? (
+              {data !== null && moveSkipsUpload(data, allExcluded) ? (
                 <Alert variant="info">
                   <AlertDescription>{moveNothingToUpload(data.branch)}</AlertDescription>
                 </Alert>

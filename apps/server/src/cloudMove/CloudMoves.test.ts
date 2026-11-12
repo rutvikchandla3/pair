@@ -106,6 +106,8 @@ interface World {
   /** The project's origin as a shell read peeks it, and as the authoritative read resolves it. */
   peekedOrigin: string | null;
   resolvedOrigin: string | null;
+  /** Projects other than this one, by id: a workspace and its repositories. */
+  readonly projects: Map<ProjectId, unknown>;
 }
 
 interface ThreadShell {
@@ -118,6 +120,8 @@ interface ThreadShell {
   readonly interactionMode: "default";
   readonly deletedAt: null;
   readonly sandboxId?: string;
+  readonly branch?: string | null;
+  readonly roots?: ReadonlyArray<{ readonly projectId: ProjectId; readonly name: string }>;
 }
 
 type RouteCall =
@@ -176,6 +180,14 @@ const layerFor = (world: World, reports?: Queue.Queue<void>) =>
                           instanceId: ProviderInstanceId.make("codex"),
                           model: "gpt-5",
                         },
+                        ...(body.origins === undefined
+                          ? {}
+                          : {
+                              roots: body.origins.map((originKey) => ({
+                                originKey,
+                                projectId: ProjectId.make(`cloud-${originKey.split("/").at(-1)}`),
+                              })),
+                            }),
                       })
                     : Effect.fail(
                         new ThreadMoveError({ reason: "refused", message: world.checkRefusal }),
@@ -264,7 +276,7 @@ const layerFor = (world: World, reports?: Queue.Queue<void>) =>
                       link: { environmentId: CLOUD, label: "Acme Pair Cloud" },
                       url: "http://cloud.test",
                       token: "token",
-                      capabilities: { cloudImport: true },
+                      capabilities: { cloudImport: true, cloudWorkspaceImport: true },
                     } as never)
                   : Effect.fail(new PeerLinkError({ reason: "unknown_link", message: "No link." })),
             }),
@@ -284,7 +296,10 @@ const layerFor = (world: World, reports?: Queue.Queue<void>) =>
             }),
             Layer.mock(ProjectService.ProjectService)({
               getShell: () => Effect.succeedSome(projectShell(world, world.peekedOrigin)),
-              getResolvedShell: () => Effect.succeedSome(projectShell(world, world.resolvedOrigin)),
+              getResolvedShell: (id) =>
+                Effect.succeedSome(
+                  (world.projects.get(id) as never) ?? projectShell(world, world.resolvedOrigin),
+                ),
             }),
             Layer.mock(ServerEnvironment.ServerEnvironment)({
               getDescriptor: Effect.succeed({
@@ -422,6 +437,7 @@ const makeWorld = (): World => ({
   routeCalls: [],
   peekedOrigin: ORIGIN_KEY,
   resolvedOrigin: ORIGIN_KEY,
+  projects: new Map(),
 });
 
 const moveInput = (commandId: string) => ({
@@ -903,6 +919,123 @@ it.effect("moves unpushed work as the two staged refs against the merge-base", (
     assert.equal(yield* git(root, ["rev-parse", "HEAD"]), head);
     assert.equal(yield* git(root, ["diff", "--cached", "--name-only"]), "");
     yield* noTempLeft(root);
+  }).pipe(Effect.scoped, Effect.provide(layerFor(world)));
+});
+
+it.effect("moves a workspace thread as one seed per repository on one branch", () => {
+  const world = makeWorld();
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "cloud-moves-workspace-" });
+    const folder = path.join(dir, "workspace");
+    const names = ["app", "other"] as const;
+    const heads: Record<string, string> = {};
+    for (const name of names) {
+      const origin = path.join(dir, `origin-${name}`);
+      yield* fs.makeDirectory(origin);
+      yield* git(origin, ["init", "--quiet", "--initial-branch=main"]);
+      yield* fs.writeFileString(path.join(origin, "one.txt"), "one\n");
+      yield* git(origin, ["add", "."]);
+      yield* git(origin, ["commit", "--quiet", "-m", "one"]);
+      const root = path.join(folder, name);
+      yield* git(dir, ["clone", "--quiet", origin, root]);
+      yield* git(root, ["switch", "--quiet", "-c", "feature"]);
+      yield* fs.writeFileString(path.join(root, "two.txt"), "two\n");
+      yield* git(root, ["add", "."]);
+      yield* git(root, ["commit", "--quiet", "-m", `two in ${name}`]);
+      yield* fs.writeFileString(path.join(root, "one.txt"), "changed\n");
+      yield* fs.writeFileString(path.join(root, "secret.txt"), "leave me\n");
+      heads[name] = yield* git(root, ["rev-parse", "HEAD"]);
+      const id = ProjectId.make(`project-${name}`);
+      world.projects.set(id, {
+        id,
+        workspaceRoot: root,
+        repositoryIdentity: {
+          canonicalKey: `github.com/acme/${name}`,
+          locator: { source: "git-remote", remoteName: "origin", remoteUrl: "x" },
+        },
+      });
+    }
+    const roots = names.map((name) => ({ projectId: ProjectId.make(`project-${name}`), name }));
+    const workspace = ProjectId.make("project-workspace");
+    world.projects.set(workspace, { id: workspace, workspaceRoot: folder, roots });
+    world.root = folder;
+    world.shell = {
+      projectId: workspace,
+      title: "Fix the login form",
+      worktreePath: folder,
+      activeRunId: null,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      deletedAt: null,
+      branch: "feature",
+      roots,
+    };
+    const moves = yield* CloudMoves.CloudMoves;
+
+    const preview = yield* moves.preview({ threadId: MOVED, cloudEnvironmentId: CLOUD });
+    assert.deepEqual(
+      {
+        branch: preview.branch,
+        commits: preview.commits.map((commit) => [commit.repository, commit.subject]),
+        files: preview.files.map((file) => file.path).toSorted(),
+        repositories: preview.repositories?.map((repository) => repository.name),
+      },
+      {
+        branch: "feature",
+        commits: [
+          ["app", "two in app"],
+          ["other", "two in other"],
+        ],
+        files: ["app/one.txt", "app/secret.txt", "other/one.txt", "other/secret.txt"],
+        repositories: ["app", "other"],
+      },
+    );
+
+    const result = yield* toCloud({ excludePaths: ["other/secret.txt"] });
+
+    assert.deepEqual(result, {
+      cloudThread: { environmentId: CLOUD, threadId: CLOUD_THREAD },
+      seeded: true,
+    });
+    assert.deepEqual(kinds(world), ["check", "putSeed", "putSeed", "putContextExport", "launch"]);
+    assert.deepEqual(world.routeCalls[0], {
+      kind: "check",
+      body: {
+        projectId: CLOUD_PROJECT,
+        origins: ["github.com/acme/app", "github.com/acme/other"],
+        model: { driver: ProviderDriverKind.make("codex"), model: "gpt-5" },
+      },
+    });
+    const key = yield* expectedKey(0);
+    const seeds = seedsSent(world);
+    assert.equal(new Set([key, ...seeds.map((seed) => seed.key)]).size, 3);
+    for (const [index, name] of names.entries()) {
+      const fetched = yield* fetchSeed(
+        dir,
+        path.join(dir, `origin-${name}`),
+        seeds[index]!.copy,
+        seeds[index]!.key,
+      );
+      assert.equal(fetched.branch, heads[name]);
+      assert.equal(fetched.one, "changed");
+      assert.equal(fetched.files.includes("secret.txt"), name === "app");
+    }
+    const [launch] = launchesSent(world);
+    assert.deepEqual(
+      [launch!.key, launch!.body.seeded, launch!.body.branch, launch!.body.rootSeeds],
+      [
+        key,
+        true,
+        "feature",
+        [
+          { projectId: ProjectId.make("cloud-app"), seedRef: seeds[0]!.key },
+          { projectId: ProjectId.make("cloud-other"), seedRef: seeds[1]!.key },
+        ],
+      ],
+    );
   }).pipe(Effect.scoped, Effect.provide(layerFor(world)));
 });
 

@@ -83,9 +83,12 @@ in the same folder layout, and each repository starts from its own default branc
 - While the machine sleeps, diffs, files and pull requests stay readable. When it wakes, a
   repository whose checkout was lost is rebuilt from the last saved copy, and the thread says
   which repositories were rebuilt and from where.
+- **Continue in cloud…** moves a workspace thread from your Mac to the Pair Cloud workspace with
+  the same repositories. Each repository's commits and uncommitted files go, and the cloud thread
+  puts them all on one branch. Create the workspace on Pair Cloud first if it isn't there.
 
 ## Not supported yet
 
 - The diff panel's **Changes**, **Uncommitted** and **Commits** views. A workspace thread shows
   turn diffs only.
-- Moving a workspace thread between your Mac and Pair Cloud.
+- Continuing a Pair Cloud workspace thread on your Mac.

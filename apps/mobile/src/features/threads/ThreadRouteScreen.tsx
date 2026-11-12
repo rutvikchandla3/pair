@@ -618,9 +618,8 @@ function ThreadRouteContent(
         )
       : null;
   // A thread on the member's own computer has no machine, so Cloud takes the machine menu's slot.
-  // A workspace thread runs only in its own folder of worktrees, so it never moves.
   const continueInCloudOffer = useContinueInCloudOffer(
-    selectedThread === null || threadMachine !== null || selectedThreadRepositories !== null
+    selectedThread === null || threadMachine !== null
       ? null
       : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
   );

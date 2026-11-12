@@ -174,6 +174,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   cloudLaunch: Schema.optionalKey(Schema.Boolean),
   /** True only on a cloud-only server: it takes seeds and context exports over `/api/cloud-moves` (M3). */
   cloudImport: Schema.optionalKey(Schema.Boolean),
+  /** Also takes a workspace thread's move, one seed per repository. */
+  cloudWorkspaceImport: Schema.optionalKey(Schema.Boolean),
   /** True on a cloud-only server that builds team images (M4). */
   teamImages: Schema.optionalKey(Schema.Boolean),
 });

@@ -116,7 +116,7 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
       case "export-unavailable":
         return "The conversation uploaded for this move is no longer on Pair Cloud. Continue in cloud again.";
       case "workspace-move":
-        return "A workspace thread can't move between a Mac and Pair Cloud yet.";
+        return "A workspace thread moves with all of its repositories. Continue in cloud again.";
       case "workspace-root-not-github":
         return `${this.root ?? "A repository"}/ isn't a github.com repository, so this workspace can't run in Pair Cloud.`;
       case "workspace-root-missing":
@@ -613,10 +613,9 @@ export const removeWorkspaceCheckout = Effect.fn("CloudPreparation.removeWorkspa
 export type WorkspaceRootRestore = "disk" | "mirror" | "branch" | "origin";
 
 /**
- * A workspace thread's folder on the machine, each root a worktree of its project's clone at
- * `<folder>/<name>`; a failed launch removes every repository it added. With
- * `existingWorktreePath`, a repository still on disk is kept and a missing one is rebuilt alone:
- * mirror, then its branch left in the clone, then origin.
+ * A workspace thread's folder: each root a worktree of its project's clone at `<folder>/<name>`.
+ * With `existingWorktreePath`, only a missing repository is rebuilt: mirror, branch, then origin.
+ * A `seeded` launch (a moved thread) checks every repository out of the mirror, never origin.
  */
 export const checkoutWorkspaceInSandbox = Effect.fn("CloudPreparation.checkoutWorkspaceInSandbox")(
   function* (input: {
@@ -632,6 +631,7 @@ export const checkoutWorkspaceInSandbox = Effect.fn("CloudPreparation.checkoutWo
     }>;
     readonly branch: string;
     readonly existingWorktreePath: string | null;
+    readonly seeded?: boolean;
   }) {
     const git = yield* GitWorkflow.GitWorkflowService;
     const targets = yield* Effect.forEach(input.roots, (root) =>
@@ -733,6 +733,9 @@ export const checkoutWorkspaceInSandbox = Effect.fn("CloudPreparation.checkoutWo
     }
     const added: Array<SandboxWorkspaceRoot> = [];
     const cloneSources = new Map<string, CloneSource>();
+    const seededAt = new Map<string, DateTime.Utc | null>();
+    const mirror =
+      input.seeded === true ? yield* Effect.serviceOption(MirrorSync.MirrorSync) : null;
     let branch = input.branch;
     yield* Effect.gen(function* () {
       for (const target of targets) {
@@ -741,6 +744,26 @@ export const checkoutWorkspaceInSandbox = Effect.fn("CloudPreparation.checkoutWo
         // An attempt that failed after `worktree add` left this path; start it again.
         if (yield* isCheckout(path)) {
           yield* git.removeWorktree({ cwd: target.clonePath, path, force: true });
+        }
+        if (mirror !== null) {
+          const restored = Option.isSome(mirror)
+            ? yield* mirror.value.restore({
+                threadId: input.threadId,
+                projectId: target.projectId,
+                clonePath: target.clonePath,
+                worktreePath: path,
+                branch: input.branch,
+              })
+            : null;
+          if (restored === null) {
+            return yield* new CloudLaunchError({
+              projectId: target.projectId,
+              reason: "seed-unavailable",
+            });
+          }
+          added.push({ name: target.name, clonePath: target.clonePath });
+          seededAt.set(target.name, restored.snapshotAt);
+          continue;
         }
         const base = yield* baseBranch(target);
         const pushed = yield* hasRemoteBranch(target, input.branch);
@@ -782,7 +805,10 @@ export const checkoutWorkspaceInSandbox = Effect.fn("CloudPreparation.checkoutWo
       folder,
       branch,
       created: true,
-      roots: rootsOf((target) => cloneSources.get(target.name) ?? "existing"),
+      roots: rootsOf((target) => cloneSources.get(target.name) ?? "existing").map((root) => ({
+        ...root,
+        snapshotAt: seededAt.get(root.name) ?? null,
+      })),
     };
   },
 );

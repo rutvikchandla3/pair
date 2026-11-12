@@ -38,7 +38,7 @@ const SNAPSHOT_TIMEOUT = Duration.seconds(15);
 export const CLOUD_MOVE_SOURCE_MESSAGES = {
   "not-found": "This cloud thread no longer exists.",
   "side-chat": "Continue locally from the thread this one belongs to.",
-  workspace: "A workspace thread can't move between a Mac and Pair Cloud yet.",
+  workspace: "A workspace thread can't continue locally yet.",
   "not-cloned": "This thread's machine hasn't cloned the repository yet.",
   "run-active": "A turn is running or waiting for an answer. Continue locally once it ends.",
   "snapshot-missing":

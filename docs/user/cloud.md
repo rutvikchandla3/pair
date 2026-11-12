@@ -114,7 +114,7 @@ and that it ran.
 A thread lives on one server. To change which, you continue it on the other: Pair starts a new
 thread there with the work and the conversation, and leaves the original where it is. Your Mac
 always starts the move, in both directions; Pair Cloud never reaches into it. A thread in a
-[workspace](./workspaces.md) can't move yet.
+[workspace](./workspaces.md) can continue in cloud, but not back on your Mac yet.
 
 ### Continue in cloud
 

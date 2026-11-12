@@ -836,9 +836,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : { environmentId: thread.environmentId, threadId: thread.id },
   );
   const runMachineAction = useSandboxActionRunner();
-  // A workspace thread runs only in its own folder of worktrees, so it never moves.
   const continueInCloud = useContinueInCloudOffer(
-    thread.source.sandboxId === undefined && thread.roots === undefined
+    thread.source.sandboxId === undefined
       ? { environmentId: thread.environmentId, threadId: thread.id }
       : null,
   );

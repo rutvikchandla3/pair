@@ -3085,6 +3085,86 @@ it.effect("launches a seeded cloud thread from its claimed seed and never asks o
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("launches a moved workspace thread from one claimed seed per repository", () => {
+  const otherSeedRef = CloudStagingKey.make(`mv_${"1".repeat(32)}`);
+  const check = vi.fn(
+    (_input: Parameters<StagedCloudImports.StagedCloudImports["Service"]["check"]>[0]) =>
+      Effect.void,
+  );
+  const claim = vi.fn(
+    (_input: Parameters<StagedCloudImports.StagedCloudImports["Service"]["claim"]>[0]) =>
+      Effect.void,
+  );
+  const mirrorRestore = vi.fn<MirrorSync.MirrorSync["Service"]["restore"]>(() =>
+    Effect.succeed({ snapshotAt: null }),
+  );
+  const harness = cloudHarness(
+    {
+      currentBranch: () => Effect.succeed("main"),
+      remoteHasBranch: () => Effect.die("a seeded launch never asks origin for its branch"),
+    },
+    { mirrorRestore, stagedImports: { check, claim } },
+  );
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const commandId = CommandId.make("command:launch:cloud-workspace-seed");
+    const launched = yield* launches.launch({
+      ...launchInput({
+        command: commandId,
+        thread: "thread:launch:cloud-workspace-seed",
+        message: "Keep going",
+        projectId: workspaceProjectId,
+        workspace: {
+          ...cloudWorkspace,
+          branch: "feature/login",
+          rootSeeds: [
+            { projectId, seedRef },
+            { projectId: otherProjectId, seedRef: otherSeedRef },
+          ],
+        },
+      }),
+      actorId: seedMember,
+    });
+    const staged = [
+      { key: seedRef, kind: "seed", projectId, memberId: seedMember },
+      { key: otherSeedRef, kind: "seed", projectId: otherProjectId, memberId: seedMember },
+    ];
+    assert.deepEqual(
+      check.mock.calls.map(([input]) => input),
+      staged,
+    );
+    assert.deepEqual(
+      claim.mock.calls.map(([input]) => input),
+      staged.map((input) => ({ ...input, threadId: launched.threadId })),
+    );
+
+    const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+    yield* threads.dispatch({
+      type: "sandbox.runner.attached",
+      commandId: CommandId.make(`sandbox-attached:${sandboxId}:1:boot`),
+      threadId: launched.threadId,
+      sandboxId,
+      generation: 1,
+      runnerBootId: "boot",
+    });
+    yield* runReaching(launched.threadId, "starting");
+    const folder = (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath;
+    assert.deepEqual(
+      mirrorRestore.mock.calls.map(([input]) => [
+        input.projectId,
+        input.worktreePath,
+        input.branch,
+      ]),
+      [
+        [projectId, `${folder}/repo`, "feature/login"],
+        [otherProjectId, `${folder}/other`, "feature/login"],
+      ],
+    );
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 const laptopExport = {
   version: 1,
   source: {
@@ -3688,6 +3768,14 @@ it.effect.each([
     projectId: workspaceProjectId,
     git: { readRemoteUrl: () => Effect.succeed(cloudRemote) },
     contextExportRef: seedRef,
+    refusal: { _tag: "CloudLaunchError", reason: "workspace-move" },
+  },
+  {
+    name: "a workspace moved without a seed for every repository",
+    settings: cloudSettings,
+    projectId: workspaceProjectId,
+    git: { readRemoteUrl: () => Effect.succeed(cloudRemote) },
+    workspace: { ...cloudWorkspace, branch: "feature/login", rootSeeds: [{ projectId, seedRef }] },
     refusal: { _tag: "CloudLaunchError", reason: "workspace-move" },
   },
 ])(

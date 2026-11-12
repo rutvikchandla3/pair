@@ -11,6 +11,8 @@ import {
   MOVE_IN_PROGRESS_NOTE,
   MOVE_STAYS_NOTE,
   moveNothingToUpload,
+  movePreviewSubtitle,
+  moveSkipsUpload,
 } from "@t3tools/client-runtime/state/threadMove";
 import { CLOUD_MOVE_DEFAULT_MESSAGE, type EnvironmentId } from "@t3tools/contracts";
 import { useRef, useState } from "react";
@@ -161,9 +163,7 @@ export function ContinueInCloudSheet(
       presentation={android ? "inline" : "native"}
       title={CONTINUE_IN_CLOUD_LABEL}
       subtitle={
-        data === null
-          ? "Reading this thread's branch and changes…"
-          : `${data.branch} from ${data.baseRef}`
+        data === null ? "Reading this thread's branch and changes…" : movePreviewSubtitle(data)
       }
       onCancel={() => navigation.goBack()}
       accessibilityLabel="Cancel continue in cloud"
@@ -261,7 +261,9 @@ export function ContinueInCloudSheet(
               <Text className="text-base font-t3-bold text-foreground">Commits</Text>
               {data.commits.map((commit) => (
                 <Text key={commit.sha} numberOfLines={1} className="text-xs text-foreground-muted">
-                  {commit.sha.slice(0, 7)} {commit.subject}
+                  {commit.sha.slice(0, 7)}{" "}
+                  {commit.repository === undefined ? "" : `${commit.repository}/ `}
+                  {commit.subject}
                 </Text>
               ))}
               {data.commitsTruncated ? (
@@ -303,7 +305,7 @@ export function ContinueInCloudSheet(
               <Text className="pt-1 text-xs text-foreground-muted">{MOVE_EXCLUDE_NOTE}</Text>
             </View>
           ) : null}
-          {data !== null && data.pushed && data.files.length > 0 && allExcluded ? (
+          {data !== null && moveSkipsUpload(data, allExcluded) ? (
             <MachineNotice icon="cloud" tone="default" title={moveNothingToUpload(data.branch)} />
           ) : null}
           <Text className="text-xs text-foreground-muted">{MOVE_STAYS_NOTE}</Text>

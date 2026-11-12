@@ -100,6 +100,10 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly existingBranch?: true | undefined;
       /** A staged seed this launch claims; its branch need not be on origin. */
       readonly seedRef?: CloudStagingKey | undefined;
+      /** A workspace's staged seeds, one for each repository project, claimed the same way. */
+      readonly rootSeeds?:
+        | ReadonlyArray<{ readonly projectId: ProjectId; readonly seedRef: CloudStagingKey }>
+        | undefined;
     };
 
 type RunWorkspaceStrategy = Exclude<ThreadLaunchWorkspaceStrategy, { readonly type: "cloud" }>;
@@ -1040,6 +1044,7 @@ const make = Effect.gen(function* () {
               roots: rootProjects,
               branch: branch!,
               existingWorktreePath: input.existingWorktreePath ?? null,
+              seeded: input.seeded === true,
             }).pipe(Effect.provide(cloudServices)),
           )
           .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
@@ -1763,9 +1768,18 @@ const make = Effect.gen(function* () {
             }),
           );
         }
-        const seeded =
-          input.workspaceStrategy.type === "cloud" && input.workspaceStrategy.seedRef !== undefined;
-        if (seeded || input.contextExportRef !== undefined || input.contextExport !== undefined) {
+        const strategy = input.workspaceStrategy;
+        const rootSeeds = strategy.type === "cloud" ? strategy.rootSeeds : undefined;
+        // A moved workspace thread brings a seed for every repository, so none starts from origin.
+        const wholeMove =
+          rootSeeds !== undefined &&
+          rootSeeds.length === project.roots.length &&
+          project.roots.every((root) =>
+            rootSeeds.some((seed) => seed.projectId === root.projectId),
+          );
+        const singleSeed = strategy.type === "cloud" && strategy.seedRef !== undefined;
+        const exported = input.contextExportRef !== undefined || input.contextExport !== undefined;
+        if (singleSeed || (rootSeeds !== undefined && !wholeMove) || (exported && !wholeMove)) {
           return yield* mapError(
             input,
             "resolve-project",
@@ -1788,9 +1802,18 @@ const make = Effect.gen(function* () {
       const strategy = input.workspaceStrategy;
       const seedRef = strategy.type === "cloud" ? strategy.seedRef : undefined;
       const seedMemberId = input.actorId ?? input.ownerId;
+      // Each seed lands in its own project's mirror: the project's, or each workspace repository's.
+      const seeds: ReadonlyArray<{
+        readonly projectId: ProjectId;
+        readonly seedRef: CloudStagingKey;
+      }> =
+        strategy.type !== "cloud"
+          ? []
+          : (strategy.rootSeeds ??
+            (seedRef === undefined ? [] : [{ projectId: input.projectId, seedRef }]));
       const existingBranch =
-        strategy.type === "cloud" && strategy.existingBranch === true && seedRef === undefined;
-      if (seedRef !== undefined && strategy.type === "cloud") {
+        strategy.type === "cloud" && strategy.existingBranch === true && seeds.length === 0;
+      if (seeds.length > 0 && strategy.type === "cloud") {
         if (strategy.branch === undefined) {
           return yield* mapError(
             input,
@@ -1803,10 +1826,20 @@ const make = Effect.gen(function* () {
           );
         }
         // `MirrorSync.restore` fetches into the branch, which a clone can't do for its checked-out one.
-        const checkedOut = yield* git
-          .currentBranch(project.workspaceRoot)
-          .pipe(Effect.orElseSucceed(() => null));
-        if (strategy.branch === strategy.baseRef || strategy.branch === checkedOut) {
+        const checkedOut = yield* Effect.forEach(seeds, (seed) =>
+          (seed.projectId === input.projectId
+            ? Effect.succeedSome(project)
+            : projects.getById(seed.projectId)
+          ).pipe(
+            Effect.flatMap((seedProject) =>
+              Option.isNone(seedProject)
+                ? Effect.succeed(null)
+                : git.currentBranch(seedProject.value.workspaceRoot),
+            ),
+            Effect.orElseSucceed(() => null),
+          ),
+        );
+        if (strategy.branch === strategy.baseRef || checkedOut.includes(strategy.branch)) {
           return yield* mapError(
             input,
             "resolve-project",
@@ -1819,8 +1852,18 @@ const make = Effect.gen(function* () {
           );
         }
         if (Option.isNone(launchReceipt)) {
-          yield* seedStaged(input.projectId, seedMemberId, (imports, memberId) =>
-            imports.check({ key: seedRef, kind: "seed", projectId: input.projectId, memberId }),
+          yield* Effect.forEach(
+            seeds,
+            (seed) =>
+              seedStaged(seed.projectId, seedMemberId, (imports, memberId) =>
+                imports.check({
+                  key: seed.seedRef,
+                  kind: "seed",
+                  projectId: seed.projectId,
+                  memberId,
+                }),
+              ),
+            { discard: true },
           ).pipe(Effect.mapError(mapError(input, "resolve-project")));
         }
       }
@@ -1985,17 +2028,20 @@ const make = Effect.gen(function* () {
         }
         const sandboxId =
           cloud === null ? undefined : CloudPreparation.sandboxIdForLaunch(input.commandId);
-        if (seedRef !== undefined) {
-          yield* seedStaged(input.projectId, seedMemberId, (imports, memberId) =>
-            imports.claim({
-              key: seedRef,
-              kind: "seed",
-              projectId: input.projectId,
-              memberId,
-              threadId,
-            }),
-          ).pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
-        }
+        yield* Effect.forEach(
+          seeds,
+          (seed) =>
+            seedStaged(seed.projectId, seedMemberId, (imports, memberId) =>
+              imports.claim({
+                key: seed.seedRef,
+                kind: "seed",
+                projectId: seed.projectId,
+                memberId,
+                threadId,
+              }),
+            ),
+          { discard: true },
+        ).pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
         if (input.contextExportRef !== undefined || input.contextExport !== undefined) {
           yield* importContextExport(input, threadId);
         }
@@ -2111,7 +2157,7 @@ const make = Effect.gen(function* () {
                     workspaceStrategy: preparationStrategy,
                     sandboxId,
                     ...(existingBranch ? { existingBranch: true as const } : {}),
-                    ...(seedRef !== undefined ? { seeded: true as const } : {}),
+                    ...(seeds.length > 0 ? { seeded: true as const } : {}),
                   },
                   threadId,
                   runId,

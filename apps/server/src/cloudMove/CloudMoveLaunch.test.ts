@@ -93,6 +93,16 @@ const layerFor = (world: World) =>
               project("project-newer", "github.com/acme/app", "2026-03-01T00:00:00.000Z"),
               project("project-cloud", "github.com/Acme/App", "2026-02-01T00:00:00.000Z"),
               project("project-other", "github.com/acme/other", "2026-01-01T00:00:00.000Z"),
+              {
+                id: ProjectId.make("project-workspace"),
+                roots: [
+                  { projectId: ProjectId.make("project-cloud"), name: "app" },
+                  { projectId: ProjectId.make("project-other"), name: "other" },
+                ],
+                createdAt: "2026-04-01T00:00:00.000Z",
+                archivedAt: null,
+                deletedAt: null,
+              },
             ],
             updatedAt: "2026-11-01T00:00:00.000Z",
           } as never),
@@ -255,5 +265,24 @@ it.effect("check finds the project by origin key and refuses one Pair Cloud lack
       { reason: missing.reason, message: missing.message },
       { reason: "unknown-project", message: "Add acme/elsewhere to Pair Cloud first." },
     );
+
+    // A workspace's move: the workspace with exactly these origins, and its project for each.
+    const checkWorkspace = (origins: ReadonlyArray<string>) =>
+      moves.check({
+        memberId: MEMBER,
+        input: {
+          origins,
+          model: { driver: ProviderDriverKind.make("claudeAgent"), model: "sonnet" },
+        },
+      });
+    assert.deepEqual(
+      (yield* checkWorkspace(["github.com/acme/other", "github.com/acme/app"])).roots,
+      [
+        { originKey: "github.com/acme/other", projectId: ProjectId.make("project-other") },
+        { originKey: "github.com/acme/app", projectId: ProjectId.make("project-cloud") },
+      ],
+    );
+    const noWorkspace = yield* checkWorkspace(["github.com/acme/app"]).pipe(Effect.flip);
+    assert.equal(noWorkspace.reason, "unknown-project");
   }).pipe(Effect.provide(layerFor(world)));
 });
