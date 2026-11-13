@@ -1,4 +1,5 @@
 import {
+  type BoatSandboxDriver,
   ComputeDriverId,
   type ComputeDriverKind,
   type GceSandboxDriver,
@@ -126,6 +127,66 @@ export function gceDriverFromForm(
     ...(firstZone === undefined ? {} : { zones: [firstZone, ...moreZones] }),
     ...(subnetwork === "" ? {} : { subnetwork }),
     ...(runnerUrl === "" ? {} : { runnerUrl }),
+    ...(form.size === "default" ? {} : { size: form.size }),
+    ...(runningCap === "" ? {} : { runningCap: Number(runningCap) }),
+  };
+}
+
+export interface BoatDriverForm {
+  readonly label: string;
+  /** Empty keeps the saved key. */
+  readonly apiKey: string;
+  readonly organization: string;
+  readonly runnerUrl: string;
+  readonly size: SandboxSize;
+  readonly runningCap: string;
+}
+
+export function boatDriverFormError(
+  input: BoatDriverForm & { readonly hasSavedKey: boolean },
+): string | null {
+  const runnerUrl = input.runnerUrl.trim();
+  const runningCap = input.runningCap.trim();
+  if (input.label.trim() === "") return "Name the driver.";
+  if (input.apiKey.trim() === "" && !input.hasSavedKey) return "Paste a boat API key.";
+  if (runnerUrl === "")
+    return "boat machines need a runner URL: an https:// address of this server they can reach.";
+  // The enrollment secret and the machine's token cross the internet.
+  if (!/^https:\/\/./.test(runnerUrl)) return "The runner URL must start with https://.";
+  if (runningCap !== "" && !/^[1-9]\d*$/.test(runningCap))
+    return "Enter a whole number of machines, 1 or more.";
+  return null;
+}
+
+const unshownBoatKeys = ({
+  kind: _kind,
+  id: _id,
+  label: _label,
+  apiKey: _apiKey,
+  organization: _organization,
+  runnerUrl: _runnerUrl,
+  size: _size,
+  runningCap: _runningCap,
+  ...unshown
+}: BoatSandboxDriver) => unshown;
+
+/** Keys the form does not show (a size-to-type map) survive an edit, and so does the saved key. */
+export function boatDriverFromForm(
+  initial: BoatSandboxDriver | null,
+  id: ComputeDriverId,
+  form: BoatDriverForm,
+): BoatSandboxDriver {
+  const apiKey = form.apiKey.trim();
+  const organization = form.organization.trim();
+  const runningCap = form.runningCap.trim();
+  return {
+    ...(initial === null ? {} : unshownBoatKeys(initial)),
+    kind: "boat",
+    id,
+    label: form.label.trim(),
+    apiKey: apiKey === "" ? (initial?.apiKey ?? "") : apiKey,
+    runnerUrl: form.runnerUrl.trim(),
+    ...(organization === "" ? {} : { organization }),
     ...(form.size === "default" ? {} : { size: form.size }),
     ...(runningCap === "" ? {} : { runningCap: Number(runningCap) }),
   };

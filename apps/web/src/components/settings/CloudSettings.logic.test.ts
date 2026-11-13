@@ -1,4 +1,5 @@
 import {
+  type BoatSandboxDriver,
   ComputeDriverId,
   type ComputeDriverKind,
   type GceSandboxDriver,
@@ -7,6 +8,8 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boatDriverFormError,
+  boatDriverFromForm,
   defaultDriverIdOf,
   dockerDriverFormError,
   type GceDriverForm,
@@ -147,6 +150,72 @@ describe("gceDriverFromForm", () => {
       networkTags: ["pair-machine"],
       machineTypes: { large: "e2-standard-16" },
       diskGb: 100,
+    });
+  });
+});
+
+describe("boatDriverFormError", () => {
+  const blank = {
+    label: "boat.dev",
+    apiKey: "boat_key",
+    organization: "",
+    runnerUrl: "https://pair.example.com",
+    size: "default",
+    runningCap: "",
+    hasSavedKey: false,
+  } as const;
+  it.each<{
+    readonly name: string;
+    readonly form: Partial<Parameters<typeof boatDriverFormError>[0]>;
+    readonly refused: boolean;
+  }>([
+    { name: "a new driver with a key and an https runner URL", form: {}, refused: false },
+    {
+      name: "an edit that keeps the saved key",
+      form: { apiKey: "", hasSavedKey: true },
+      refused: false,
+    },
+    { name: "a new driver with no key", form: { apiKey: " " }, refused: true },
+    { name: "no runner URL", form: { runnerUrl: "" }, refused: true },
+    { name: "an http runner URL", form: { runnerUrl: "http://pair.example.com" }, refused: true },
+    { name: "a cap of 0", form: { runningCap: "0" }, refused: true },
+  ])("$name", ({ form, refused }) => {
+    expect(boatDriverFormError({ ...blank, ...form }) !== null).toBe(refused);
+  });
+});
+
+describe("boatDriverFromForm", () => {
+  // What a client is shown for a saved key; sending it back keeps the key.
+  const SAVED_KEY = "saved-key";
+  it("keeps the saved key and the types the form does not show", () => {
+    const id = ComputeDriverId.make("boat");
+    const initial: BoatSandboxDriver = {
+      kind: "boat",
+      id,
+      label: "boat.dev",
+      apiKey: SAVED_KEY,
+      runnerUrl: "https://pair.example.com",
+      organization: "team_1",
+      types: { default: "large" },
+    };
+    expect(
+      boatDriverFromForm(initial, id, {
+        label: "boat EU",
+        apiKey: "",
+        organization: "",
+        runnerUrl: "https://runner.pair.example.com",
+        size: "large",
+        runningCap: "4",
+      }),
+    ).toEqual({
+      kind: "boat",
+      id,
+      label: "boat EU",
+      apiKey: SAVED_KEY,
+      runnerUrl: "https://runner.pair.example.com",
+      size: "large",
+      runningCap: 4,
+      types: { default: "large" },
     });
   });
 });
