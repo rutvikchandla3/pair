@@ -43,7 +43,8 @@ fetch() {
   credential="$enroll"
   if [ -s "$RUN_DIR/token" ]; then credential="$(cat "$RUN_DIR/token")"; fi
   printf 'header = "Authorization: Bearer %s"\n' "$credential" |
-    curl -fsS --config - --speed-limit 1 --speed-time 60 ${sock:+--unix-socket "$sock"} \
+    curl -fsS --config - --retry 5 --retry-all-errors --retry-delay 1 \
+      --speed-limit 1 --speed-time 60 ${sock:+--unix-socket "$sock"} \
       -o "$2" "$base$1"
 }
 

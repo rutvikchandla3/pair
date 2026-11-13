@@ -1,0 +1,5 @@
+#!/bin/sh
+# boat runs ~/.boat/pre-stop before it snapshots a stopping machine. Ending the runner and its agents
+# here means a machine boat keeps warm after a stop holds no live runner or credential.
+sudo systemctl stop pair-runner.service
+sudo rm -f /etc/pair-runner/bootstrap.env

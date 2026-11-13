@@ -6,8 +6,13 @@
 #
 # Compute Engine runs a startup script on every boot, so a builder that already reported reports
 # the same result again and powers off, and a machine that is not a builder is left alone.
-# PAIR_METADATA_DIR (CI only) reads the metadata keys as files from that directory instead.
+# PAIR_METADATA_DIR (CI and boat) reads the metadata keys as files from that directory instead.
+# PAIR_VM_TARGET=boat: boat's setupScript runs this once on boat's stock Ubuntu. The result also goes
+# to /tmp/pair-base-build/result, which the driver reads, and the builder never powers off: the
+# driver saves a snapshot of it running, which leaves out /tmp.
 set -euo pipefail
+
+TARGET="${PAIR_VM_TARGET:-gce}"
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
@@ -40,6 +45,10 @@ report() {
   printf '%s\n' "$1" >"$STATE/result"
   say "result $1"
   echo "pair-provision-result=$1" >/dev/console 2>/dev/null || true
+  if [ "$TARGET" = boat ]; then
+    install -d -m 0755 /tmp/pair-base-build
+    printf '%s\n' "$1" >/tmp/pair-base-build/result
+  fi
   if [ -z "${PAIR_METADATA_DIR:-}" ]; then
     curl -fsS --retry 10 --retry-connrefused --retry-delay 2 --connect-timeout 5 --max-time 30 \
       -X PUT --data "$1" -H 'Metadata-Flavor: Google' "$METADATA/guest-attributes/pair/provision" ||
@@ -49,6 +58,7 @@ report() {
 
 power_off() {
   sync
+  if [ "$TARGET" = boat ]; then return 0; fi
   systemctl --no-block poweroff || poweroff
 }
 
