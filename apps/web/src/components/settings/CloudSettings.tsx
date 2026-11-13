@@ -102,6 +102,7 @@ const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
 const DRIVER_KIND_LABELS: Readonly<Record<ComputeDriverKind, string>> = {
   docker: "Docker",
   gce: "Google Cloud",
+  boat: "boat.dev",
 };
 
 const STEP_LABELS: Readonly<Record<SandboxDriverCheckStep, string>> = {
@@ -203,20 +204,30 @@ function driverSummary(
   driver: SandboxDriverInstance,
   health: SandboxDriverHealth | undefined,
 ): string {
-  const where =
-    driver.kind === "docker"
-      ? [
+  const where = (() => {
+    switch (driver.kind) {
+      case "docker":
+        return [
           driver.dockerHost ? `Docker at ${driver.dockerHost}` : "Docker on this server",
           isRemoteDockerHost(driver.dockerHost ?? "") && driver.runnerUrl
             ? `runner URL ${driver.runnerUrl}`
             : null,
-        ]
-      : [
+        ];
+      case "gce":
+        return [
           DRIVER_KIND_LABELS.gce,
           driver.project ?? null,
           driver.zones?.join(", ") ?? null,
           driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
         ];
+      case "boat":
+        return [
+          DRIVER_KIND_LABELS.boat,
+          driver.organization ?? null,
+          driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
+        ];
+    }
+  })();
   const cap = health?.runningCap;
   return [
     ...where,

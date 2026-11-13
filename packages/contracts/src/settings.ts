@@ -1256,7 +1256,42 @@ export const GceSandboxDriver = Schema.Struct({
 });
 export type GceSandboxDriver = typeof GceSandboxDriver.Type;
 
-export const SandboxDriverInstance = Schema.Union([DockerSandboxDriver, GceSandboxDriver]);
+const BoatSandboxType = Schema.Literals(["small", "default", "large", "xlarge"]);
+
+/** A boat.dev account's sandboxes (m8-boat.md). Every key past `label` is optional, so the member view decodes. */
+export const BoatSandboxDriver = Schema.Struct({
+  kind: Schema.Literal("boat"),
+  id: ComputeDriverId,
+  label: TrimmedNonEmptyString,
+  size: Schema.optionalKey(SandboxSize),
+  runningCap: Schema.optionalKey(PositiveInt),
+  apiKey: SettingsSecretValue.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("")),
+    secretSetting,
+  ),
+  /**
+   * Required by the driver and `https://`, checked by the form, `health` and `create`, never here:
+   * a driver that fails to decode would vanish from `drivers` with its machines.
+   */
+  runnerUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Sent as `X-Boat-Org`, so machines bill one organization's wallet. */
+  organization: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Absent: small, default and large map to boat's types of the same names. */
+  types: Schema.optionalKey(
+    Schema.Struct({
+      small: Schema.optionalKey(BoatSandboxType),
+      default: Schema.optionalKey(BoatSandboxType),
+      large: Schema.optionalKey(BoatSandboxType),
+    }),
+  ),
+});
+export type BoatSandboxDriver = typeof BoatSandboxDriver.Type;
+
+export const SandboxDriverInstance = Schema.Union([
+  DockerSandboxDriver,
+  GceSandboxDriver,
+  BoatSandboxDriver,
+]);
 export type SandboxDriverInstance = typeof SandboxDriverInstance.Type;
 
 /** Days a stopped machine keeps its disk; null never destroys it (04 §2). */

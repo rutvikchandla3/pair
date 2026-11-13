@@ -167,13 +167,18 @@ export function redactServerSettingsForClient(
 }
 
 // An allowlist, so a driver field added later (a host, a token) never reaches a member by default.
-const memberDriverView = (driver: SandboxDriverInstance): SandboxDriverInstance => ({
-  kind: driver.kind,
-  id: driver.id,
-  label: driver.label,
-  ...(driver.size === undefined ? {} : { size: driver.size }),
-  ...(driver.runningCap === undefined ? {} : { runningCap: driver.runningCap }),
-});
+const memberDriverView = (driver: SandboxDriverInstance): SandboxDriverInstance => {
+  const shown = {
+    id: driver.id,
+    label: driver.label,
+    ...(driver.size === undefined ? {} : { size: driver.size }),
+    ...(driver.runningCap === undefined ? {} : { runningCap: driver.runningCap }),
+  };
+  // The decoded boat type requires `apiKey`; a member gets it empty.
+  return driver.kind === "boat"
+    ? { ...shown, kind: driver.kind, apiKey: "" }
+    : { ...shown, kind: driver.kind };
+};
 
 /** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */
 function withEchoedSecretReferences(current: ServerSettings, next: ServerSettings): ServerSettings {
