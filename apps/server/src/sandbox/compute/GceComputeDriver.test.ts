@@ -20,7 +20,8 @@ import {
 } from "./ComputeDriver.ts";
 import { GceApiError, mapGceError } from "./GceApi.ts";
 import * as GceApiFake from "./GceApiTesting.ts";
-import { cloudSafeName, makeWithApi, teamImageName, vmBootstrapText } from "./GceComputeDriver.ts";
+import { makeWithApi } from "./GceComputeDriver.ts";
+import { cloudSafeName, teamImageName, vmBootstrapText } from "./vmHelpers.ts";
 import type { SandboxProvisionTreeInfo } from "../image/SandboxProvisionTree.ts";
 
 const INSTALL = EnvironmentId.make("3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f");
