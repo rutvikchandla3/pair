@@ -15,7 +15,7 @@ else
   # Headless Chrome lays out at least 500px wide, so narrow widths render in an iframe and get cropped.
   T=$(mktemp -d)
   print -r -- "<html><body style=\"margin:0\"><iframe src=\"$SRC\" width=\"$W\" height=\"$H\" style=\"border:0;display:block\"></iframe></body></html>" > $T/wrap.html
-  "$CHROME" $FLAGS --window-size=600,$H --screenshot="$T/shot.png" "file://$T/wrap.html" >/dev/null 2>&1
+  "$CHROME" $FLAGS --window-size=600,$((H+300)) --screenshot="$T/shot.png" "file://$T/wrap.html" >/dev/null 2>&1
   magick "$T/shot.png" -crop $((W*2))x$((H*2))+0+0 +repage "$OUT"
   rm -rf $T
 fi

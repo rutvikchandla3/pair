@@ -863,6 +863,499 @@
           .backdrop {
             background: var(--overlay);
           }
+
+          /* v2 status icons: the svg draws in currentColor, the class picks the colour */
+          .si {
+            flex: none;
+          }
+          .si.todo,
+          .si.canceled,
+          .si.stopped {
+            color: var(--muted-foreground);
+          }
+          .si.prog,
+          .si.working {
+            color: var(--info-foreground);
+          }
+          .si.review,
+          .si.done {
+            color: var(--success-foreground);
+          }
+          .si.answer {
+            color: var(--input-foreground);
+          }
+          .si.approval,
+          .si.limited {
+            color: var(--warning-foreground);
+          }
+          .si.failed {
+            color: var(--error-foreground);
+          }
+          .si.pr {
+            color: var(--muted-foreground);
+          }
+          /* v2 task rows (Overview panel): line 1 status + title + time, line 2 owner + live activity */
+          .tk {
+            position: relative;
+            display: grid;
+            grid-template-columns: 14px minmax(0, 1fr) auto;
+            column-gap: 8px;
+            row-gap: 2px;
+            align-items: center;
+            min-height: 44px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .tk:hover,
+          .tk.hover {
+            background: var(--accent);
+          }
+          .tk.sel {
+            background: var(--accent);
+            box-shadow: inset 0 0 0 1px var(--border);
+          }
+          .tk .tt {
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .tk .rt {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            justify-self: end;
+          }
+          .tk .when {
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+          }
+          .tk .l2 {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .tk .l2 .who {
+            color: var(--foreground);
+          }
+          .tk .l2 .ell {
+            flex: 0 1 auto;
+          }
+          .tk .stc {
+            display: none;
+          }
+          .tk:hover .stc,
+          .tk.hover .stc {
+            display: inline-flex;
+          }
+          .tk:hover .rt > .when,
+          .tk:hover .rt > .dot,
+          .tk.hover .rt > .when,
+          .tk.hover .rt > .dot {
+            display: none;
+          }
+          /* v2 status control: compact on rows, full size in the task header */
+          .stc {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            height: 24px;
+            margin: -2px 0;
+            padding: 0 6px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .stc:hover {
+            background: var(--accent);
+          }
+          /* v2 menus: status menu, ⋯ menus, mention menu */
+          .smenu {
+            position: absolute;
+            z-index: 20;
+            min-width: 200px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--popover);
+            box-shadow: 0 8px 24px rgba(9, 9, 11, 0.12);
+            font-size: 13px;
+            font-weight: 400;
+          }
+          .smenu .mh {
+            padding: 4px 8px 4px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .smi {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 28px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            text-align: left;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .smi:hover,
+          .smi.on {
+            background: var(--accent);
+          }
+          .smi .mk {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--muted-foreground);
+          }
+          .smi .ck {
+            visibility: hidden;
+          }
+          .smi[aria-checked="true"] .ck {
+            visibility: visible;
+          }
+          .smi[aria-disabled="true"] {
+            cursor: default;
+          }
+          .smi[aria-disabled="true"]:hover {
+            background: none;
+          }
+          .smi.danger {
+            color: var(--error-foreground);
+          }
+          .smsep {
+            height: 1px;
+            margin: 4px -4px;
+            background: var(--border);
+          }
+          /* v2 task page */
+          .tcrumb {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+          }
+          .tcrumb a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex: none;
+            color: var(--muted-foreground);
+          }
+          .tcrumb a:hover {
+            color: var(--foreground);
+          }
+          .tcrumb .sep {
+            color: var(--input);
+          }
+          .tcrumb .cur {
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .tpage {
+            box-sizing: content-box;
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 32px 24px 48px;
+          }
+          .tpage-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 24px;
+          }
+          .tprops {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0 2px;
+            margin: 6px 0 0 -8px;
+          }
+          .tprop {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            font-size: 13px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          button.tprop:disabled {
+            cursor: default;
+          }
+          button.tprop:disabled:hover {
+            background: none;
+          }
+          .tprops.off .v {
+            color: var(--muted-foreground);
+          }
+          button.tprop,
+          a.tprop {
+            cursor: pointer;
+          }
+          button.tprop:hover,
+          button.tprop[aria-expanded="true"],
+          .th .hov[aria-expanded="true"],
+          a.tprop:hover {
+            background: var(--accent);
+          }
+          .tprop .v {
+            color: var(--foreground);
+          }
+          .tdesc {
+            margin-top: 8px;
+            padding: 12px;
+            border-radius: 8px;
+            background: var(--accent);
+          }
+          .tdesc p {
+            margin: 0;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+          .tdesc .linkbtn {
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .sect {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 32px;
+            margin: 28px 0 4px;
+          }
+          .sect h2 {
+            margin: 0;
+            font-size: 13px;
+            font-weight: 500;
+          }
+          .sect .n {
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          /* v2 thread rows on the task page: borderless like panel rows */
+          .th {
+            position: relative;
+            display: grid;
+            grid-template-columns: 14px minmax(0, 1fr) auto;
+            column-gap: 8px;
+            row-gap: 2px;
+            align-items: center;
+            min-height: 44px;
+            margin: 0 -8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .th:hover,
+          .th.hover {
+            background: var(--accent);
+          }
+          .th .t1 {
+            display: block;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .th .t2 {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .th .t2 .who {
+            color: var(--foreground);
+          }
+          .th .rt {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            height: 20px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .th .hov {
+            display: none;
+          }
+          .th:hover .hov,
+          .th.hover .hov {
+            display: inline-flex;
+          }
+          .th:hover .rt > .when,
+          .th.hover .rt > .when {
+            display: none;
+          }
+          .th .ask {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 6px 0 2px;
+          }
+          .code {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            min-width: 0;
+            padding: 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+          }
+          .th:hover .code,
+          .th.hover .code {
+            background: var(--background);
+          }
+          .prc {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .ai {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 28px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .ai .ic {
+            display: inline-flex;
+            justify-content: center;
+            width: 16px;
+            flex: none;
+          }
+          .ai .who,
+          .ai .to {
+            color: var(--foreground);
+          }
+          /* v2 bands: banners and suggestions on the task page, borderless */
+          .tbanner {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 8px;
+            background: var(--accent);
+          }
+          .tbanner.row {
+            min-height: 40px;
+            padding: 6px 6px 6px 12px;
+          }
+          .tbanner + .tdesc,
+          .suggest + .tdesc {
+            margin-top: 8px;
+          }
+          .tempty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            padding: 20px 16px;
+            border: 1px dashed var(--input);
+            border-radius: 8px;
+            text-align: center;
+          }
+          .suggest {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 40px;
+            margin-top: 16px;
+            padding: 6px 6px 6px 12px;
+            border-radius: 8px;
+            background: var(--accent);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .suggest .btn {
+            color: var(--foreground);
+          }
+          /* v2 read-only task status chip (thread header, previews) */
+          .stchip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            flex: none;
+            height: 20px;
+            padding: 0 6px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+          }
+          a.stchip:hover {
+            background: var(--accent);
+          }
+          /* v2 canceled rows read as closed */
+          .tk.off .tt {
+            font-weight: 400;
+            color: var(--muted-foreground);
+          }
+          /* v2 narrow shells (opt in with .narrowpanel): below 1100 the panel becomes an overlay
+             under the header, opened by .panel-toggle */
+          .panel-toggle {
+            display: none;
+          }
+          @media (max-width: 1100px) {
+            .shell.narrowpanel {
+              position: relative;
+            }
+            .shell.narrowpanel .panel {
+              display: none;
+            }
+            .shell.narrowpanel .panel-toggle {
+              display: inline-flex;
+            }
+            .shell.narrowpanel.panel-open .panel {
+              display: flex;
+              position: absolute;
+              top: 52px;
+              right: 0;
+              bottom: 0;
+              z-index: 30;
+              width: 340px;
+              border-left: 1px solid var(--border);
+              box-shadow: -8px 0 24px rgba(9, 9, 11, 0.16);
+            }
+            .shell.narrowpanel .panel .panel-ctl {
+              display: none;
+            }
+          }
           /*shared-end*/
           .msg {
             position: relative;
@@ -1554,935 +2047,660 @@
               min-height: 96px;
             }
           }
+
+          /* builder C (v2): local overrides. Status icons drawn inline; candidates for shared.css. */
+          .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          }
+          .c-list {
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            max-height: 162px;
+            overflow: auto;
+            scrollbar-width: thin;
+          }
+          .c-opt {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 32px;
+            padding: 0 10px;
+            cursor: pointer;
+            user-select: none;
+          }
+          .c-opt + .c-opt {
+            border-top: 1px solid var(--border);
+          }
+          .c-opt:hover {
+            background: var(--accent);
+          }
+          .c-opt .nm {
+            flex: none;
+            font-weight: 500;
+          }
+          .c-opt .path {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-opt .tagx {
+            flex: none;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-cb {
+            flex: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border: 1px solid var(--input);
+            border-radius: 4px;
+            background: var(--card);
+            color: var(--primary-foreground);
+          }
+          .c-cb svg {
+            visibility: hidden;
+          }
+          .c-cb.on {
+            background: var(--primary);
+            border-color: transparent;
+          }
+          .c-cb.on svg {
+            visibility: visible;
+          }
+          .c-out {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-out > svg {
+            flex: none;
+            margin-top: 2px;
+          }
+          .c-out b {
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .c-out.bad,
+          .c-out.bad b {
+            color: var(--error-foreground);
+          }
+          .c-outs {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+          }
+          .c-key {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 52px;
+            padding: 8px 10px 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card);
+          }
+          .c-key > svg {
+            flex: none;
+            color: var(--muted-foreground);
+          }
+          .c-key .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .c-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-stat > svg {
+            flex: none;
+          }
+          .c-ok {
+            color: var(--success-foreground);
+          }
+          .c-sdot {
+            flex: none;
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            border: 1.5px solid var(--muted-foreground);
+          }
+          .c-tag {
+            display: inline-flex;
+            align-items: center;
+            height: 20px;
+            padding: 0 6px;
+            border-radius: 6px;
+            background: var(--accent);
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .scrim.l2 {
+            z-index: 44;
+          }
+          .vp.l2 {
+            z-index: 45;
+          }
+          .vp > .dialog.kd {
+            max-width: 480px;
+          }
+          .kd .db {
+            gap: 12px;
+          }
+          .kd .lead {
+            margin: 0;
+            color: var(--muted-foreground);
+          }
+          .kd .input.bad {
+            border-color: var(--error-foreground);
+          }
+          .kd .input:disabled {
+            opacity: 1;
+            color: var(--muted-foreground);
+          }
+          .kd .df .note a {
+            color: var(--muted-foreground);
+          }
+          .kd .df .note a:hover {
+            color: var(--foreground);
+          }
+          .c-al {
+            padding: 20px 20px 16px;
+          }
+          .c-al p {
+            margin: 6px 0 0;
+            color: var(--muted-foreground);
+          }
+
+          .c-bg {
+            position: absolute;
+            inset: 0;
+            display: block;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: var(--background);
+          }
+          .c-fltr {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 32px;
+            padding: 0 10px;
+            border-bottom: 1px solid var(--border);
+            color: var(--muted-foreground);
+          }
+          .c-fltr input {
+            flex: 1;
+            min-width: 0;
+            height: 30px;
+            padding: 0;
+            border: 0;
+            outline: 0;
+            background: transparent;
+            font: inherit;
+            color: var(--foreground);
+          }
+          .c-fltr input::placeholder {
+            color: var(--muted-foreground);
+          }
+          .c-scroll-l {
+            position: relative;
+            max-height: 160px;
+            overflow: auto;
+            scrollbar-width: thin;
+          }
+          .c-listbox {
+            position: relative;
+          }
+          .c-listbox.more::after {
+            content: "";
+            position: absolute;
+            left: 1px;
+            right: 1px;
+            bottom: 1px;
+            height: 8px;
+            border-radius: 0 0 7px 7px;
+            background: linear-gradient(to bottom, transparent, var(--card));
+            pointer-events: none;
+          }
+          .c-ob {
+            display: grid;
+            grid-template-columns: 16px minmax(0, 1fr);
+            column-gap: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-ob > svg {
+            margin-top: 1px;
+          }
+          .c-ob > .l {
+            grid-column: 2;
+          }
+          .c-ob b {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .c-ob.bad,
+          .c-ob.bad b {
+            color: var(--error-foreground);
+          }
+          .c-krow {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 50px;
+            padding: 6px 8px 6px 12px;
+          }
+          .c-krow > svg {
+            flex: none;
+            color: var(--muted-foreground);
+          }
+          .c-krow .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .c-key.v2 {
+            display: block;
+            min-height: 0;
+            padding: 0;
+          }
+          .c-kadd {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 0 8px 10px 38px;
+          }
+          .c-kadd .input.bad {
+            border-color: var(--error-foreground);
+          }
+          .c-kadd .input:disabled {
+            opacity: 1;
+            color: var(--muted-foreground);
+          }
+          .c-kline {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+          }
+          .c-kline .input {
+            flex: 1;
+            min-width: 0;
+          }
+          .c-kline .err,
+          .c-kline .help {
+            min-width: 0;
+          }
+          .c-kacts {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 4px;
+          }
+          .c-ext {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .c-bad {
+            color: var(--error-foreground);
+          }
+
+          .c-list.c-listbox {
+            max-height: none;
+            overflow: hidden;
+          }
+          .c-list .c-opt.muted {
+            cursor: default;
+            color: var(--muted-foreground);
+          }
+          .c-list .c-opt.muted:hover {
+            background: transparent;
+          }
+          @media (max-width: 639px) {
+            .c-opt .path {
+              direction: rtl;
+              text-align: left;
+            }
+            .c-opt .path .ltr {
+              direction: ltr;
+              unicode-bidi: isolate;
+            }
+          }
+
+          .c-kact {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: none;
+          }
+          .btn.ghost.c-act {
+            font-weight: 500;
+            color: var(--foreground);
+            gap: 6px;
+          }
+          .btn.ghost.c-act:disabled {
+            color: var(--muted-foreground);
+            opacity: 1;
+          }
+          .btn.ghost.c-danger {
+            font-weight: 500;
+            color: var(--destructive);
+          }
+          .c-stat.ok,
+          .c-stat.ok svg {
+            color: var(--success-foreground);
+          }
+          .c-kadd {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 0 12px 12px 38px;
+          }
+          .c-kadd > .input {
+            width: 100%;
+            height: 32px;
+          }
+          .c-kerr {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--destructive);
+          }
+          .c-kerr svg {
+            flex: none;
+          }
+          .c-kacts {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 2px;
+          }
+          .c-kacts .c-act {
+            margin-left: -8px;
+          }
+          .c-lfoot {
+            display: flex;
+            align-items: center;
+            height: 28px;
+            padding: 0 10px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .pair .c-wsname {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0;
+            border: 0;
+            border-bottom: 1px solid transparent;
+            background: none;
+            font: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--foreground);
+            cursor: text;
+          }
+          .c-wsname:hover {
+            border-bottom-color: var(--border);
+          }
+          .c-wsname svg {
+            color: var(--muted-foreground);
+          }
+          .pair .c-wsin {
+            height: 24px;
+            padding: 0 6px;
+            border: 1px solid var(--input);
+            border-radius: 6px;
+            background: var(--background);
+            font: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--foreground);
+            outline: 2px solid var(--primary);
+            outline-offset: 0;
+          }
+          .c-notesave {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--warning-foreground);
+          }
+          @media (max-width: 639px) {
+            .c-krow {
+              flex-wrap: wrap;
+              row-gap: 6px;
+            }
+            .c-krow > .tx {
+              flex-basis: calc(100% - 26px);
+            }
+            .c-krow .c-kact {
+              flex-basis: 100%;
+              padding-left: 26px;
+            }
+            .c-kadd {
+              padding-left: 12px;
+            }
+          }
+
+          .c-nw,
+          .c-ob b {
+            white-space: nowrap;
+          }
+          .pair .c-wsin {
+            box-sizing: border-box;
+            height: 28px;
+            min-width: 160px;
+            max-width: 280px;
+            vertical-align: middle;
+          }
+
+          .vp > .dialog.nt {
+            max-width: 560px;
+          }
+          .pair .c-title {
+            display: block;
+            width: 100%;
+            height: 28px;
+            border: 0;
+            outline: 0;
+            background: transparent;
+            padding: 0;
+            font-size: 15px;
+            font-weight: 600;
+          }
+          .c-title::placeholder {
+            color: var(--muted-foreground);
+          }
+          .nt .nt-ta {
+            min-height: 60px;
+            margin-top: 4px;
+          }
+          .nt-chips {
+            padding: 16px 20px 12px;
+          }
+          .c-start {
+            border-top: 1px solid var(--border);
+          }
+          .c-startcb {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px 20px;
+            cursor: pointer;
+            user-select: none;
+          }
+          .c-startcb .c-cb {
+            flex: none;
+            margin-top: 1px;
+          }
+          .c-startcb .l2 {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 2px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-start-b {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 0 20px 14px 46px;
+          }
+          .c-start-b .c-out {
+            margin: 0;
+          }
+          .c-away {
+            margin-left: auto;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-rows {
+            display: flex;
+            flex-direction: column;
+            margin: 0;
+          }
+          .c-row {
+            display: grid;
+            grid-template-columns: 96px minmax(0, 1fr);
+            align-items: center;
+            column-gap: 12px;
+            min-height: 36px;
+          }
+          .c-row > dt {
+            color: var(--muted-foreground);
+          }
+          .c-row:has(.c-basel) {
+            align-items: start;
+            padding: 4px 0;
+          }
+          .c-row:has(.c-basel) > dt {
+            line-height: 28px;
+          }
+          .c-row > dd {
+            display: flex;
+            flex-wrap: wrap;
+            row-gap: 4px;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            margin: 0;
+          }
+          .c-basel {
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-row .propchip .sub {
+            font-weight: 400;
+            color: var(--muted-foreground);
+          }
+          .c-acct {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+          }
+          .c-acct.bad {
+            color: var(--error-foreground);
+          }
+          .c-teamnote {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 12px 20px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-teamnote svg {
+            flex: none;
+            margin-top: 2px;
+          }
+          .c-teamnote b {
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .pop.status {
+            width: 200px;
+          }
+          .pop.runsin {
+            width: 400px;
+            max-height: 360px;
+            overflow: auto;
+          }
+          @media (max-height: 719px) {
+            .pop.runsin {
+              max-height: 320px;
+            }
+          }
+          .pop.runsin .prow .sub,
+          .pop.base .prow .sub {
+            margin-left: 2px;
+          }
+          .pop.runsin .prow .c-tag {
+            margin-left: auto;
+          }
+          .pop.runsin .prow .c-tag + .ck {
+            margin-left: 4px;
+          }
+          @media (max-width: 639px) {
+            .c-startcb,
+            .c-teamnote {
+              padding-left: 16px;
+              padding-right: 16px;
+            }
+            .c-start-b {
+              padding: 0 16px 14px 42px;
+            }
+            .c-row {
+              grid-template-columns: 80px minmax(0, 1fr);
+            }
+            .c-row .c-tag {
+              display: none;
+            }
+            .c-row .propchip {
+              max-width: 100%;
+              overflow: hidden;
+            }
+          }
         </style>
       </helmet>
       <div class="pair stage">
-        <div class="shell room" inert aria-hidden="true">
-          <nav class="side" aria-label="Sidebar">
-            <div class="side-top">
-              <span class="w6">Pair</span><span class="t12 muted">Pair Cloud</span>
-            </div>
-            <div class="side-body">
-              <a class="srow" href="#new"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 3v10M3 8h10" /></svg
-                >New thread</a
-              >
-              <a class="srow" href="#mine"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <circle cx="8" cy="5.5" r="2.5" />
-                  <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" /></svg
-                ><span class="grow">Assigned to me</span><span class="meta">1</span></a
-              >
+        <iframe
+          class="c-bg"
+          src="Main.dc.html"
+          title=""
+          tabindex="-1"
+          aria-hidden="true"
+          inert
+        ></iframe>
 
-              <div class="slabel">
-                <span>Spaces</span
-                ><a class="btn ghost icon sm" href="NewSpace.dc.html" aria-label="New space"
-                  ><svg
-                    aria-hidden="true"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                  >
-                    <path d="M8 3v10M3 8h10" /></svg
-                ></a>
-              </div>
-              <a class="srow" href="#room" aria-current="page"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <circle cx="5.5" cy="6" r="2.5" />
-                  <circle cx="10.5" cy="6" r="2.5" />
-                  <path
-                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                  /></svg
-                ><span class="grow ell">Question creation</span></a
-              >
-              <a class="srow sub" href="Task.dc.html"
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--warning-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" /></svg
-                ><span class="grow ell">Seed role catalog</span
-                ><span class="meta" style="color: var(--warning-foreground)">Needs you</span></a
-              >
-              <a class="srow sub" href="Task.dc.html"
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--success-foreground)"
-                  stroke-width="1.7"
-                >
-                  <circle cx="4.5" cy="3.8" r="1.8" />
-                  <circle cx="4.5" cy="12.2" r="1.8" />
-                  <circle cx="11.5" cy="12.2" r="1.8" />
-                  <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg
-                ><span class="grow ell">Question schema v2</span
-                ><span class="meta">In review</span></a
-              >
-              <a class="srow more" href="#room">5 more</a>
-              <a class="srow" href="#space-2"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <circle cx="5.5" cy="6" r="2.5" />
-                  <circle cx="10.5" cy="6" r="2.5" />
-                  <path
-                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                  /></svg
-                ><span class="grow ell">Onboarding revamp</span
-                ><span class="dot" role="img" aria-label="Unread"></span
-              ></a>
-
-              <div class="slabel"><span>Projects</span></div>
-              <a class="srow" href="#p1"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
-                >pair-fe</a
-              >
-              <a class="srow sub" href="#t1"
-                ><span class="grow ell">Fix sidebar drag flicker</span
-                ><span class="meta">2d</span></a
-              >
-              <a class="srow" href="#p2"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
-                >pair-be</a
-              >
-              <a class="srow sub" href="#t3"
-                ><span class="grow ell">Bundle upload retries</span><span class="meta">5d</span></a
-              >
-            </div>
-          </nav>
-
-          <main class="col">
-            <header class="top">
-              <svg
-                aria-hidden="true"
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="var(--muted-foreground)"
-                stroke-width="1.4"
-              >
-                <circle cx="5.5" cy="6" r="2.5" />
-                <circle cx="10.5" cy="6" r="2.5" />
-                <path
-                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                />
-              </svg>
-              <h1
-                class="w6 ell"
-                style="margin: 0; font-size: 13px; flex: 0 0 auto; max-width: 50%"
-                title="Let a recruiter describe a role and get interview questions drafted, tagged and previewed. Repos: pair-fe, pair-be"
-              >
-                Question creation
-              </h1>
-              <span class="row t12 muted repos" style="gap: 4px"
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
-                ><span class="ell">pair-fe, pair-be</span></span
-              >
-              <span class="grow"></span>
-              <button
-                type="button"
-                class="btn ghost"
-                aria-label="4 members: Rutvik (owner), Kousik, Hanad, Ankur. Manage members"
-                style="padding: 0 6px"
-              >
-                <span class="stack"
-                  ><span class="av r" aria-hidden="true">R</span
-                  ><span class="av k" aria-hidden="true">K</span
-                  ><span class="av h" aria-hidden="true">H</span
-                  ><span class="av a" aria-hidden="true">A</span></span
-                >
-              </button>
-              <a
-                class="btn ghost icon"
-                href="SpaceSettings.dc.html"
-                aria-label="Space settings: rename, brief, members, leave, archive"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                >
-                  <circle cx="3.5" cy="8" r="1.2" />
-                  <circle cx="8" cy="8" r="1.2" />
-                  <circle cx="12.5" cy="8" r="1.2" /></svg
-              ></a>
-            </header>
-
-            <div class="scroll">
-              <div class="feed" role="log" aria-label="Room messages">
-                <div class="daysep">Tuesday 10 November</div>
-
-                <div class="sys first">
-                  Rutvik created
-                  <a class="chip" href="Task.dc.html"
-                    ><svg
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--info-foreground)"
-                      stroke-width="1.6"
-                      stroke-dasharray="2.2 2.2"
-                    >
-                      <circle cx="8" cy="8" r="6" /></svg
-                    >Generate question from prompt</a
-                  >
-                  for Kousik and
-                  <a class="chip" href="TaskUnstarted.dc.html"
-                    ><svg
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--muted-foreground)"
-                      stroke-width="1.6"
-                    >
-                      <circle cx="8" cy="8" r="6" /></svg
-                    >Difficulty tagging</a
-                  >
-                  for Hanad <span class="nw">· 10:30</span>
-                </div>
-
-                <div class="msg">
-                  <span class="av r" aria-hidden="true">R</span>
-                  <div class="head">
-                    <span class="w6">Rutvik</span><span class="t12 muted">10:31</span>
-                  </div>
-                  <div class="body">
-                    <p>
-                      <span class="mention">@Kousik</span> <span class="mention">@Hanad</span> two
-                      tasks are assigned to you. Can you pick them up?
-                    </p>
-                  </div>
-                </div>
-
-                <div class="msg">
-                  <span class="av a" aria-hidden="true">A</span>
-                  <div class="head">
-                    <span class="w6">Ankur</span><span class="t12 muted">10:34</span>
-                  </div>
-                  <div class="body"><p>I'll take the preview renderer.</p></div>
-                </div>
-                <div class="sys">
-                  Ankur created
-                  <a class="chip" href="Task.dc.html"
-                    ><svg
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--input-foreground)"
-                      stroke-width="1.6"
-                    >
-                      <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
-                      <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
-                    >Preview renderer</a
-                  ><span class="nw"> · 10:34</span>
-                </div>
-
-                <div class="newsep">New</div>
-
-                <div class="msg" id="kousik-1040">
-                  <span class="av k" aria-hidden="true">K</span>
-                  <div class="head">
-                    <span class="w6">Kousik</span><span class="t12 muted">10:40</span>
-                  </div>
-                  <div class="body">
-                    <p>Do we tag difficulty when the question is generated, or after review?</p>
-                  </div>
-                  <div class="hoverbar" role="toolbar" aria-label="Message actions">
-                    <button type="button" class="btn ghost icon sm" aria-label="Reply">
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path d="M6.5 4L3 7.5 6.5 11" />
-                        <path d="M3 7.5h6.5a3.5 3.5 0 0 1 3.5 3.5v1" />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      class="btn ghost icon sm"
-                      aria-label="Add to Pair's notes"
-                    >
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path d="M4.5 2.5h7v11L8 11l-3.5 2.5z" />
-                      </svg>
-                    </button>
-                    <button type="button" class="btn ghost icon sm" aria-label="Copy link">
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path
-                          d="M7 9a3 3 0 0 0 4.2 0l2-2A3 3 0 0 0 9 2.8l-.8.8M9 7a3 3 0 0 0-4.2 0l-2 2A3 3 0 0 0 7 13.2l.8-.8"
-                        />
-                      </svg>
-                    </button>
-                    <button type="button" class="btn ghost icon sm" aria-label="More: edit, delete">
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="currentColor"
-                      >
-                        <circle cx="3.5" cy="8" r="1.1" />
-                        <circle cx="8" cy="8" r="1.1" />
-                        <circle cx="12.5" cy="8" r="1.1" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-
-                <div class="msg">
-                  <span class="av h" aria-hidden="true">H</span>
-                  <div class="head">
-                    <span class="w6">Hanad</span><span class="t12 muted">10:42</span>
-                  </div>
-                  <a class="quote" href="#kousik-1040"
-                    ><svg
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                    >
-                      <path d="M3 3v4.5a2 2 0 0 0 2 2h8M10 6.5l3 3-3 3" /></svg
-                    ><span class="w5" style="color: var(--foreground)">Kousik</span
-                    ><span class="ell"
-                      >Do we tag difficulty when the question is generated, or after review?</span
-                    ></a
-                  >
-                  <div class="body">
-                    <p>After review. The reviewer usually changes it anyway.</p>
-                  </div>
-                </div>
-
-                <div class="sys first">
-                  <svg
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="var(--input-foreground)"
-                    stroke-width="1.6"
-                  >
-                    <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
-                    <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
-                  ><a class="chip" href="Task.dc.html">Preview renderer</a> needs Ankur: Which image
-                  sizes should the preview support?<span class="nw"> · 10:58</span>
-                </div>
-
-                <div class="msg">
-                  <span class="av r" aria-hidden="true">R</span>
-                  <div class="head">
-                    <span class="w6">Rutvik</span><span class="t12 muted">11:05</span>
-                  </div>
-                  <div class="body">
-                    <p>
-                      <span class="mention">@pair</span> what did we decide on difficulty tagging,
-                      and is anything blocked?
-                    </p>
-                  </div>
-                </div>
-
-                <div class="msg">
-                  <span class="pairmark" aria-hidden="true"
-                    ><svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.6"
-                    >
-                      <circle cx="6" cy="8" r="3.5" />
-                      <circle cx="10" cy="8" r="3.5" /></svg
-                  ></span>
-                  <div class="head">
-                    <span class="w6">Pair</span><span class="tag">Agent</span
-                    ><a class="t12 muted" href="#rutvik-1105">replying to Rutvik</a
-                    ><span class="t12 muted">11:05</span>
-                  </div>
-                  <div class="body">
-                    <p>
-                      Difficulty is tagged after review, not when a question is generated (Hanad,
-                      10:42).
-                    </p>
-                    <p>
-                      One task is blocked:
-                      <a class="chip" href="Task.dc.html"
-                        ><svg
-                          aria-hidden="true"
-                          width="12"
-                          height="12"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="var(--input-foreground)"
-                          stroke-width="1.6"
-                        >
-                          <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
-                          <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
-                        >Preview renderer</a
-                      >
-                      is waiting on Ankur to choose image sizes.
-                      <a class="chip" href="Task.dc.html"
-                        ><svg
-                          aria-hidden="true"
-                          width="12"
-                          height="12"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="var(--info-foreground)"
-                          stroke-width="1.6"
-                          stroke-dasharray="2.2 2.2"
-                        >
-                          <circle cx="8" cy="8" r="6" /></svg
-                        >Generate question from prompt</a
-                      >
-                      is moving, and
-                      <a class="chip" href="TaskUnstarted.dc.html"
-                        ><svg
-                          aria-hidden="true"
-                          width="12"
-                          height="12"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="var(--muted-foreground)"
-                          stroke-width="1.6"
-                        >
-                          <circle cx="8" cy="8" r="6" /></svg
-                        >Difficulty tagging</a
-                      >
-                      hasn't started.
-                    </p>
-                    <div class="receipt">
-                      <svg
-                        aria-hidden="true"
-                        width="12"
-                        height="12"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path d="M4.5 2.5h7v11L8 11l-3.5 2.5z" /></svg
-                      ><span
-                        >Added to <button type="button" class="linkbtn">notes</button>: "Difficulty
-                        is tagged after review" ·
-                        <button type="button" class="linkbtn">Undo</button></span
-                      >
-                    </div>
-                  </div>
-                </div>
-
-                <div class="msg">
-                  <span class="av h" aria-hidden="true">H</span>
-                  <div class="head">
-                    <span class="w6">Hanad</span><span class="t12 muted">11:12</span>
-                  </div>
-                  <div class="body">
-                    <p><span class="mention">@pair</span> which task touches the review list?</p>
-                  </div>
-                </div>
-                <div class="sys">
-                  <svg
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    stroke-dasharray="2.2 2.2"
-                  >
-                    <circle cx="8" cy="8" r="6" /></svg
-                  >Pair is replying to Hanad
-                </div>
-              </div>
-            </div>
-
-            <div class="composer-wrap">
-              <div class="composer">
-                <div class="fakeph" aria-hidden="true">
-                  Message the space<span class="phlong"> · @ to mention Pair or a teammate</span>
-                </div>
-                <div class="foot">
-                  <button
-                    type="button"
-                    class="btn ghost"
-                    aria-pressed="false"
-                    style="padding: 0 8px"
-                  >
-                    <svg
-                      aria-hidden="true"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--primary)"
-                      stroke-width="1.6"
-                    >
-                      <circle cx="6" cy="8" r="3.5" />
-                      <circle cx="10" cy="8" r="3.5" /></svg
-                    >@pair
-                  </button>
-                  <span class="grow ell t12 muted" aria-live="polite"></span>
-                  <button type="button" class="send" aria-label="Send" disabled="true">
-                    <svg
-                      aria-hidden="true"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                    >
-                      <path d="M8 13V3M4 7l4-4 4 4" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </main>
-
-          <aside class="panel" aria-label="Space panel">
-            <div class="tabs">
-              <div role="tablist" aria-label="Space panel" class="row" style="gap: 4px">
-                <button type="button" class="tab" role="tab" aria-selected="true">
-                  <svg
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                  >
-                    <path
-                      d="M2.5 4.2l1.2 1.2 2-2.2M2.5 9.2l1.2 1.2 2-2.2M8 4.5h5.5M8 9.5h5.5M8 13h5.5"
-                    /></svg
-                  >Overview
-                </button>
-                <button type="button" class="tab" role="tab" aria-selected="false">
-                  <svg
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                  >
-                    <path d="M4 2.5h5.5L12 5v8.5H4z" />
-                    <path d="M6 8h4M6 10.5h4" /></svg
-                  >Notes
-                </button>
-              </div>
-              <button
-                type="button"
-                class="btn ghost icon sm"
-                aria-label="Add: new task, browser, terminal, files"
-                title="New task, or open a surface"
-              >
-                <svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 3v10M3 8h10" />
-                </svg>
-              </button>
-              <span class="grow"></span>
-              <button type="button" class="btn ghost icon sm" aria-label="Expand panel">
-                <svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <path d="M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9" />
-                </svg>
-              </button>
-              <button type="button" class="btn ghost icon sm" aria-label="Hide panel">
-                <svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <rect x="2" y="3" width="12" height="10" rx="1.5" />
-                  <path d="M10 3v10" />
-                </svg>
-              </button>
-            </div>
-
-            <div class="scroll ov">
-              <button type="button" class="ghead" aria-expanded="true">
-                Needs you <span class="n">1</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </button>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--warning-foreground)"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" />
-                  <path d="M6.6 6.3a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1.1-1.5 2.1M8 10.9h.01" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Seed role catalog</span
-                  ><span class="l2"
-                    >for you · <span class="ell">wants to run pnpm db:migrate</span></span
-                  ></span
-                >
-                <span class="rc"
-                  ><span class="dot" role="img" aria-label="Updated since you looked"></span
-                  ><span class="when">2m</span></span
-                >
-              </a>
-
-              <button type="button" class="ghead" aria-expanded="true">
-                In progress <span class="n">3</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </button>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--error-foreground)"
-                  stroke-width="1.6"
-                >
-                  <circle cx="8" cy="8" r="6" />
-                  <path d="M8 4.8v3.6M8 11h.01" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Sample role fixtures</span
-                  ><span class="l2"
-                    >for <span class="av xs k" aria-hidden="true">K</span
-                    ><span class="who">Kousik</span> ·
-                    <span class="ell">failed: fixtures.test.ts</span></span
-                  ></span
-                >
-                <span class="rc"><span></span><span class="when">1h</span></span>
-              </a>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--input-foreground)"
-                  stroke-width="1.5"
-                >
-                  <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
-                  <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Preview renderer</span
-                  ><span class="l2"
-                    >for <span class="av xs a" aria-hidden="true">A</span
-                    ><span class="who">Ankur</span> ·
-                    <span class="ell">needs Ankur: Which image sizes…</span></span
-                  ></span
-                >
-                <span class="rc"><span></span><span class="when">12m</span></span>
-              </a>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--info-foreground)"
-                  stroke-width="1.6"
-                  stroke-dasharray="2.2 2.2"
-                >
-                  <circle cx="8" cy="8" r="6" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Generate question from prompt</span
-                  ><span class="l2"
-                    >for <span class="av xs k" aria-hidden="true">K</span
-                    ><span class="who">Kousik</span></span
-                  ></span
-                >
-                <span class="rc"
-                  ><span class="dot" role="img" aria-label="Updated since you looked"></span
-                  ><span class="when">4m</span></span
-                >
-              </a>
-
-              <button type="button" class="ghead" aria-expanded="true">
-                Not started <span class="n">1</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </button>
-              <a class="trow" href="TaskUnstarted.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <circle cx="8" cy="8" r="6" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Difficulty tagging</span
-                  ><span class="l2"
-                    >for <span class="av xs h" aria-hidden="true">H</span
-                    ><span class="who">Hanad</span> ·
-                    <span class="ell">assigned by Rutvik</span></span
-                  ></span
-                >
-                <span class="rc"><span></span><span class="when">34m</span></span>
-              </a>
-
-              <button type="button" class="ghead" aria-expanded="true">
-                In review <span class="n">1</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </button>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--success-foreground)"
-                  stroke-width="1.6"
-                >
-                  <circle cx="4.5" cy="3.8" r="1.8" />
-                  <circle cx="4.5" cy="12.2" r="1.8" />
-                  <circle cx="11.5" cy="12.2" r="1.8" />
-                  <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1"
-                    ><span
-                      class="muted"
-                      style="font-weight: 400; font-variant-numeric: tabular-nums"
-                      >pair-be#482</span
-                    >
-                    Question schema v2</span
-                  ><span class="l2"
-                    ><span class="ell"
-                      >main ← rutvik/schema-v2 <span class="add">+212</span>
-                      <span class="del">−40</span> · for you</span
-                    ></span
-                  ></span
-                >
-                <span class="rc"
-                  ><svg
-                    role="img"
-                    aria-label="Checks passed"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="var(--success-foreground)"
-                    stroke-width="1.8"
-                  >
-                    <path d="M3.5 8.5l3 3 6-7" /></svg
-                  ><span class="when">20m</span></span
-                >
-              </a>
-
-              <button type="button" class="ghead" aria-expanded="false">
-                Done <span class="n">1</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M6 4l4 4-4 4" />
-                </svg>
-              </button>
-
-              <a class="newrow" href="NewTask.dc.html"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 3v10M3 8h10" /></svg
-                >New task</a
-              >
-            </div>
-          </aside>
-        </div>
         <div class="scrim backdrop"></div>
         <div class="vp upper">
           <form
@@ -2496,12 +2714,14 @@
               <span class="crumb t12 muted"
                 ><svg
                   aria-hidden="true"
-                  width="12"
-                  height="12"
+                  width="14"
+                  height="14"
                   viewBox="0 0 16 16"
                   fill="none"
                   stroke="currentColor"
                   stroke-width="1.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                 >
                   <circle cx="5.5" cy="6" r="2.5" />
                   <circle cx="10.5" cy="6" r="2.5" />
@@ -2511,12 +2731,14 @@
                 ><span class="ell">Question creation</span
                 ><svg
                   aria-hidden="true"
-                  width="10"
-                  height="10"
+                  width="12"
+                  height="12"
                   viewBox="0 0 16 16"
                   fill="none"
                   stroke="currentColor"
                   stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                 >
                   <path d="M6 4l4 4-4 4" /></svg
                 ><span class="here">New task</span></span
@@ -2531,45 +2753,343 @@
                   fill="none"
                   stroke="currentColor"
                   stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                 >
                   <path d="M4 4l8 8M12 4l-8 8" /></svg
               ></a>
             </div>
 
             <div class="nt-ed">
+              <input
+                class="c-title"
+                type="text"
+                aria-label="Title"
+                placeholder="Task title"
+                value="{{title}}"
+                onChange="{{onTitle}}"
+              />
               <textarea
                 class="nt-ta"
-                rows="6"
-                aria-label="What should the agent do?"
-                placeholder="What should the agent do? Type @ to mention a file or a teammate."
+                rows="3"
+                aria-label="Description"
+                placeholder="Add a description. Every thread on this task reads it, with the brief and Pair's notes."
                 value="{{desc}}"
                 onChange="{{onDesc}}"
               ></textarea>
-              <div class="reads t12 muted">
-                <svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path d="M4 2.5h5.5L12 5v8.5H4z" />
-                  <path d="M6 8h4M6 10.5h4" /></svg
-                >Also reads the brief and Pair's notes.
-              </div>
             </div>
 
             <div class="nt-chips" role="group" aria-label="Task properties">
-              <span class="anchor">
-                <button
+              <span class="anchor"
+                ><button
+                  type="button"
+                  class="propchip"
+                  aria-haspopup="listbox"
+                  aria-expanded="{{statusOpen}}"
+                  aria-label="Status: {{statusLabel}}"
+                  onClick="{{toggleStatus}}"
+                >
+                  <sc-if value="{{st_todo}}" hint-placeholder-val="{{true}}"
+                    ><svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      style="color: var(--muted-foreground)"
+                    >
+                      <circle cx="8" cy="8" r="5.6" /></svg></sc-if
+                  ><sc-if value="{{st_prog}}" hint-placeholder-val="{{false}}"
+                    ><svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      style="color: var(--info-foreground)"
+                    >
+                      <circle cx="8" cy="8" r="5.6" />
+                      <path
+                        d="M8 4.8a3.2 3.2 0 0 1 0 6.4z"
+                        fill="currentColor"
+                        stroke="none"
+                      /></svg></sc-if
+                  ><sc-if value="{{st_rev}}" hint-placeholder-val="{{false}}"
+                    ><svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      style="color: var(--success-foreground)"
+                    >
+                      <circle cx="8" cy="8" r="5.6" />
+                      <path
+                        d="M8 8V4.8a3.2 3.2 0 1 1-3.2 3.2z"
+                        fill="currentColor"
+                        stroke="none"
+                      /></svg></sc-if
+                  ><sc-if value="{{st_done}}" hint-placeholder-val="{{false}}"
+                    ><svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      style="color: var(--success-foreground)"
+                    >
+                      <circle cx="8" cy="8" r="6" fill="currentColor" stroke="none" />
+                      <path
+                        d="M5.4 8.2l1.8 1.8 3.4-3.6"
+                        stroke="var(--popover)"
+                        stroke-width="1.6"
+                      /></svg></sc-if
+                  ><sc-if value="{{st_canc}}" hint-placeholder-val="{{false}}"
+                    ><svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      style="color: var(--muted-foreground)"
+                    >
+                      <circle cx="8" cy="8" r="5.6" />
+                      <path d="M6.2 6.2l3.6 3.6M9.8 6.2l-3.6 3.6" /></svg></sc-if
+                  >{{statusLabel}}<svg
+                    class="chev"
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg></button
+                ><sc-if value="{{statusOpen}}" hint-placeholder-val="{{false}}"
+                  ><div class="pop status sheetable" role="listbox" aria-label="Status">
+                    <div class="pophead">
+                      <button
+                        type="button"
+                        class="btn ghost icon sm"
+                        aria-label="Back"
+                        onClick="{{closePop}}"
+                      >
+                        <svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                        >
+                          <path d="M10 4L6 8l4 4" />
+                        </svg></button
+                      ><span class="w6">Status</span>
+                    </div>
+                    <div
+                      class="prow {{sc_todo}}"
+                      role="option"
+                      aria-selected="{{ss_todo}}"
+                      onClick="{{pick_todo}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        style="color: var(--muted-foreground)"
+                      >
+                        <circle cx="8" cy="8" r="5.6" /></svg
+                      ><span class="ell">To do</span
+                      ><svg
+                        class="ck {{sk_todo}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div
+                      class="prow {{sc_prog}}"
+                      role="option"
+                      aria-selected="{{ss_prog}}"
+                      onClick="{{pick_prog}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        style="color: var(--info-foreground)"
+                      >
+                        <circle cx="8" cy="8" r="5.6" />
+                        <path
+                          d="M8 4.8a3.2 3.2 0 0 1 0 6.4z"
+                          fill="currentColor"
+                          stroke="none"
+                        /></svg
+                      ><span class="ell">In progress</span
+                      ><svg
+                        class="ck {{sk_prog}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div
+                      class="prow {{sc_rev}}"
+                      role="option"
+                      aria-selected="{{ss_rev}}"
+                      onClick="{{pick_rev}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        style="color: var(--success-foreground)"
+                      >
+                        <circle cx="8" cy="8" r="5.6" />
+                        <path
+                          d="M8 8V4.8a3.2 3.2 0 1 1-3.2 3.2z"
+                          fill="currentColor"
+                          stroke="none"
+                        /></svg
+                      ><span class="ell">In review</span
+                      ><svg
+                        class="ck {{sk_rev}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div
+                      class="prow {{sc_done}}"
+                      role="option"
+                      aria-selected="{{ss_done}}"
+                      onClick="{{pick_done}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        style="color: var(--success-foreground)"
+                      >
+                        <circle cx="8" cy="8" r="6" fill="currentColor" stroke="none" />
+                        <path
+                          d="M5.4 8.2l1.8 1.8 3.4-3.6"
+                          stroke="var(--popover)"
+                          stroke-width="1.6"
+                        /></svg
+                      ><span class="ell">Done</span
+                      ><svg
+                        class="ck {{sk_done}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div
+                      class="prow {{sc_canc}}"
+                      role="option"
+                      aria-selected="{{ss_canc}}"
+                      onClick="{{pick_canc}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        style="color: var(--muted-foreground)"
+                      >
+                        <circle cx="8" cy="8" r="5.6" />
+                        <path d="M6.2 6.2l3.6 3.6M9.8 6.2l-3.6 3.6" /></svg
+                      ><span class="ell">Canceled</span
+                      ><svg
+                        class="ck {{sk_canc}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div></div></sc-if
+              ></span>
+              <span class="anchor"
+                ><button
                   type="button"
                   class="propchip"
                   aria-haspopup="listbox"
                   aria-expanded="{{ownerOpen}}"
                   aria-label="Owner: {{ownerName}}"
-                  title="Owner"
                   onClick="{{toggleOwner}}"
                 >
                   <span class="av s16 {{ownerAv}}" aria-hidden="true">{{ownerIni}}</span
@@ -2582,12 +3102,13 @@
                     fill="none"
                     stroke="currentColor"
                     stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
                   >
                     <path d="M4 6l4 4 4-4" />
-                  </svg>
-                </button>
-                <sc-if value="{{ownerOpen}}" hint-placeholder-val="{{false}}">
-                  <div class="pop owner sheetable" role="listbox" aria-label="Owner">
+                  </svg></button
+                ><sc-if value="{{ownerOpen}}" hint-placeholder-val="{{false}}"
+                  ><div class="pop owner sheetable" role="listbox" aria-label="Owner">
                     <div class="pophead">
                       <button
                         type="button"
@@ -2617,6 +3138,8 @@
                         fill="none"
                         stroke="currentColor"
                         stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
                       >
                         <circle cx="7" cy="7" r="4.5" />
                         <path d="M10.5 10.5l3 3" /></svg
@@ -2628,8 +3151,8 @@
                       aria-selected="{{os_me}}"
                       onClick="{{set_me}}"
                     >
-                      <span class="av r" aria-hidden="true">R</span><span class="ell">Me</span
-                      ><span class="sub">{{sub_me}}</span
+                      <span class="av r" aria-hidden="true">R</span><span class="ell">You</span
+                      ><span class="sub">Rutvik</span
                       ><svg
                         class="ck {{ok_me}}"
                         aria-hidden="true"
@@ -2639,6 +3162,8 @@
                         fill="none"
                         stroke="currentColor"
                         stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
                       >
                         <path d="M3.5 8.5l3 3 6-7" />
                       </svg>
@@ -2650,7 +3175,6 @@
                       onClick="{{set_k}}"
                     >
                       <span class="av k" aria-hidden="true">K</span><span class="ell">Kousik</span
-                      ><span class="sub">{{sub_k}}</span
                       ><svg
                         class="ck {{ok_k}}"
                         aria-hidden="true"
@@ -2660,6 +3184,8 @@
                         fill="none"
                         stroke="currentColor"
                         stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
                       >
                         <path d="M3.5 8.5l3 3 6-7" />
                       </svg>
@@ -2671,7 +3197,7 @@
                       onClick="{{set_h}}"
                     >
                       <span class="av h" aria-hidden="true">H</span><span class="ell">Hanad</span
-                      ><span class="sub">{{sub_h}}</span
+                      ><span class="c-away">Away</span
                       ><svg
                         class="ck {{ok_h}}"
                         aria-hidden="true"
@@ -2681,6 +3207,8 @@
                         fill="none"
                         stroke="currentColor"
                         stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
                       >
                         <path d="M3.5 8.5l3 3 6-7" />
                       </svg>
@@ -2692,7 +3220,6 @@
                       onClick="{{set_a}}"
                     >
                       <span class="av a" aria-hidden="true">A</span><span class="ell">Ankur</span
-                      ><span class="sub">{{sub_a}}</span
                       ><svg
                         class="ck {{ok_a}}"
                         aria-hidden="true"
@@ -2702,489 +3229,1012 @@
                         fill="none"
                         stroke="currentColor"
                         stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
                       >
                         <path d="M3.5 8.5l3 3 6-7" />
                       </svg>
                     </div>
                     <div class="pfoot">
-                      A teammate's task waits until they start it on their account.
+                      Assigning runs nothing. The owner starts a thread when they are ready.
                     </div>
-                  </div>
-                </sc-if>
-              </span>
+                  </div></sc-if
+                ></span
+              >
+            </div>
 
-              <sc-if value="{{isMe}}" hint-placeholder-val="{{true}}">
-                <span class="anchor">
-                  <button
-                    type="button"
-                    class="propchip {{modelCls}}"
-                    aria-haspopup="dialog"
-                    aria-expanded="{{modelOpen}}"
-                    aria-label="Model: {{modelLabel}}"
-                    onClick="{{toggleModel}}"
-                  >
-                    <sc-if value="{{badAccount}}" hint-placeholder-val="{{false}}"
-                      ><svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="var(--error-foreground)"
-                        stroke-width="1.6"
-                      >
-                        <circle cx="8" cy="8" r="6" />
-                        <path d="M8 4.8v3.6M8 11h.01" /></svg></sc-if
-                    ><sc-if value="{{chipClaude}}" hint-placeholder-val="{{true}}"
-                      ><svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.6"
-                      >
-                        <path d="M8 2.5v11M3.2 5.2l9.6 5.6M3.2 10.8l9.6-5.6" /></svg></sc-if
-                    ><sc-if value="{{chipCodex}}" hint-placeholder-val="{{false}}"
-                      ><svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.4"
-                      >
-                        <path d="M8 2l5 3v6l-5 3-5-3V5z" />
-                        <path d="M6 6.8L7.6 8 6 9.2M8.6 9.4h1.6" /></svg></sc-if
-                    >{{modelLabel}}<svg
-                      class="chev"
+            <sc-if value="{{isMe}}" hint-placeholder-val="{{true}}">
+              <div class="c-start">
+                <div
+                  class="c-startcb"
+                  role="checkbox"
+                  aria-checked="{{startOpen}}"
+                  tabindex="0"
+                  onClick="{{toggleStart}}"
+                >
+                  <span class="c-cb {{startCb}}" aria-hidden="true"
+                    ><svg
                       aria-hidden="true"
                       width="12"
                       height="12"
                       viewBox="0 0 16 16"
                       fill="none"
                       stroke="currentColor"
-                      stroke-width="1.6"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
                     >
-                      <path d="M4 6l4 4 4-4" />
-                    </svg>
-                  </button>
-                  <sc-if value="{{modelOpen}}" hint-placeholder-val="{{false}}">
-                    <div class="pop model sheetable" role="dialog" aria-label="Choose a model">
-                      <div class="pophead">
-                        <button
-                          type="button"
-                          class="btn ghost icon sm"
-                          aria-label="Back"
-                          onClick="{{closePop}}"
-                        >
-                          <svg
+                      <path d="M3.5 8.5l3 3 6-7" /></svg
+                  ></span>
+                  <div>
+                    <div class="w5">Start a thread now</div>
+                    <sc-if value="{{startClosed}}" hint-placeholder-val="{{true}}"
+                      ><div class="l2">
+                        <span>On your {{acctProv}} account, in</span
+                        ><sc-if value="{{runsWs}}" hint-placeholder-val="{{true}}"
+                          ><svg
                             aria-hidden="true"
-                            width="14"
-                            height="14"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.6"
-                          >
-                            <path d="M10 4L6 8l4 4" />
-                          </svg></button
-                        ><span class="w6">Model</span>
-                      </div>
-                      <div
-                        class="rail"
-                        role="tablist"
-                        aria-orientation="vertical"
-                        aria-label="Provider"
-                      >
-                        <button
-                          type="button"
-                          class="prov"
-                          role="tab"
-                          aria-selected="{{provClaude}}"
-                          aria-label="Claude"
-                          title="Claude"
-                          onClick="{{showClaude}}"
-                        >
-                          <svg
-                            aria-hidden="true"
-                            width="16"
-                            height="16"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.6"
-                          >
-                            <path d="M8 2.5v11M3.2 5.2l9.6 5.6M3.2 10.8l9.6-5.6" />
-                          </svg>
-                        </button>
-                        <button
-                          type="button"
-                          class="prov"
-                          role="tab"
-                          aria-selected="{{provCodex}}"
-                          aria-label="Codex"
-                          title="Codex"
-                          onClick="{{showCodex}}"
-                        >
-                          <svg
-                            aria-hidden="true"
-                            width="16"
-                            height="16"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.4"
-                          >
-                            <path d="M8 2l5 3v6l-5 3-5-3V5z" />
-                            <path d="M6 6.8L7.6 8 6 9.2M8.6 9.4h1.6" />
-                          </svg>
-                        </button>
-                      </div>
-                      <div class="mlist" role="listbox" aria-label="Models">
-                        <div class="psearch">
-                          <svg
-                            aria-hidden="true"
-                            width="14"
-                            height="14"
+                            width="12"
+                            height="12"
                             viewBox="0 0 16 16"
                             fill="none"
                             stroke="currentColor"
                             stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
                           >
-                            <circle cx="7" cy="7" r="4.5" />
-                            <path d="M10.5 10.5l3 3" /></svg
-                          ><input
-                            type="text"
-                            placeholder="Search {{provName}} models"
-                            aria-label="Search models"
-                          />
-                        </div>
-                        <sc-if value="{{provClaude}}" hint-placeholder-val="{{true}}">
-                          <div
-                            class="prow {{mc_opus}}"
-                            role="option"
-                            aria-selected="{{ms_opus}}"
-                            onClick="{{pick_opus}}"
+                            <path d="M4.5 3h3l1 1h5v6" />
+                            <path d="M2 5.5h3.5l1 1h5v6H2z" /></svg></sc-if
+                        ><sc-if value="{{runsProj}}" hint-placeholder-val="{{false}}"
+                          ><svg
+                            aria-hidden="true"
+                            width="12"
+                            height="12"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
                           >
-                            <span class="ell">Opus 5.5</span
-                            ><svg
-                              class="ck {{mk_opus}}"
-                              aria-hidden="true"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.8"
+                            <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg></sc-if
+                        ><span class="ell">{{runsChip}}</span>
+                      </div></sc-if
+                    >
+                  </div>
+                </div>
+                <sc-if value="{{startOpen}}" hint-placeholder-val="{{false}}">
+                  <div class="c-start-b">
+                    <dl class="c-rows">
+                      <div class="c-row">
+                        <dt>Runs in</dt>
+                        <dd>
+                          <span class="anchor"
+                            ><button
+                              type="button"
+                              class="propchip"
+                              aria-haspopup="listbox"
+                              aria-expanded="{{runsOpen}}"
+                              aria-label="Runs in: {{runsChip}}"
+                              onClick="{{toggleRuns}}"
                             >
-                              <path d="M3.5 8.5l3 3 6-7" />
-                            </svg>
-                          </div>
-                          <div
-                            class="prow {{mc_sonnet}}"
-                            role="option"
-                            aria-selected="{{ms_sonnet}}"
-                            onClick="{{pick_sonnet}}"
+                              <sc-if value="{{runsWs}}" hint-placeholder-val="{{true}}"
+                                ><svg
+                                  aria-hidden="true"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.5"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <path d="M4.5 3h3l1 1h5v6" />
+                                  <path d="M2 5.5h3.5l1 1h5v6H2z" /></svg></sc-if
+                              ><sc-if value="{{runsProj}}" hint-placeholder-val="{{false}}"
+                                ><svg
+                                  aria-hidden="true"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.5"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg></sc-if
+                              >{{runsChip}}<sc-if
+                                value="{{runsSubOn}}"
+                                hint-placeholder-val="{{false}}"
+                                ><span class="sub">{{runsRepos}}</span></sc-if
+                              ><svg
+                                class="chev"
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M4 6l4 4 4-4" />
+                              </svg></button
+                            ><sc-if value="{{runsOpen}}" hint-placeholder-val="{{false}}"
+                              ><div
+                                class="pop runsin sheetable"
+                                role="listbox"
+                                aria-label="Runs in"
+                              >
+                                <div class="pophead">
+                                  <button
+                                    type="button"
+                                    class="btn ghost icon sm"
+                                    aria-label="Back"
+                                    onClick="{{closePop}}"
+                                  >
+                                    <svg
+                                      aria-hidden="true"
+                                      width="14"
+                                      height="14"
+                                      viewBox="0 0 16 16"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.6"
+                                    >
+                                      <path d="M10 4L6 8l4 4" />
+                                    </svg></button
+                                  ><span class="w6">Runs in</span>
+                                </div>
+                                <div class="psearch">
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <circle cx="7" cy="7" r="4.5" />
+                                    <path d="M10.5 10.5l3 3" /></svg
+                                  ><input
+                                    type="text"
+                                    placeholder="Search workspaces and projects"
+                                    aria-label="Search workspaces and projects"
+                                  />
+                                </div>
+                                <div class="plabel">Workspaces</div>
+                                <div
+                                  class="prow {{rc_ws}}"
+                                  role="option"
+                                  aria-selected="{{rs_ws}}"
+                                  onClick="{{pickr_ws}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="var(--muted-foreground)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M4.5 3h3l1 1h5v6" />
+                                    <path d="M2 5.5h3.5l1 1h5v6H2z" /></svg
+                                  ><span class="ell"
+                                    >Question creation
+                                    <span class="sub">pair-fe, pair-be</span></span
+                                  ><span class="c-tag">Space default</span
+                                  ><svg
+                                    class="ck {{rk_ws}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div
+                                  class="prow {{rc_qc}}"
+                                  role="option"
+                                  aria-selected="{{rs_qc}}"
+                                  onClick="{{pickr_qc}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="var(--muted-foreground)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M4.5 3h3l1 1h5v6" />
+                                    <path d="M2 5.5h3.5l1 1h5v6H2z" /></svg
+                                  ><span class="ell"
+                                    >QC stack
+                                    <span class="sub">pair-fe, pair-be, pair-ai</span></span
+                                  ><svg
+                                    class="ck {{rk_qc}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div
+                                  class="prow {{rc_ik}}"
+                                  role="option"
+                                  aria-selected="{{rs_ik}}"
+                                  onClick="{{pickr_ik}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="var(--muted-foreground)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M4.5 3h3l1 1h5v6" />
+                                    <path d="M2 5.5h3.5l1 1h5v6H2z" /></svg
+                                  ><span class="ell"
+                                    >Interview kit <span class="sub">pair-ai, ade</span></span
+                                  ><svg
+                                    class="ck {{rk_ik}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div class="plabel">Projects</div>
+                                <div
+                                  class="prow {{rc_fe}}"
+                                  role="option"
+                                  aria-selected="{{rs_fe}}"
+                                  onClick="{{pickr_fe}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="var(--muted-foreground)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                                  ><span class="ell">pair-fe</span
+                                  ><svg
+                                    class="ck {{rk_fe}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div
+                                  class="prow {{rc_be}}"
+                                  role="option"
+                                  aria-selected="{{rs_be}}"
+                                  onClick="{{pickr_be}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="var(--muted-foreground)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                                  ><span class="ell">pair-be</span
+                                  ><svg
+                                    class="ck {{rk_be}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div
+                                  class="prow {{rc_ai}}"
+                                  role="option"
+                                  aria-selected="{{rs_ai}}"
+                                  onClick="{{pickr_ai}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="var(--muted-foreground)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                                  ><span class="ell">pair-ai</span
+                                  ><svg
+                                    class="ck {{rk_ai}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div
+                                  class="prow {{rc_ade}}"
+                                  role="option"
+                                  aria-selected="{{rs_ade}}"
+                                  onClick="{{pickr_ade}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="var(--muted-foreground)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                                  ><span class="ell">ade</span
+                                  ><svg
+                                    class="ck {{rk_ade}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div
+                                  class="prow {{rc_ct}}"
+                                  role="option"
+                                  aria-selected="{{rs_ct}}"
+                                  onClick="{{pickr_ct}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="var(--muted-foreground)"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                                  ><span class="ell">pair-cloud-test</span
+                                  ><svg
+                                    class="ck {{rk_ct}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div class="pfoot">
+                                  A thread checks out every repository in its workspace.
+                                </div>
+                              </div></sc-if
+                            ></span
                           >
-                            <span class="ell">Sonnet 5.5</span
-                            ><svg
-                              class="ck {{mk_sonnet}}"
-                              aria-hidden="true"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.8"
-                            >
-                              <path d="M3.5 8.5l3 3 6-7" />
-                            </svg>
-                          </div>
-                          <div
-                            class="prow {{mc_haiku}}"
-                            role="option"
-                            aria-selected="{{ms_haiku}}"
-                            onClick="{{pick_haiku}}"
+                          <sc-if value="{{isDefault}}" hint-placeholder-val="{{true}}"
+                            ><span class="c-tag">Space default</span></sc-if
                           >
-                            <span class="ell">Haiku 4.5</span
-                            ><svg
-                              class="ck {{mk_haiku}}"
-                              aria-hidden="true"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.8"
-                            >
-                              <path d="M3.5 8.5l3 3 6-7" />
-                            </svg>
-                          </div>
-                        </sc-if>
-                        <sc-if value="{{provCodex}}" hint-placeholder-val="{{false}}">
-                          <div
-                            class="prow {{mc_gpt}}"
-                            role="option"
-                            aria-selected="{{ms_gpt}}"
-                            onClick="{{pick_gpt}}"
-                          >
-                            <span class="ell">GPT-5.5</span
-                            ><svg
-                              class="ck {{mk_gpt}}"
-                              aria-hidden="true"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.8"
-                            >
-                              <path d="M3.5 8.5l3 3 6-7" />
-                            </svg>
-                          </div>
-                          <div
-                            class="prow {{mc_luna}}"
-                            role="option"
-                            aria-selected="{{ms_luna}}"
-                            onClick="{{pick_luna}}"
-                          >
-                            <span class="ell">Luna</span
-                            ><svg
-                              class="ck {{mk_luna}}"
-                              aria-hidden="true"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.8"
-                            >
-                              <path d="M3.5 8.5l3 3 6-7" />
-                            </svg>
-                          </div>
-                        </sc-if>
-                        <div class="pfoot">Runs on your {{provName}} account</div>
+                        </dd>
                       </div>
-                    </div>
-                  </sc-if>
-                </span>
-              </sc-if>
-              <sc-if value="{{notMe}}" hint-placeholder-val="{{false}}"
-                ><span
-                  class="mchip"
-                  title="The owner chooses the model and account when they start it"
-                  >{{ownerName}} picks the model</span
-                ></sc-if
-              >
-
-              <span class="anchor">
-                <button
-                  type="button"
-                  class="propchip"
-                  aria-haspopup="listbox"
-                  aria-expanded="{{baseOpen}}"
-                  aria-label="Start from: {{baseLabel}}"
-                  title="Start from"
-                  onClick="{{toggleBase}}"
-                >
-                  <sc-if value="{{onMain}}" hint-placeholder-val="{{true}}"
-                    ><svg
-                      aria-hidden="true"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.4"
-                    >
-                      <circle cx="4.5" cy="3.5" r="1.6" />
-                      <circle cx="4.5" cy="12.5" r="1.6" />
-                      <circle cx="11.5" cy="5" r="1.6" />
-                      <path d="M4.5 5.1v5.8M11.5 6.6c0 3-3.5 2.6-6.4 4.6" /></svg></sc-if
-                  ><sc-if value="{{onPr}}" hint-placeholder-val="{{false}}"
-                    ><svg
-                      aria-hidden="true"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--success-foreground)"
-                      stroke-width="1.6"
-                    >
-                      <circle cx="4.5" cy="3.8" r="1.8" />
-                      <circle cx="4.5" cy="12.2" r="1.8" />
-                      <circle cx="11.5" cy="12.2" r="1.8" />
-                      <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg></sc-if
-                  >{{baseLabel}}<svg
-                    class="chev"
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                  >
-                    <path d="M4 6l4 4 4-4" />
-                  </svg>
-                </button>
-                <sc-if value="{{baseOpen}}" hint-placeholder-val="{{false}}">
-                  <div class="pop base sheetable" role="listbox" aria-label="Start from">
-                    <div class="pophead">
-                      <button
-                        type="button"
-                        class="btn ghost icon sm"
-                        aria-label="Back"
-                        onClick="{{closePop}}"
-                      >
-                        <svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.6"
-                        >
-                          <path d="M10 4L6 8l4 4" />
-                        </svg></button
-                      ><span class="w6">Start from</span>
-                    </div>
-                    <div class="psearch">
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <circle cx="7" cy="7" r="4.5" />
-                        <path d="M10.5 10.5l3 3" /></svg
-                      ><input
-                        type="text"
-                        placeholder="Search branches and pull requests"
-                        aria-label="Search branches"
-                      />
-                    </div>
-                    <div class="plabel">Base branch</div>
-                    <div
-                      class="prow {{bc_main}}"
-                      role="option"
-                      aria-selected="{{onMain}}"
-                      onClick="{{pick_main}}"
-                    >
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="var(--muted-foreground)"
-                        stroke-width="1.4"
-                      >
-                        <circle cx="4.5" cy="3.5" r="1.6" />
-                        <circle cx="4.5" cy="12.5" r="1.6" />
-                        <circle cx="11.5" cy="5" r="1.6" />
-                        <path d="M4.5 5.1v5.8M11.5 6.6c0 3-3.5 2.6-6.4 4.6" /></svg
-                      ><span class="ell">main</span><span class="sub">pair-fe, pair-be</span
-                      ><svg
-                        class="ck {{bk_main}}"
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                      >
-                        <path d="M3.5 8.5l3 3 6-7" />
-                      </svg>
-                    </div>
-                    <div class="plabel">Continue a pull request</div>
-                    <div
-                      class="prow {{bc_pr}}"
-                      role="option"
-                      aria-selected="{{onPr}}"
-                      onClick="{{pick_pr}}"
-                    >
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="var(--success-foreground)"
-                        stroke-width="1.6"
-                      >
-                        <circle cx="4.5" cy="3.8" r="1.8" />
-                        <circle cx="4.5" cy="12.2" r="1.8" />
-                        <circle cx="11.5" cy="12.2" r="1.8" />
-                        <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg
-                      ><span class="ell"
-                        >pair-be#482 <span class="sub">Question schema v2</span></span
-                      ><svg
-                        class="ck {{bk_pr}}"
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                      >
-                        <path d="M3.5 8.5l3 3 6-7" />
-                      </svg>
-                    </div>
+                      <div class="c-row">
+                        <dt>Model</dt>
+                        <dd>
+                          <span class="anchor"
+                            ><button
+                              type="button"
+                              class="propchip"
+                              aria-haspopup="listbox"
+                              aria-expanded="{{modelOpen}}"
+                              aria-label="Model: {{modelLabel}}"
+                              onClick="{{toggleModel}}"
+                            >
+                              <sc-if value="{{chipClaude}}" hint-placeholder-val="{{true}}"
+                                ><svg
+                                  aria-hidden="true"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.6"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <path
+                                    d="M8 2.5v11M3.2 5.2l9.6 5.6M3.2 10.8l9.6-5.6"
+                                  /></svg></sc-if
+                              ><sc-if value="{{chipCodex}}" hint-placeholder-val="{{false}}"
+                                ><svg
+                                  aria-hidden="true"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.4"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <path d="M8 2l5 3v6l-5 3-5-3V5z" />
+                                  <path d="M6 6.8L7.6 8 6 9.2M8.6 9.4h1.6" /></svg></sc-if
+                              >{{modelLabel}}<svg
+                                class="chev"
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M4 6l4 4 4-4" />
+                              </svg></button
+                            ><sc-if value="{{modelOpen}}" hint-placeholder-val="{{false}}"
+                              ><div
+                                class="pop model sheetable"
+                                role="dialog"
+                                aria-label="Choose a model"
+                              >
+                                <div class="pophead">
+                                  <button
+                                    type="button"
+                                    class="btn ghost icon sm"
+                                    aria-label="Back"
+                                    onClick="{{closePop}}"
+                                  >
+                                    <svg
+                                      aria-hidden="true"
+                                      width="14"
+                                      height="14"
+                                      viewBox="0 0 16 16"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.6"
+                                    >
+                                      <path d="M10 4L6 8l4 4" />
+                                    </svg></button
+                                  ><span class="w6">Model</span>
+                                </div>
+                                <div
+                                  class="rail"
+                                  role="tablist"
+                                  aria-orientation="vertical"
+                                  aria-label="Provider"
+                                >
+                                  <button
+                                    type="button"
+                                    class="prov"
+                                    role="tab"
+                                    aria-selected="{{provClaude}}"
+                                    aria-label="Claude"
+                                    title="Claude"
+                                    onClick="{{showClaude}}"
+                                  >
+                                    <svg
+                                      aria-hidden="true"
+                                      width="16"
+                                      height="16"
+                                      viewBox="0 0 16 16"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.6"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    >
+                                      <path d="M8 2.5v11M3.2 5.2l9.6 5.6M3.2 10.8l9.6-5.6" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class="prov"
+                                    role="tab"
+                                    aria-selected="{{provCodex}}"
+                                    aria-label="Codex"
+                                    title="Codex"
+                                    onClick="{{showCodex}}"
+                                  >
+                                    <svg
+                                      aria-hidden="true"
+                                      width="16"
+                                      height="16"
+                                      viewBox="0 0 16 16"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.4"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    >
+                                      <path d="M8 2l5 3v6l-5 3-5-3V5z" />
+                                      <path d="M6 6.8L7.6 8 6 9.2M8.6 9.4h1.6" />
+                                    </svg>
+                                  </button>
+                                </div>
+                                <div class="mlist" role="listbox" aria-label="Models">
+                                  <div class="psearch">
+                                    <svg
+                                      aria-hidden="true"
+                                      width="14"
+                                      height="14"
+                                      viewBox="0 0 16 16"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    >
+                                      <circle cx="7" cy="7" r="4.5" />
+                                      <path d="M10.5 10.5l3 3" /></svg
+                                    ><input
+                                      type="text"
+                                      placeholder="Search {{provName}} models"
+                                      aria-label="Search models"
+                                    />
+                                  </div>
+                                  <sc-if value="{{provClaude}}" hint-placeholder-val="{{true}}">
+                                    <div
+                                      class="prow {{mc_opus}}"
+                                      role="option"
+                                      aria-selected="{{ms_opus}}"
+                                      onClick="{{pick_opus}}"
+                                    >
+                                      <span class="ell">Opus 5.5</span
+                                      ><svg
+                                        class="ck {{mk_opus}}"
+                                        aria-hidden="true"
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 16 16"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.8"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                      >
+                                        <path d="M3.5 8.5l3 3 6-7" />
+                                      </svg>
+                                    </div>
+                                    <div
+                                      class="prow {{mc_sonnet}}"
+                                      role="option"
+                                      aria-selected="{{ms_sonnet}}"
+                                      onClick="{{pick_sonnet}}"
+                                    >
+                                      <span class="ell">Sonnet 5.5</span
+                                      ><svg
+                                        class="ck {{mk_sonnet}}"
+                                        aria-hidden="true"
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 16 16"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.8"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                      >
+                                        <path d="M3.5 8.5l3 3 6-7" />
+                                      </svg>
+                                    </div>
+                                    <div
+                                      class="prow {{mc_haiku}}"
+                                      role="option"
+                                      aria-selected="{{ms_haiku}}"
+                                      onClick="{{pick_haiku}}"
+                                    >
+                                      <span class="ell">Haiku 4.5</span
+                                      ><svg
+                                        class="ck {{mk_haiku}}"
+                                        aria-hidden="true"
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 16 16"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.8"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                      >
+                                        <path d="M3.5 8.5l3 3 6-7" />
+                                      </svg>
+                                    </div>
+                                  </sc-if>
+                                  <sc-if value="{{provCodex}}" hint-placeholder-val="{{false}}">
+                                    <div
+                                      class="prow {{mc_gpt}}"
+                                      role="option"
+                                      aria-selected="{{ms_gpt}}"
+                                      onClick="{{pick_gpt}}"
+                                    >
+                                      <span class="ell">GPT-5.5</span
+                                      ><svg
+                                        class="ck {{mk_gpt}}"
+                                        aria-hidden="true"
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 16 16"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.8"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                      >
+                                        <path d="M3.5 8.5l3 3 6-7" />
+                                      </svg>
+                                    </div>
+                                    <div
+                                      class="prow {{mc_luna}}"
+                                      role="option"
+                                      aria-selected="{{ms_luna}}"
+                                      onClick="{{pick_luna}}"
+                                    >
+                                      <span class="ell">Luna</span
+                                      ><svg
+                                        class="ck {{mk_luna}}"
+                                        aria-hidden="true"
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 16 16"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="1.8"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                      >
+                                        <path d="M3.5 8.5l3 3 6-7" />
+                                      </svg>
+                                    </div>
+                                  </sc-if>
+                                  <div class="pfoot">Runs on your {{provName}} account</div>
+                                </div>
+                              </div></sc-if
+                            ></span
+                          >
+                        </dd>
+                      </div>
+                      <div class="c-row">
+                        <dt>Start from</dt>
+                        <dd>
+                          <span class="anchor"
+                            ><button
+                              type="button"
+                              class="propchip"
+                              aria-haspopup="listbox"
+                              aria-expanded="{{baseOpen}}"
+                              aria-label="Start from: {{baseLabel}}"
+                              onClick="{{toggleBase}}"
+                            >
+                              <sc-if value="{{onMain}}" hint-placeholder-val="{{true}}"
+                                ><svg
+                                  aria-hidden="true"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.4"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <circle cx="4.5" cy="3.5" r="1.6" />
+                                  <circle cx="4.5" cy="12.5" r="1.6" />
+                                  <circle cx="11.5" cy="5" r="1.6" />
+                                  <path
+                                    d="M4.5 5.1v5.8M11.5 6.6c0 3-3.5 2.6-6.4 4.6"
+                                  /></svg></sc-if
+                              ><sc-if value="{{onPr}}" hint-placeholder-val="{{false}}"
+                                ><svg
+                                  aria-hidden="true"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.6"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <circle cx="4.5" cy="3.8" r="1.8" />
+                                  <circle cx="4.5" cy="12.2" r="1.8" />
+                                  <circle cx="11.5" cy="12.2" r="1.8" />
+                                  <path
+                                    d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8"
+                                  /></svg></sc-if
+                              >{{baseLabel}}<svg
+                                class="chev"
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M4 6l4 4 4-4" />
+                              </svg></button
+                            ><sc-if value="{{baseOpen}}" hint-placeholder-val="{{false}}"
+                              ><div
+                                class="pop base sheetable"
+                                role="listbox"
+                                aria-label="Start from"
+                              >
+                                <div class="pophead">
+                                  <button
+                                    type="button"
+                                    class="btn ghost icon sm"
+                                    aria-label="Back"
+                                    onClick="{{closePop}}"
+                                  >
+                                    <svg
+                                      aria-hidden="true"
+                                      width="14"
+                                      height="14"
+                                      viewBox="0 0 16 16"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.6"
+                                    >
+                                      <path d="M10 4L6 8l4 4" />
+                                    </svg></button
+                                  ><span class="w6">Start from</span>
+                                </div>
+                                <div class="psearch">
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <circle cx="7" cy="7" r="4.5" />
+                                    <path d="M10.5 10.5l3 3" /></svg
+                                  ><input
+                                    type="text"
+                                    placeholder="Search branches and pull requests"
+                                    aria-label="Search branches"
+                                  />
+                                </div>
+                                <div class="plabel">Base branch</div>
+                                <div
+                                  class="prow {{bc_main}}"
+                                  role="option"
+                                  aria-selected="{{onMain}}"
+                                  onClick="{{pick_main}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.4"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <circle cx="4.5" cy="3.5" r="1.6" />
+                                    <circle cx="4.5" cy="12.5" r="1.6" />
+                                    <circle cx="11.5" cy="5" r="1.6" />
+                                    <path d="M4.5 5.1v5.8M11.5 6.6c0 3-3.5 2.6-6.4 4.6" /></svg
+                                  ><span class="ell"
+                                    >main <span class="sub">{{runsRepos}}</span></span
+                                  ><svg
+                                    class="ck {{bk_main}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div>
+                                <div class="plabel">Continue a pull request</div>
+                                <div
+                                  class="prow {{bc_pr}}"
+                                  role="option"
+                                  aria-selected="{{onPr}}"
+                                  onClick="{{pick_pr}}"
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.6"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <circle cx="4.5" cy="3.8" r="1.8" />
+                                    <circle cx="4.5" cy="12.2" r="1.8" />
+                                    <circle cx="11.5" cy="12.2" r="1.8" />
+                                    <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg
+                                  ><span class="ell"
+                                    >pair-be#482 <span class="sub">Question schema v2</span></span
+                                  ><svg
+                                    class="ck {{bk_pr}}"
+                                    aria-hidden="true"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </div></div></sc-if
+                          ></span>
+                          <sc-if value="{{baseSplit}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-basel">{{baseSplitText}}</span></sc-if
+                          >
+                        </dd>
+                      </div>
+                      <div class="c-row">
+                        <dt>Account</dt>
+                        <dd>
+                          <sc-if value="{{acctOk}}" hint-placeholder-val="{{true}}"
+                            ><span class="c-acct"
+                              ><span class="ell">{{acctText}}</span></span
+                            ></sc-if
+                          >
+                          <sc-if value="{{acctBad}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-acct bad" role="alert">Not connected</span
+                            ><button type="button" class="btn">Connect {{acctProv}}</button></sc-if
+                          >
+                        </dd>
+                      </div>
+                    </dl>
                   </div>
                 </sc-if>
-              </span>
-            </div>
-
-            <sc-if value="{{badAccount}}" hint-placeholder-val="{{false}}">
-              <div class="nt-alert" role="alert">
+              </div>
+            </sc-if>
+            <sc-if value="{{notMe}}" hint-placeholder-val="{{false}}">
+              <div class="c-teamnote">
                 <svg
                   aria-hidden="true"
                   width="14"
                   height="14"
                   viewBox="0 0 16 16"
                   fill="none"
-                  stroke="var(--error-foreground)"
-                  stroke-width="1.6"
-                >
-                  <circle cx="8" cy="8" r="6" />
-                  <path d="M8 4.8v3.6M8 11h.01" /></svg
-                ><span class="tx">Your Claude account isn't connected to Pair Cloud.</span
-                ><button type="button" class="btn">Connect Claude</button>
-              </div>
-            </sc-if>
-            <sc-if value="{{theirAccount}}" hint-placeholder-val="{{false}}">
-              <div class="nt-note">
-                <svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
                   stroke="currentColor"
                   stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                 >
-                  <circle cx="8" cy="8" r="6" />
-                  <path d="M8 7.2V11M8 5h.01" /></svg
+                  <path d="M4 11V7.5a4 4 0 0 1 8 0V11l1 1.5H3z" />
+                  <path d="M6.5 14h3" /></svg
                 ><span
-                  >{{ownerName}} hasn't connected an account to Pair Cloud yet. They'll be asked to
-                  when they start it.</span
+                  ><b>{{ownerName}}</b> {{notifyTail}} Nothing runs until someone starts a
+                  thread.</span
                 >
               </div>
             </sc-if>
 
             <div class="df">
-              <span class="note" aria-live="polite"><span class="ell">{{outcome}}</span></span>
+              <span class="note" aria-live="polite"
+                ><sc-if value="{{outLock}}" hint-placeholder-val="{{false}}"
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" />
+                    <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg></sc-if
+                ><span class="ell">{{outcome}}</span></span
+              >
               <a class="btn lg ghost cancel" href="Main.dc.html">Cancel</a>
+              <sc-if value="{{badAccount}}" hint-placeholder-val="{{false}}"
+                ><button type="button" class="btn" onClick="{{go}}">Create task</button></sc-if
+              >
               <button type="submit" class="btn lg primary" disabled="{{cantGo}}" onClick="{{go}}">
                 {{cta}}<span class="kbd" aria-hidden="true">⌘↵</span>
               </button>
@@ -3194,26 +4244,32 @@
       </div>
     </x-dc>
     <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
-      // State keys: owner ('me'|'k'|'h'|'a'; a teammate hides the model chip and changes the copy), desc ('' disables the primary button),
-      // model ('opus'|'sonnet'|'haiku'|'gpt'|'luna'), prov (provider tab in the open model picker: 'claude'|'codex'),
-      // base ('main'|'pr482': base branch, or continue pair-be#482), pop (open popover: 'owner'|'model'|'base'),
-      // err ('account': the owner's account isn't connected; blocks Start for me, a note for a teammate).
+      // State keys: title ('' disables Create), desc, status ('todo' default|'prog'|'rev'|'done'|'canc'), owner ('me' = you|'k'|'h'|'a'; a teammate hides "Start a thread now" and shows the notify line; Hanad is Away),
+      // start (true: "Start a thread now" is checked and shows Runs in / Model / Start from / Account; false after picks keeps them, line 2 summarises),  runsin ('ws' default = the space's workspace|'qc'|'ik'|'fe'|'be'|'ai'|'ade'|'ct'),
+      // model ('opus'|'sonnet'|'haiku'|'gpt'|'luna'), prov (provider tab in the open model picker), base ('main'|'pr482': base branch, or continue pair-be#482),
+      // pop (open popover: 'status'|'owner'|'runsin'|'model'|'base'), err ('account': your account isn't connected; the Account row says so, "Create task" still creates it without a thread).
       class Component extends DCLogic {
       renderVals() {
       const s = Object.assign({}, this.state || {});
       const owner = s.owner || 'me';
-      const desc = s.desc === undefined ? 'Add a difficulty tag (easy, medium, hard) that a reviewer sets after reading a drafted question. Store it on the question in schema v2 and show it in the review list.' : s.desc;
+      const title = s.title === undefined ? 'Review list sorting' : s.title;
+      const desc = s.desc === undefined ? 'Let reviewers sort the review list by difficulty, status or last edit, and keep their choice between visits. Drafts without a difficulty sort last.' : s.desc;
+      const status = s.status || 'todo';
+      const statusNames = { todo: 'To do', prog: 'In progress', rev: 'In review', done: 'Done', canc: 'Canceled' };
       const model = s.model || 'opus';
       const models = { opus: ['claude', 'Opus 5.5'], sonnet: ['claude', 'Sonnet 5.5'], haiku: ['claude', 'Haiku 4.5'], gpt: ['codex', 'GPT-5.5'], luna: ['codex', 'Luna'] };
       const prov = s.prov || models[model][0];
       const base = s.base || 'main';
+      const runsin = s.runsin || 'ws';
+      const runs = { ws: ['Question creation', 'pair-fe, pair-be', 1], qc: ['QC stack', 'pair-fe, pair-be, pair-ai', 1], ik: ['Interview kit', 'pair-ai, ade', 1], fe: ['pair-fe', 'pair-fe', 0], be: ['pair-be', 'pair-be', 0], ai: ['pair-ai', 'pair-ai', 0], ade: ['ade', 'ade', 0], ct: ['pair-cloud-test', 'pair-cloud-test', 0] };
       const pop = s.pop || '';
-      const people = { me: ['Me', 'Rutvik', 'r', 'R'], k: ['Kousik', 'Kousik', 'k', 'K'], h: ['Hanad', 'Hanad', 'h', 'H'], a: ['Ankur', 'Ankur', 'a', 'A'] };
+      const people = { me: ['You', 'you', 'r', 'R'], k: ['Kousik', 'Kousik', 'k', 'K'], h: ['Hanad', 'Hanad', 'h', 'H'], a: ['Ankur', 'Ankur', 'a', 'A'] };
       const isMe = owner === 'me';
+      const start = isMe && !!s.start;
       const who = people[owner];
       const provName = prov === 'claude' ? 'Claude' : 'Codex';
-      const modelProvName = models[model][0] === 'claude' ? 'Claude' : 'Codex';
-      const badAccount = isMe && s.err === 'account';
+      const modelProvName = models[model][0] === 'claude' ? 'Claude' : 'ChatGPT';
+      const badAccount = start && s.err === 'account';
       const toggle = (k) => () => this.setState({ pop: pop === k ? '' : k });
       const v = {};
       Object.keys(people).forEach((id) => {
@@ -3221,8 +4277,19 @@
       v['os_' + id] = owner === id;
       v['ok_' + id] = owner === id ? 'on' : '';
       v['set_' + id] = () => this.setState({ owner: id, pop: '' });
-      const off = s.err === 'account' && owner === id;
-      v['sub_' + id] = id === 'me' ? 'Rutvik' + (off ? ' · Not connected' : '') : off ? 'Not connected' : '';
+      });
+      Object.keys(statusNames).forEach((id) => {
+      v['st_' + id] = status === id;
+      v['sc_' + id] = status === id ? 'active' : '';
+      v['ss_' + id] = status === id;
+      v['sk_' + id] = status === id ? 'on' : '';
+      v['pick_' + id] = () => this.setState({ status: id, pop: '' });
+      });
+      Object.keys(runs).forEach((id) => {
+      v['rc_' + id] = runsin === id ? 'active' : '';
+      v['rs_' + id] = runsin === id;
+      v['rk_' + id] = runsin === id ? 'on' : '';
+      v['pickr_' + id] = () => this.setState({ runsin: id, pop: '' });
       });
       Object.keys(models).forEach((id) => {
       v['mc_' + id] = model === id ? 'active' : '';
@@ -3230,17 +4297,22 @@
       v['mk_' + id] = model === id ? 'on' : '';
       v['pick_' + id] = () => this.setState({ model: id, prov: models[id][0], pop: '' });
       });
-      let outcome;
-      if (!isMe) outcome = who[1] + ' is notified · waits until they start it';
-      else if (badAccount) outcome = 'Connect Claude to start';
-      else outcome = 'Starts now on a cloud machine · ' + (base === 'pr482' ? 'continues pair-be#482' : 'pair-fe, pair-be');
+      const r = runs[runsin];
+      const outcome = isMe ? (start ? (badAccount ? '' : 'Linked to the task. Space members can see it.') : 'Starts at ' + statusNames[status] + '. Nothing runs yet.') : '';
       return Object.assign(v, {
+      title: title,
+      onTitle: (e) => this.setState({ title: e.target.value }),
       desc: desc,
       onDesc: (e) => this.setState({ desc: e.target.value }),
+      statusLabel: statusNames[status],
+      statusOpen: pop === 'status',
+      toggleStatus: toggle('status'),
       ownerOpen: pop === 'owner',
-      modelOpen: pop === 'model' && isMe,
-      baseOpen: pop === 'base',
+      runsOpen: pop === 'runsin' && start,
+      modelOpen: pop === 'model' && start,
+      baseOpen: pop === 'base' && start,
       toggleOwner: toggle('owner'),
+      toggleRuns: toggle('runsin'),
       toggleModel: toggle('model'),
       toggleBase: toggle('base'),
       closePop: () => this.setState({ pop: '' }),
@@ -3250,10 +4322,23 @@
       ownerIni: who[3],
       isMe: isMe,
       notMe: !isMe,
-      modelLabel: modelProvName + ' · ' + models[model][1],
-      modelCls: badAccount ? 'bad' : '',
-      chipClaude: !badAccount && models[model][0] === 'claude',
-      chipCodex: !badAccount && models[model][0] === 'codex',
+      startOpen: start,
+      startClosed: !start,
+      startCb: start ? 'on' : '',
+      toggleStart: () => this.setState({ start: !start, pop: '' }),
+      runsChip: runsin === 'ws' ? r[1] : r[0],
+      runsSubOn: !!r[2] && runsin !== 'ws',
+      isDefault: runsin === 'ws',
+      acctProv: modelProvName,
+      acctText: modelProvName + ' · your subscription',
+      acctOk: !badAccount,
+      acctBad: badAccount,
+      runsRepos: r[1],
+      runsWs: !!r[2],
+      runsProj: !r[2],
+      modelLabel: (models[model][0] === 'claude' ? 'Claude' : 'Codex') + ' · ' + models[model][1],
+      chipClaude: models[model][0] === 'claude',
+      chipCodex: models[model][0] === 'codex',
       provClaude: prov === 'claude',
       provCodex: prov === 'codex',
       showClaude: () => this.setState({ prov: 'claude' }),
@@ -3262,6 +4347,8 @@
       onMain: base === 'main',
       onPr: base === 'pr482',
       baseLabel: base === 'pr482' ? 'pair-be#482' : 'main',
+      baseSplit: base === 'pr482' && runs[runsin][1].indexOf(', ') !== -1 && runs[runsin][1].indexOf('pair-be') !== -1,
+      baseSplitText: runs[runsin][1].split(', ').sort((a, b) => (b === 'pair-be') - (a === 'pair-be')).map((x) => x + (x === 'pair-be' ? ' from #482' : ' from main')).join(' · '),
       bc_main: base === 'main' ? 'active' : '',
       bc_pr: base === 'pr482' ? 'active' : '',
       bk_main: base === 'main' ? 'on' : '',
@@ -3269,11 +4356,12 @@
       pick_main: () => this.setState({ base: 'main', pop: '' }),
       pick_pr: () => this.setState({ base: 'pr482', pop: '' }),
       badAccount: badAccount,
-      theirAccount: !isMe && s.err === 'account',
       outcome: outcome,
-      cta: isMe ? 'Start' : 'Assign to ' + who[1],
-      cantGo: desc.trim() === '' || badAccount,
-      go: () => { location.href = isMe ? 'Task.dc.html' : 'Main.dc.html'; }
+      outLock: start && !badAccount,
+      notifyTail: owner === 'h' ? 'is away and will see it when back.' : 'will be notified.',
+      cta: !isMe ? 'Create and assign' : start ? 'Create and start' : 'Create task',
+      cantGo: title.trim() === '' || badAccount,
+      go: () => { location.href = 'Main.dc.html'; }
       });
       }
       }

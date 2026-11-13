@@ -2,9 +2,9 @@
   "v": 3,
   "createdOnFiles": {
     "v": 1,
-    "at": "2026-11-12T16:10:00Z"
+    "at": "2026-11-13T05:38:44Z"
   },
-  "title": "Pair Spaces prototype",
+  "title": "Pair Spaces v2 prototype",
   "launch": {
     "view": "canvas"
   },
@@ -20,27 +20,11 @@
       "is_interactive": true
     },
     "Task.dc.html": {
-      "x": 1520,
-      "y": 0,
-      "w": 1440,
-      "h": 900,
-      "title": "2. Task, running",
-      "expand": "fill"
-    },
-    "TaskUnstarted.dc.html": {
       "x": 3040,
       "y": 0,
       "w": 1440,
       "h": 900,
-      "title": "3. Task assigned to you, not started",
-      "expand": "fill"
-    },
-    "TaskUnstartedViewer.dc.html": {
-      "x": 4560,
-      "y": 0,
-      "w": 1440,
-      "h": 900,
-      "title": "3b. Someone else's task, not started",
+      "title": "2b. Thread in a task",
       "expand": "fill"
     },
     "SpaceEmpty.dc.html": {
@@ -144,13 +128,59 @@
       "h": 900,
       "title": "8d. Archived space",
       "expand": "fill"
+    },
+    "TaskDetail.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "2. Task page",
+      "expand": "fill"
+    },
+    "AttachThread.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "2c. Add a thread to a task",
+      "expand": "fill"
+    },
+    "StartThread.dc.html": {
+      "x": 0,
+      "y": 4080,
+      "w": 1440,
+      "h": 900,
+      "title": "7c. Start a thread on a task",
+      "expand": "fill"
+    },
+    "TeamClaudeKey.dc.html": {
+      "x": 1520,
+      "y": 4080,
+      "w": 1440,
+      "h": 900,
+      "title": "8e. Settings → Team, Team Claude key",
+      "expand": "fill"
+    },
+    "MobileTask.dc.html": {
+      "x": 6550,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "9b. Mobile task page"
+    },
+    "MobileStatus.dc.html": {
+      "x": 7020,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "9c. Mobile change status"
     }
   },
   "order": [
     "Main.dc.html",
+    "TaskDetail.dc.html",
     "Task.dc.html",
-    "TaskUnstarted.dc.html",
-    "TaskUnstartedViewer.dc.html",
+    "AttachThread.dc.html",
     "SpaceEmpty.dc.html",
     "SpaceProposal.dc.html",
     "NotMember.dc.html",
@@ -158,11 +188,15 @@
     "NewSpacePicker.dc.html",
     "NewTask.dc.html",
     "NewTaskAssign.dc.html",
+    "StartThread.dc.html",
     "SpaceSettings.dc.html",
     "SpaceMembers.dc.html",
     "SpaceMemberRemove.dc.html",
     "SpaceArchived.dc.html",
+    "TeamClaudeKey.dc.html",
     "MobileRoom.dc.html",
+    "MobileTask.dc.html",
+    "MobileStatus.dc.html",
     "PairActions.dc.html"
   ],
   "notes": {

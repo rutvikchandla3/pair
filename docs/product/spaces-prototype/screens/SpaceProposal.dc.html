@@ -863,6 +863,499 @@
           .backdrop {
             background: var(--overlay);
           }
+
+          /* v2 status icons: the svg draws in currentColor, the class picks the colour */
+          .si {
+            flex: none;
+          }
+          .si.todo,
+          .si.canceled,
+          .si.stopped {
+            color: var(--muted-foreground);
+          }
+          .si.prog,
+          .si.working {
+            color: var(--info-foreground);
+          }
+          .si.review,
+          .si.done {
+            color: var(--success-foreground);
+          }
+          .si.answer {
+            color: var(--input-foreground);
+          }
+          .si.approval,
+          .si.limited {
+            color: var(--warning-foreground);
+          }
+          .si.failed {
+            color: var(--error-foreground);
+          }
+          .si.pr {
+            color: var(--muted-foreground);
+          }
+          /* v2 task rows (Overview panel): line 1 status + title + time, line 2 owner + live activity */
+          .tk {
+            position: relative;
+            display: grid;
+            grid-template-columns: 14px minmax(0, 1fr) auto;
+            column-gap: 8px;
+            row-gap: 2px;
+            align-items: center;
+            min-height: 44px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .tk:hover,
+          .tk.hover {
+            background: var(--accent);
+          }
+          .tk.sel {
+            background: var(--accent);
+            box-shadow: inset 0 0 0 1px var(--border);
+          }
+          .tk .tt {
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .tk .rt {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            justify-self: end;
+          }
+          .tk .when {
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+          }
+          .tk .l2 {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .tk .l2 .who {
+            color: var(--foreground);
+          }
+          .tk .l2 .ell {
+            flex: 0 1 auto;
+          }
+          .tk .stc {
+            display: none;
+          }
+          .tk:hover .stc,
+          .tk.hover .stc {
+            display: inline-flex;
+          }
+          .tk:hover .rt > .when,
+          .tk:hover .rt > .dot,
+          .tk.hover .rt > .when,
+          .tk.hover .rt > .dot {
+            display: none;
+          }
+          /* v2 status control: compact on rows, full size in the task header */
+          .stc {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            height: 24px;
+            margin: -2px 0;
+            padding: 0 6px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .stc:hover {
+            background: var(--accent);
+          }
+          /* v2 menus: status menu, ⋯ menus, mention menu */
+          .smenu {
+            position: absolute;
+            z-index: 20;
+            min-width: 200px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--popover);
+            box-shadow: 0 8px 24px rgba(9, 9, 11, 0.12);
+            font-size: 13px;
+            font-weight: 400;
+          }
+          .smenu .mh {
+            padding: 4px 8px 4px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .smi {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 28px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            text-align: left;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .smi:hover,
+          .smi.on {
+            background: var(--accent);
+          }
+          .smi .mk {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--muted-foreground);
+          }
+          .smi .ck {
+            visibility: hidden;
+          }
+          .smi[aria-checked="true"] .ck {
+            visibility: visible;
+          }
+          .smi[aria-disabled="true"] {
+            cursor: default;
+          }
+          .smi[aria-disabled="true"]:hover {
+            background: none;
+          }
+          .smi.danger {
+            color: var(--error-foreground);
+          }
+          .smsep {
+            height: 1px;
+            margin: 4px -4px;
+            background: var(--border);
+          }
+          /* v2 task page */
+          .tcrumb {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+          }
+          .tcrumb a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex: none;
+            color: var(--muted-foreground);
+          }
+          .tcrumb a:hover {
+            color: var(--foreground);
+          }
+          .tcrumb .sep {
+            color: var(--input);
+          }
+          .tcrumb .cur {
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .tpage {
+            box-sizing: content-box;
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 32px 24px 48px;
+          }
+          .tpage-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 24px;
+          }
+          .tprops {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0 2px;
+            margin: 6px 0 0 -8px;
+          }
+          .tprop {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            font-size: 13px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          button.tprop:disabled {
+            cursor: default;
+          }
+          button.tprop:disabled:hover {
+            background: none;
+          }
+          .tprops.off .v {
+            color: var(--muted-foreground);
+          }
+          button.tprop,
+          a.tprop {
+            cursor: pointer;
+          }
+          button.tprop:hover,
+          button.tprop[aria-expanded="true"],
+          .th .hov[aria-expanded="true"],
+          a.tprop:hover {
+            background: var(--accent);
+          }
+          .tprop .v {
+            color: var(--foreground);
+          }
+          .tdesc {
+            margin-top: 8px;
+            padding: 12px;
+            border-radius: 8px;
+            background: var(--accent);
+          }
+          .tdesc p {
+            margin: 0;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+          .tdesc .linkbtn {
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .sect {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 32px;
+            margin: 28px 0 4px;
+          }
+          .sect h2 {
+            margin: 0;
+            font-size: 13px;
+            font-weight: 500;
+          }
+          .sect .n {
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          /* v2 thread rows on the task page: borderless like panel rows */
+          .th {
+            position: relative;
+            display: grid;
+            grid-template-columns: 14px minmax(0, 1fr) auto;
+            column-gap: 8px;
+            row-gap: 2px;
+            align-items: center;
+            min-height: 44px;
+            margin: 0 -8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .th:hover,
+          .th.hover {
+            background: var(--accent);
+          }
+          .th .t1 {
+            display: block;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .th .t2 {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .th .t2 .who {
+            color: var(--foreground);
+          }
+          .th .rt {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            height: 20px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .th .hov {
+            display: none;
+          }
+          .th:hover .hov,
+          .th.hover .hov {
+            display: inline-flex;
+          }
+          .th:hover .rt > .when,
+          .th.hover .rt > .when {
+            display: none;
+          }
+          .th .ask {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 6px 0 2px;
+          }
+          .code {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            min-width: 0;
+            padding: 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+          }
+          .th:hover .code,
+          .th.hover .code {
+            background: var(--background);
+          }
+          .prc {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .ai {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 28px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .ai .ic {
+            display: inline-flex;
+            justify-content: center;
+            width: 16px;
+            flex: none;
+          }
+          .ai .who,
+          .ai .to {
+            color: var(--foreground);
+          }
+          /* v2 bands: banners and suggestions on the task page, borderless */
+          .tbanner {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 8px;
+            background: var(--accent);
+          }
+          .tbanner.row {
+            min-height: 40px;
+            padding: 6px 6px 6px 12px;
+          }
+          .tbanner + .tdesc,
+          .suggest + .tdesc {
+            margin-top: 8px;
+          }
+          .tempty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            padding: 20px 16px;
+            border: 1px dashed var(--input);
+            border-radius: 8px;
+            text-align: center;
+          }
+          .suggest {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 40px;
+            margin-top: 16px;
+            padding: 6px 6px 6px 12px;
+            border-radius: 8px;
+            background: var(--accent);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .suggest .btn {
+            color: var(--foreground);
+          }
+          /* v2 read-only task status chip (thread header, previews) */
+          .stchip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            flex: none;
+            height: 20px;
+            padding: 0 6px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+          }
+          a.stchip:hover {
+            background: var(--accent);
+          }
+          /* v2 canceled rows read as closed */
+          .tk.off .tt {
+            font-weight: 400;
+            color: var(--muted-foreground);
+          }
+          /* v2 narrow shells (opt in with .narrowpanel): below 1100 the panel becomes an overlay
+             under the header, opened by .panel-toggle */
+          .panel-toggle {
+            display: none;
+          }
+          @media (max-width: 1100px) {
+            .shell.narrowpanel {
+              position: relative;
+            }
+            .shell.narrowpanel .panel {
+              display: none;
+            }
+            .shell.narrowpanel .panel-toggle {
+              display: inline-flex;
+            }
+            .shell.narrowpanel.panel-open .panel {
+              display: flex;
+              position: absolute;
+              top: 52px;
+              right: 0;
+              bottom: 0;
+              z-index: 30;
+              width: 340px;
+              border-left: 1px solid var(--border);
+              box-shadow: -8px 0 24px rgba(9, 9, 11, 0.16);
+            }
+            .shell.narrowpanel .panel .panel-ctl {
+              display: none;
+            }
+          }
           /*shared-end*/
           .msg {
             position: relative;
@@ -1177,6 +1670,175 @@
           .band:focus-within .hov {
             visibility: visible;
           }
+          main.col {
+            container-type: inline-size;
+          }
+          .ws {
+            gap: 4px;
+            min-width: 0;
+            height: 24px;
+            padding: 0 6px;
+            border-radius: 6px;
+          }
+          .pair .ws {
+            color: var(--muted-foreground);
+          }
+          .ws:hover {
+            background: var(--accent);
+          }
+          .feed > .daysep:first-child {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            margin: 0 -4px;
+            padding: 16px 4px 12px;
+            background: var(--background);
+          }
+          /* static scroll at a short viewport: start at a message boundary, not mid-message */
+          @media (max-height: 820px) {
+            .feed > .early {
+              display: none;
+            }
+          }
+          .sys .to {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--foreground);
+          }
+
+          .replybar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: -2px -2px 8px -6px;
+            padding: 4px 4px 4px 8px;
+            border-radius: 8px;
+            background: var(--accent);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .note-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding: 6px 0;
+          }
+          .note-src {
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .note-src a:hover {
+            text-decoration: underline;
+          }
+          .composer {
+            position: relative;
+          }
+          .keyanchor {
+            position: relative;
+            display: inline-flex;
+            flex: none;
+          }
+          .keypop {
+            position: absolute;
+            left: 0;
+            bottom: calc(100% + 8px);
+            z-index: 20;
+            width: 380px;
+          }
+          .keypop .db {
+            gap: 12px;
+          }
+          .mention-menu {
+            left: 0;
+            bottom: calc(100% + 8px);
+            width: 300px;
+          }
+          .offhint {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .offhint .offg {
+            display: inline-flex;
+            flex: none;
+          }
+          .foot .keyact {
+            flex: none;
+            margin-left: -6px;
+            padding: 0 6px;
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .foot .keyact[aria-expanded="true"] {
+            background: var(--accent);
+          }
+          .keypop .input[aria-invalid="true"] {
+            border-color: var(--error-foreground);
+          }
+          .keypop .err {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--error-foreground);
+          }
+          .sys .linkbtn {
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .prop {
+            max-width: 620px;
+          }
+          .prow .si.todo {
+            margin: 0 1px;
+          }
+          .owner .smenu {
+            right: 0;
+            bottom: 32px;
+            min-width: 184px;
+          }
+          .pfoot .note {
+            flex: 1;
+            min-width: 0;
+            text-align: right;
+          }
+          .rec .linkbtn.go {
+            color: var(--foreground);
+            font-weight: 500;
+          }
+          .start[aria-disabled="true"] {
+            cursor: default;
+          }
+          .start[aria-disabled="true"]:hover {
+            background: none;
+          }
+          .start > .pairmark,
+          .start > .plusbox {
+            width: 24px;
+            height: 24px;
+            border: 0;
+            border-radius: 6px;
+            background: var(--muted);
+            color: var(--muted-foreground);
+          }
+          .start > .pairmark {
+            color: var(--primary);
+          }
+          .start .l2 .linkbtn {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .cbsp {
+            width: 16px;
+            flex: none;
+          }
+          .start[aria-disabled="true"] .l1 {
+            color: var(--muted-foreground);
+          }
         </style>
       </helmet>
       <div class="pair shell">
@@ -1186,133 +1848,144 @@
           </div>
           <div class="side-body">
             <a class="srow" href="#new"
-              ><svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <path d="M8 3v10M3 8h10" /></svg
+              ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <path
+                  d="M8 3v10M3 8h10"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
               >New thread</a
             >
-            <a class="srow" href="#mine"
-              ><svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <circle cx="8" cy="5.5" r="2.5" />
-                <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" /></svg
+            <a class="srow" href="#mine" title="Tasks you own that aren't Done or Canceled"
+              ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="8" cy="5.5" r="2.5" />
+                  <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" />
+                </g></svg
               ><span class="grow">Assigned to me</span
               ><sc-if value="{{sideMine}}" hint-placeholder-val="{{false}}"
                 ><span class="meta">{{mineCount}}</span></sc-if
               ></a
             >
-
             <div class="slabel">
               <span>Spaces</span
               ><a class="btn ghost icon sm" href="NewSpace.dc.html" aria-label="New space"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
+                ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                  <path
+                    d="M8 3v10M3 8h10"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg
+              ></a>
+            </div>
+            <a class="srow" href="Main.dc.html" aria-current="page"
+              ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <g
                   fill="none"
                   stroke="currentColor"
                   stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                 >
-                  <path d="M8 3v10M3 8h10" /></svg
-              ></a>
-            </div>
-            <a class="srow" href="#room" aria-current="page"
-              ><svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-              >
-                <circle cx="5.5" cy="6" r="2.5" />
-                <circle cx="10.5" cy="6" r="2.5" />
-                <path
-                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                /></svg
+                  <circle cx="5.5" cy="6" r="2.5" />
+                  <circle cx="10.5" cy="6" r="2.5" />
+                  <path
+                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                  />
+                </g></svg
               ><span class="grow ell">Question creation</span></a
             >
-            <sc-if value="{{sideMine}}" hint-placeholder-val="{{false}}">
-              <a class="srow sub" href="TaskUnstarted.dc.html"
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <circle cx="8" cy="8" r="6" /></svg
-                ><span class="grow ell">{{sideTitle}}</span><span class="meta">Not started</span></a
-              >
-            </sc-if>
-            <sc-if value="{{sideMore}}" hint-placeholder-val="{{false}}">
-              <a class="srow more" href="#room">{{sideMoreLabel}}</a>
-            </sc-if>
+            <sc-if value="{{hasNeeds}}" hint-placeholder-val="{{false}}"
+              ><a
+                class="srow sub"
+                href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                ><svg class="si todo" aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                  <circle
+                    cx="8"
+                    cy="8"
+                    r="6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  /></svg
+                ><span class="grow ell">{{needTitle}}</span
+                ><span class="meta" style="color: var(--warning-foreground)">Needs you</span></a
+              ></sc-if
+            ><sc-if value="{{sideMore}}" hint-placeholder-val="{{false}}"
+              ><a class="srow more" href="Main.dc.html">{{sideMoreLabel}}</a></sc-if
+            >
             <a class="srow" href="#space-2"
-              ><svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-              >
-                <circle cx="5.5" cy="6" r="2.5" />
-                <circle cx="10.5" cy="6" r="2.5" />
-                <path
-                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                /></svg
+              ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="5.5" cy="6" r="2.5" />
+                  <circle cx="10.5" cy="6" r="2.5" />
+                  <path
+                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                  />
+                </g></svg
               ><span class="grow ell">Onboarding revamp</span
               ><span class="dot" role="img" aria-label="Unread"></span
             ></a>
 
             <div class="slabel"><span>Projects</span></div>
+            <a class="srow" href="#ws"
+              ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M1.8 6h3.6l1.2 1.2h5.6v5.6H1.8z" />
+                  <path d="M4 3.5h3.4l1.2 1.2h5.6v5.8" />
+                </g></svg
+              ><span class="grow ell">Question creation</span
+              ><span class="meta" style="font-weight: 400">pair-fe, pair-be</span></a
+            >
             <a class="srow" href="#p1"
-              ><svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-              >
-                <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+              ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <path
+                  d="M2 4.5h4l1.5 1.5H14v6.5H2z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
               >pair-fe</a
             >
             <a class="srow sub" href="#t1"
               ><span class="grow ell">Fix sidebar drag flicker</span><span class="meta">2d</span></a
             >
             <a class="srow" href="#p2"
-              ><svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-              >
-                <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+              ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <path
+                  d="M2 4.5h4l1.5 1.5H14v6.5H2z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
               >pair-be</a
             >
             <a class="srow sub" href="#t3"
@@ -1320,7 +1993,6 @@
             >
           </div>
         </nav>
-
         <main class="col">
           <header class="top">
             <svg
@@ -1328,33 +2000,46 @@
               width="16"
               height="16"
               viewBox="0 0 16 16"
-              fill="none"
-              stroke="var(--muted-foreground)"
-              stroke-width="1.4"
+              style="color: var(--muted-foreground)"
             >
-              <circle cx="5.5" cy="6" r="2.5" />
-              <circle cx="10.5" cy="6" r="2.5" />
-              <path d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3" />
+              <g
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="5.5" cy="6" r="2.5" />
+                <circle cx="10.5" cy="6" r="2.5" />
+                <path
+                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                />
+              </g>
             </svg>
             <h1
               class="w6 ell"
               style="margin: 0; font-size: 13px; flex: 0 0 auto; max-width: 50%"
-              title="Let a recruiter describe a role and get interview questions drafted, tagged and previewed. Repos: pair-fe, pair-be"
+              title="Let a recruiter describe a role and get interview questions drafted, tagged and previewed."
             >
               Question creation
             </h1>
-            <span class="row t12 muted repos" style="gap: 4px"
-              ><svg
-                aria-hidden="true"
-                width="12"
-                height="12"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-              >
-                <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
-              ><span class="ell">pair-fe, pair-be</span></span
+            <a
+              class="row t12 muted ws"
+              href="SpaceSettings.dc.html"
+              title="Workspace Question creation · pair-fe, pair-be. New threads run here unless you pick another."
+              aria-label="Workspace Question creation: pair-fe, pair-be"
+              ><svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M1.8 6h3.6l1.2 1.2h5.6v5.6H1.8z" />
+                  <path d="M4 3.5h3.4l1.2 1.2h5.6v5.8" />
+                </g></svg
+              ><span class="ell">pair-fe, pair-be</span></a
             >
             <span class="grow"></span>
             <button
@@ -1373,39 +2058,34 @@
             <a
               class="btn ghost icon"
               href="SpaceSettings.dc.html"
-              aria-label="Space settings: rename, brief, members, leave, archive"
-              ><svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-              >
-                <circle cx="3.5" cy="8" r="1.2" />
-                <circle cx="8" cy="8" r="1.2" />
-                <circle cx="12.5" cy="8" r="1.2" /></svg
+              aria-label="Space settings: rename, brief, repositories, members, leave, archive"
+              ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <g fill="currentColor">
+                  <circle cx="3.5" cy="8" r="1.2" />
+                  <circle cx="8" cy="8" r="1.2" />
+                  <circle cx="12.5" cy="8" r="1.2" />
+                </g></svg
             ></a>
           </header>
-
           <div class="scroll bottom">
             <div class="feed" role="log" aria-label="Room messages">
               <div class="daysep">Monday 9 November</div>
-
               <div class="intro">
                 <span class="ico" aria-hidden="true"
-                  ><svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.4"
-                  >
-                    <circle cx="5.5" cy="6" r="2.5" />
-                    <circle cx="10.5" cy="6" r="2.5" />
-                    <path
-                      d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                    /></svg
+                  ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                    <g
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="5.5" cy="6" r="2.5" />
+                      <circle cx="10.5" cy="6" r="2.5" />
+                      <path
+                        d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                      />
+                    </g></svg
                 ></span>
                 <span class="ttl">Question creation</span>
                 <p class="brief">
@@ -1413,114 +2093,139 @@
                   previewed. Questions follow schema v2. Out of scope: scoring answers.
                 </p>
                 <div class="meta">
-                  Rutvik created this space with Kousik, Hanad and Ankur<span class="nw">
+                  {{creatorName}} created this space with Kousik, Hanad and Ankur<span class="nw">
                     · 09:12</span
                   >
                   ·
                   <button type="button" class="linkbtn" onClick="{{showNotes}}">Edit brief</button>
                 </div>
               </div>
-
-              <sc-if value="{{isEmpty}}" hint-placeholder-val="{{true}}">
-                <div class="starts">
-                  <button type="button" class="start" onClick="{{askPair}}">
-                    <span class="pairmark" aria-hidden="true"
-                      ><svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.6"
+              <sc-if value="{{isEmpty}}" hint-placeholder-val="{{true}}"
+                ><div class="starts">
+                  <sc-if value="{{hasKey}}" hint-placeholder-val="{{true}}"
+                    ><button type="button" class="start" onClick="{{askPair}}">
+                      <span class="pairmark" aria-hidden="true"
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <g fill="none" stroke="currentColor" stroke-width="1.6">
+                            <circle cx="6" cy="8" r="3.5" />
+                            <circle cx="10" cy="8" r="3.5" />
+                          </g></svg></span
+                      ><span class="tx"
+                        ><span class="l1">Ask Pair to split the brief into tasks</span
+                        ><span class="l2"
+                          >Pair proposes tasks here. Nothing is created until you approve, and
+                          nothing runs until someone starts a thread.</span
+                        ></span
                       >
-                        <circle cx="6" cy="8" r="3.5" />
-                        <circle cx="10" cy="8" r="3.5" /></svg
-                    ></span>
-                    <span class="tx"
-                      ><span class="l1">Ask Pair to split the brief into tasks</span
-                      ><span class="l2"
-                        >Pair proposes tasks here. Nothing is created until you approve.</span
-                      ></span
-                    >
-                  </button>
-                  <a class="start" href="NewTask.dc.html">
-                    <span class="plusbox" aria-hidden="true"
-                      ><svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.6"
+                    </button></sc-if
+                  ><sc-if value="{{noKey}}" hint-placeholder-val="{{false}}"
+                    ><div class="start" aria-disabled="true">
+                      <span
+                        class="pairmark"
+                        aria-hidden="true"
+                        style="color: var(--muted-foreground)"
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <g fill="none" stroke="currentColor" stroke-width="1.6">
+                            <circle cx="6" cy="8" r="3.5" />
+                            <circle cx="10" cy="8" r="3.5" />
+                          </g></svg></span
+                      ><span class="tx"
+                        ><span class="l1">Ask Pair to split the brief into tasks</span
+                        ><span class="l2"
+                          >@pair is off · needs a Team Claude key<sc-if
+                            value="{{keyAdmin}}"
+                            hint-placeholder-val="{{false}}"
+                          >
+                            ·
+                            <button type="button" class="linkbtn" onClick="{{openKey}}">
+                              Add key
+                            </button></sc-if
+                          ><sc-if value="{{canAsk}}" hint-placeholder-val="{{false}}">
+                            ·
+                            <button
+                              type="button"
+                              class="linkbtn"
+                              onClick="{{askAdmin}}"
+                              title="Rutvik is a server admin. Adds a message to Rutvik in your draft"
+                            >
+                              Ask Rutvik
+                            </button></sc-if
+                          ></span
+                        ></span
                       >
-                        <path d="M8 3v10M3 8h10" /></svg
-                    ></span>
-                    <span class="tx"
+                    </div></sc-if
+                  >
+                  <a class="start" href="NewTask.dc.html"
+                    ><span class="plusbox" aria-hidden="true"
+                      ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                        <path
+                          d="M8 3v10M3 8h10"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        /></svg></span
+                    ><span class="tx"
                       ><span class="l1">Create the first task</span
                       ><span class="l2"
-                        >Give it to yourself or a teammate. Theirs waits until they start it.</span
+                        >Give it to yourself or a teammate. It starts as To do, with no
+                        thread.</span
                       ></span
-                    >
-                  </a>
-                </div>
-              </sc-if>
-
-              <sc-if value="{{asked}}" hint-placeholder-val="{{false}}">
-                <div class="msg">
+                    ></a
+                  >
+                </div></sc-if
+              >
+              <sc-if value="{{asked}}" hint-placeholder-val="{{false}}"
+                ><div class="msg" id="rutvik-0914">
                   <span class="av r" aria-hidden="true">R</span>
                   <div class="head">
-                    <span class="w6">Rutvik</span><span class="t12 muted">09:14</span>
+                    <span class="w6">{{askerHead}}</span><span class="t12 muted">09:14</span>
                   </div>
                   <div class="body">
                     <p><span class="mention">@pair</span> split the brief into tasks</p>
                   </div>
-                </div>
-              </sc-if>
-
-              <sc-if value="{{isReplying}}" hint-placeholder-val="{{false}}">
-                <div class="sys replyline" onClick="{{toProposal}}">
+                </div></sc-if
+              >
+              <sc-if value="{{isReplying}}" hint-placeholder-val="{{false}}"
+                ><div class="sys replyline" onClick="{{toProposal}}">
                   <svg
+                    class="si working"
                     aria-hidden="true"
                     width="12"
                     height="12"
                     viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    stroke-dasharray="2.2 2.2"
                   >
-                    <circle cx="8" cy="8" r="6" /></svg
-                  >Pair is replying to Rutvik
-                </div>
-              </sc-if>
-
-              <sc-if value="{{hasPairMsg}}" hint-placeholder-val="{{false}}">
-                <div class="msg">
-                  <span class="pairmark" aria-hidden="true"
-                    ><svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
+                    <circle
+                      cx="8"
+                      cy="8"
+                      r="6"
                       fill="none"
                       stroke="currentColor"
                       stroke-width="1.6"
-                    >
-                      <circle cx="6" cy="8" r="3.5" />
-                      <circle cx="10" cy="8" r="3.5" /></svg
+                      stroke-dasharray="2.2 2.2"
+                    /></svg
+                  >Pair is replying to {{askerTo}}
+                </div></sc-if
+              >
+              <sc-if value="{{hasPairMsg}}" hint-placeholder-val="{{false}}"
+                ><div class="msg">
+                  <span class="pairmark" aria-hidden="true"
+                    ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                      <g fill="none" stroke="currentColor" stroke-width="1.6">
+                        <circle cx="6" cy="8" r="3.5" />
+                        <circle cx="10" cy="8" r="3.5" />
+                      </g></svg
                   ></span>
                   <div class="head">
                     <span class="w6">Pair</span><span class="tag">Agent</span
-                    ><a class="t12 muted" href="#rutvik-0914">replying to Rutvik</a
+                    ><a class="t12 muted" href="#rutvik-0914">replying to {{askerTo}}</a
                     ><span class="t12 muted">09:14</span>
                   </div>
                   <div class="body">
-                    <p>
-                      From the brief, I'd start with these three. Kousik's and Hanad's wait until
-                      they start them.
-                    </p>
-
-                    <sc-if value="{{isProposal}}" hint-placeholder-val="{{false}}">
-                      <div class="card prop" role="group" aria-label="Proposed tasks">
+                    <p>From the brief, I'd start with these four. {{pairLead}}</p>
+                    <sc-if value="{{isProposal}}" hint-placeholder-val="{{false}}"
+                      ><div class="card prop" role="group" aria-label="Proposed tasks">
                         <div class="prow {{rowCls1}}">
                           <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
                             ><button
@@ -1541,19 +2246,22 @@
                                 stroke-width="2.4"
                               >
                                 <path d="M3.5 8.5l3 3 6-7" />
-                              </svg></button
+                              </svg></button></sc-if
+                          ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                            ><span class="cbsp" aria-hidden="true"></span
                           ></sc-if>
-                          <span class="tx">
-                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
-                              ><input class="ptitle" aria-label="Task title" value="{{t1}}"
-                            /></sc-if>
-                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                          <span class="tx"
+                            ><sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><input
+                                class="ptitle"
+                                aria-label="Task title"
+                                value="{{t1}}" /></sc-if
+                            ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
                               ><span class="pt ell">{{t1}}</span></sc-if
-                            >
-                            <span class="pdesc ell">{{d1}}</span>
-                          </span>
-                          <span class="owner">
-                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                            ><span class="pdesc ell">{{d1}}</span></span
+                          >
+                          <span class="owner"
+                            ><sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
                               ><button
                                 type="button"
                                 class="ownbtn"
@@ -1563,52 +2271,58 @@
                                 onClick="{{togglePick1}}"
                               >
                                 <span class="av xs {{oc1}}" aria-hidden="true">{{oi1}}</span
-                                >{{forName1}}<svg
+                                >{{chipName1}}<svg
                                   aria-hidden="true"
                                   width="12"
                                   height="12"
                                   viewBox="0 0 16 16"
-                                  fill="none"
-                                  stroke="var(--muted-foreground)"
-                                  stroke-width="1.6"
+                                  style="color: var(--muted-foreground)"
                                 >
-                                  <path d="M4 6l4 4 4-4" />
-                                </svg></button
-                            ></sc-if>
-                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                                  <path
+                                    d="M4.5 6.5L8 10l3.5-3.5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  />
+                                </svg></button></sc-if
+                            ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
                               ><span class="ownstatic"
                                 ><span class="av xs {{oc1}}" aria-hidden="true">{{oi1}}</span
-                                >{{forName1}}</span
+                                >{{chipName1}}</span
                               ></sc-if
-                            >
-                            <sc-if value="{{pick1}}" hint-placeholder-val="{{false}}">
-                              <div class="menu" role="menu" aria-label="Owner">
+                            ><sc-if value="{{pick1}}" hint-placeholder-val="{{false}}"
+                              ><div class="smenu" role="menu" aria-label="Owner">
                                 <div class="mh">Owner</div>
                                 <button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is1r}}"
                                   onClick="{{set1r}}"
                                 >
                                   <span class="av xs r" aria-hidden="true">R</span
-                                  ><span class="grow">Rutvik</span><span class="t12 muted">you</span
+                                  ><span class="grow">You</span
                                   ><svg
                                     class="ck"
                                     aria-hidden="true"
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is1k}}"
                                   onClick="{{set1k}}"
@@ -1621,16 +2335,19 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is1h}}"
                                   onClick="{{set1h}}"
@@ -1643,16 +2360,19 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is1a}}"
                                   onClick="{{set1a}}"
@@ -1665,18 +2385,19 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
                                   </svg>
-                                </button>
-                              </div>
-                            </sc-if>
-                          </span>
+                                </button></div></sc-if
+                          ></span>
                         </div>
-
                         <div class="prow {{rowCls2}}">
                           <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
                             ><button
@@ -1697,19 +2418,22 @@
                                 stroke-width="2.4"
                               >
                                 <path d="M3.5 8.5l3 3 6-7" />
-                              </svg></button
+                              </svg></button></sc-if
+                          ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                            ><span class="cbsp" aria-hidden="true"></span
                           ></sc-if>
-                          <span class="tx">
-                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
-                              ><input class="ptitle" aria-label="Task title" value="{{t2}}"
-                            /></sc-if>
-                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                          <span class="tx"
+                            ><sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><input
+                                class="ptitle"
+                                aria-label="Task title"
+                                value="{{t2}}" /></sc-if
+                            ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
                               ><span class="pt ell">{{t2}}</span></sc-if
-                            >
-                            <span class="pdesc ell">{{d2}}</span>
-                          </span>
-                          <span class="owner">
-                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                            ><span class="pdesc ell">{{d2}}</span></span
+                          >
+                          <span class="owner"
+                            ><sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
                               ><button
                                 type="button"
                                 class="ownbtn"
@@ -1719,52 +2443,58 @@
                                 onClick="{{togglePick2}}"
                               >
                                 <span class="av xs {{oc2}}" aria-hidden="true">{{oi2}}</span
-                                >{{forName2}}<svg
+                                >{{chipName2}}<svg
                                   aria-hidden="true"
                                   width="12"
                                   height="12"
                                   viewBox="0 0 16 16"
-                                  fill="none"
-                                  stroke="var(--muted-foreground)"
-                                  stroke-width="1.6"
+                                  style="color: var(--muted-foreground)"
                                 >
-                                  <path d="M4 6l4 4 4-4" />
-                                </svg></button
-                            ></sc-if>
-                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                                  <path
+                                    d="M4.5 6.5L8 10l3.5-3.5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  />
+                                </svg></button></sc-if
+                            ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
                               ><span class="ownstatic"
                                 ><span class="av xs {{oc2}}" aria-hidden="true">{{oi2}}</span
-                                >{{forName2}}</span
+                                >{{chipName2}}</span
                               ></sc-if
-                            >
-                            <sc-if value="{{pick2}}" hint-placeholder-val="{{false}}">
-                              <div class="menu" role="menu" aria-label="Owner">
+                            ><sc-if value="{{pick2}}" hint-placeholder-val="{{false}}"
+                              ><div class="smenu" role="menu" aria-label="Owner">
                                 <div class="mh">Owner</div>
                                 <button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is2r}}"
                                   onClick="{{set2r}}"
                                 >
                                   <span class="av xs r" aria-hidden="true">R</span
-                                  ><span class="grow">Rutvik</span><span class="t12 muted">you</span
+                                  ><span class="grow">You</span
                                   ><svg
                                     class="ck"
                                     aria-hidden="true"
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is2k}}"
                                   onClick="{{set2k}}"
@@ -1777,16 +2507,19 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is2h}}"
                                   onClick="{{set2h}}"
@@ -1799,16 +2532,19 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is2a}}"
                                   onClick="{{set2a}}"
@@ -1821,18 +2557,19 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
                                   </svg>
-                                </button>
-                              </div>
-                            </sc-if>
-                          </span>
+                                </button></div></sc-if
+                          ></span>
                         </div>
-
                         <div class="prow {{rowCls3}}">
                           <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
                             ><button
@@ -1853,19 +2590,22 @@
                                 stroke-width="2.4"
                               >
                                 <path d="M3.5 8.5l3 3 6-7" />
-                              </svg></button
+                              </svg></button></sc-if
+                          ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                            ><span class="cbsp" aria-hidden="true"></span
                           ></sc-if>
-                          <span class="tx">
-                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
-                              ><input class="ptitle" aria-label="Task title" value="{{t3}}"
-                            /></sc-if>
-                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                          <span class="tx"
+                            ><sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><input
+                                class="ptitle"
+                                aria-label="Task title"
+                                value="{{t3}}" /></sc-if
+                            ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
                               ><span class="pt ell">{{t3}}</span></sc-if
-                            >
-                            <span class="pdesc ell">{{d3}}</span>
-                          </span>
-                          <span class="owner">
-                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                            ><span class="pdesc ell">{{d3}}</span></span
+                          >
+                          <span class="owner"
+                            ><sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
                               ><button
                                 type="button"
                                 class="ownbtn"
@@ -1875,52 +2615,58 @@
                                 onClick="{{togglePick3}}"
                               >
                                 <span class="av xs {{oc3}}" aria-hidden="true">{{oi3}}</span
-                                >{{forName3}}<svg
+                                >{{chipName3}}<svg
                                   aria-hidden="true"
                                   width="12"
                                   height="12"
                                   viewBox="0 0 16 16"
-                                  fill="none"
-                                  stroke="var(--muted-foreground)"
-                                  stroke-width="1.6"
+                                  style="color: var(--muted-foreground)"
                                 >
-                                  <path d="M4 6l4 4 4-4" />
-                                </svg></button
-                            ></sc-if>
-                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                                  <path
+                                    d="M4.5 6.5L8 10l3.5-3.5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  />
+                                </svg></button></sc-if
+                            ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
                               ><span class="ownstatic"
                                 ><span class="av xs {{oc3}}" aria-hidden="true">{{oi3}}</span
-                                >{{forName3}}</span
+                                >{{chipName3}}</span
                               ></sc-if
-                            >
-                            <sc-if value="{{pick3}}" hint-placeholder-val="{{false}}">
-                              <div class="menu" role="menu" aria-label="Owner">
+                            ><sc-if value="{{pick3}}" hint-placeholder-val="{{false}}"
+                              ><div class="smenu" role="menu" aria-label="Owner">
                                 <div class="mh">Owner</div>
                                 <button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is3r}}"
                                   onClick="{{set3r}}"
                                 >
                                   <span class="av xs r" aria-hidden="true">R</span
-                                  ><span class="grow">Rutvik</span><span class="t12 muted">you</span
+                                  ><span class="grow">You</span
                                   ><svg
                                     class="ck"
                                     aria-hidden="true"
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is3k}}"
                                   onClick="{{set3k}}"
@@ -1933,16 +2679,19 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is3h}}"
                                   onClick="{{set3h}}"
@@ -1955,16 +2704,19 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.8"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
-                                  </svg>
-                                </button>
-                                <button
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
                                   type="button"
-                                  class="mi"
+                                  class="smi"
                                   role="menuitemradio"
                                   aria-checked="{{is3a}}"
                                   onClick="{{set3a}}"
@@ -1977,86 +2729,264 @@
                                     width="12"
                                     height="12"
                                     viewBox="0 0 16 16"
+                                  >
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg>
+                                </button></div></sc-if
+                          ></span>
+                        </div>
+                        <div class="prow {{rowCls4}}">
+                          <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                            ><button
+                              type="button"
+                              class="cb"
+                              role="checkbox"
+                              aria-checked="{{chk4}}"
+                              aria-label="Include {{t4}}"
+                              onClick="{{toggle4}}"
+                            >
+                              <svg
+                                aria-hidden="true"
+                                width="10"
+                                height="10"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2.4"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" />
+                              </svg></button></sc-if
+                          ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                            ><span class="cbsp" aria-hidden="true"></span
+                          ></sc-if>
+                          <span class="tx"
+                            ><sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><input
+                                class="ptitle"
+                                aria-label="Task title"
+                                value="{{t4}}" /></sc-if
+                            ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                              ><span class="pt ell">{{t4}}</span></sc-if
+                            ><span class="pdesc ell">{{d4}}</span></span
+                          >
+                          <span class="owner"
+                            ><sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><button
+                                type="button"
+                                class="ownbtn"
+                                aria-haspopup="menu"
+                                aria-expanded="{{pick4}}"
+                                aria-label="Owner: {{own4}}. Change owner"
+                                onClick="{{togglePick4}}"
+                              >
+                                <span class="av xs {{oc4}}" aria-hidden="true">{{oi4}}</span
+                                >{{chipName4}}<svg
+                                  aria-hidden="true"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 16 16"
+                                  style="color: var(--muted-foreground)"
+                                >
+                                  <path
+                                    d="M4.5 6.5L8 10l3.5-3.5"
                                     fill="none"
                                     stroke="currentColor"
-                                    stroke-width="1.8"
+                                    stroke-width="1.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                  />
+                                </svg></button></sc-if
+                            ><sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                              ><span class="ownstatic"
+                                ><span class="av xs {{oc4}}" aria-hidden="true">{{oi4}}</span
+                                >{{chipName4}}</span
+                              ></sc-if
+                            ><sc-if value="{{pick4}}" hint-placeholder-val="{{false}}"
+                              ><div class="smenu" role="menu" aria-label="Owner">
+                                <div class="mh">Owner</div>
+                                <button
+                                  type="button"
+                                  class="smi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is4r}}"
+                                  onClick="{{set4r}}"
+                                >
+                                  <span class="av xs r" aria-hidden="true">R</span
+                                  ><span class="grow">You</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
                                   >
-                                    <path d="M3.5 8.5l3 3 6-7" />
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
+                                  type="button"
+                                  class="smi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is4k}}"
+                                  onClick="{{set4k}}"
+                                >
+                                  <span class="av xs k" aria-hidden="true">K</span
+                                  ><span class="grow">Kousik</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                  >
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
+                                  type="button"
+                                  class="smi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is4h}}"
+                                  onClick="{{set4h}}"
+                                >
+                                  <span class="av xs h" aria-hidden="true">H</span
+                                  ><span class="grow">Hanad</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                  >
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
+                                  </svg></button
+                                ><button
+                                  type="button"
+                                  class="smi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is4a}}"
+                                  onClick="{{set4a}}"
+                                >
+                                  <span class="av xs a" aria-hidden="true">A</span
+                                  ><span class="grow">Ankur</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                  >
+                                    <path
+                                      d="M3.5 8.5l3 3 6-7"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    />
                                   </svg>
-                                </button>
-                              </div>
-                            </sc-if>
-                          </span>
+                                </button></div></sc-if
+                          ></span>
                         </div>
-
                         <div class="pfoot">
-                          <sc-if value="{{rw}}" hint-placeholder-val="{{true}}">
-                            <button
+                          <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                            ><button
                               type="button"
                               class="btn primary"
                               disabled="{{noneChecked}}"
                               onClick="{{create}}"
                             >
-                              {{createLabel}}
-                            </button>
-                            <button type="button" class="btn" onClick="{{dismiss}}">Dismiss</button>
-                            <span class="grow"></span>
-                            <span class="t12 muted">Only you can answer this</span>
-                          </sc-if>
-                          <sc-if value="{{ro}}" hint-placeholder-val="{{false}}">
-                            <span class="row t12 muted" style="gap: 6px"
-                              ><svg
-                                aria-hidden="true"
-                                width="12"
-                                height="12"
-                                viewBox="0 0 16 16"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="1.5"
-                              >
-                                <circle cx="8" cy="8" r="6" />
-                                <path d="M8 4.8V8l2.2 1.4" /></svg
+                              {{createLabel}}</button
+                            ><button type="button" class="btn" onClick="{{dismiss}}">
+                              Dismiss
+                            </button></sc-if
+                          >
+                          <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                            ><span class="row t12 muted" style="gap: 6px"
+                              ><svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                                <g
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.5"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <circle cx="8" cy="8" r="6" />
+                                  <path d="M8 4.8V8l2.2 1.4" />
+                                </g></svg
                               >Waiting for Rutvik</span
-                            >
-                          </sc-if>
+                            ></sc-if
+                          >
+                          <span class="note t12 muted ell">{{footNote}}</span>
                         </div>
-                      </div>
-                    </sc-if>
+                      </div></sc-if
+                    >
                   </div>
-                </div>
-              </sc-if>
-
-              <sc-if value="{{isCreated}}" hint-placeholder-val="{{false}}">
-                <div class="recs">
-                  <sc-if value="{{rec1}}" hint-placeholder-val="{{true}}">
-                    <div class="rec">
+                </div></sc-if
+              >
+              <sc-if value="{{isCreated}}" hint-placeholder-val="{{false}}"
+                ><div class="recs">
+                  <sc-if value="{{rec1}}" hint-placeholder-val="{{true}}"
+                    ><div class="rec">
                       <span class="g"
-                        ><svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.5"
-                        >
-                          <path d="M8 3v10M3 8h10" /></svg></span
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <path
+                            d="M8 3v10M3 8h10"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          /></svg></span
                       ><span class="rl"
                         ><span class="rx">Pair created</span
-                        ><a class="chip" href="TaskUnstarted.dc.html"
+                        ><a
+                          class="chip"
+                          href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
                           ><svg
+                            class="si todo"
                             aria-hidden="true"
                             width="12"
                             height="12"
                             viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="var(--muted-foreground)"
-                            stroke-width="1.6"
                           >
-                            <circle cx="8" cy="8" r="6" /></svg
+                            <circle
+                              cx="8"
+                              cy="8"
+                              r="6"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.5"
+                            /></svg
                           ><span class="ell">{{t1}}</span></a
                         ><span class="rm"
-                          >for {{forName1}} · asked by {{askedBy}} · 2m<sc-if
+                          >for {{forName1}}{{askedPart1}} · 09:15<sc-if
                             value="{{canUndo1}}"
                             hint-placeholder-val="{{true}}"
                           >
@@ -2064,65 +2994,74 @@
                             <button
                               type="button"
                               class="linkbtn"
-                              title="Removes the task. Shown to whoever asked and the owner until the owner starts it."
+                              title="Removes the task. Shown to whoever asked and the owner until someone starts a thread on it."
                               onClick="{{undo1}}"
                             >
                               Undo
                             </button></sc-if
+                          ><sc-if value="{{mine1}}" hint-placeholder-val="{{false}}">
+                            ·
+                            <a class="linkbtn go" href="StartThread.dc.html"
+                              >Start a thread</a
+                            ></sc-if
                           ></span
                         ></span
                       >
-                    </div>
-                  </sc-if>
-                  <sc-if value="{{undone1}}" hint-placeholder-val="{{false}}">
-                    <div class="rec">
+                    </div></sc-if
+                  ><sc-if value="{{undone1}}" hint-placeholder-val="{{false}}"
+                    ><div class="rec">
                       <span class="g"
-                        ><svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.5"
-                        >
-                          <path d="M5.5 4L3 6.5 5.5 9" />
-                          <path d="M3 6.5h6.5a3.5 3.5 0 0 1 0 7H7" /></svg></span
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <g
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M5.5 3.5L2.5 6.5l3 3" />
+                            <path d="M2.5 6.5h7a4 4 0 0 1 0 8H7" />
+                          </g></svg></span
                       ><span class="rl"
                         ><span class="rx">{{undoer1}} undid creating</span
-                        ><span class="rt ell">{{t1}}</span><span class="rm">· 1m</span></span
+                        ><span class="rt ell">{{t1}}</span><span class="rm">· 09:16</span></span
                       >
-                    </div>
-                  </sc-if>
-                  <sc-if value="{{rec2}}" hint-placeholder-val="{{true}}">
-                    <div class="rec">
+                    </div></sc-if
+                  ><sc-if value="{{rec2}}" hint-placeholder-val="{{true}}"
+                    ><div class="rec">
                       <span class="g"
-                        ><svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.5"
-                        >
-                          <path d="M8 3v10M3 8h10" /></svg></span
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <path
+                            d="M8 3v10M3 8h10"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          /></svg></span
                       ><span class="rl"
                         ><span class="rx">Pair created</span
-                        ><a class="chip" href="TaskUnstarted.dc.html"
+                        ><a
+                          class="chip"
+                          href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
                           ><svg
+                            class="si todo"
                             aria-hidden="true"
                             width="12"
                             height="12"
                             viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="var(--muted-foreground)"
-                            stroke-width="1.6"
                           >
-                            <circle cx="8" cy="8" r="6" /></svg
+                            <circle
+                              cx="8"
+                              cy="8"
+                              r="6"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.5"
+                            /></svg
                           ><span class="ell">{{t2}}</span></a
                         ><span class="rm"
-                          >for {{forName2}} · asked by {{askedBy}} · 2m<sc-if
+                          >for {{forName2}}{{askedPart2}} · 09:15<sc-if
                             value="{{canUndo2}}"
                             hint-placeholder-val="{{true}}"
                           >
@@ -2130,65 +3069,74 @@
                             <button
                               type="button"
                               class="linkbtn"
-                              title="Removes the task. Shown to whoever asked and the owner until the owner starts it."
+                              title="Removes the task. Shown to whoever asked and the owner until someone starts a thread on it."
                               onClick="{{undo2}}"
                             >
                               Undo
                             </button></sc-if
+                          ><sc-if value="{{mine2}}" hint-placeholder-val="{{false}}">
+                            ·
+                            <a class="linkbtn go" href="StartThread.dc.html"
+                              >Start a thread</a
+                            ></sc-if
                           ></span
                         ></span
                       >
-                    </div>
-                  </sc-if>
-                  <sc-if value="{{undone2}}" hint-placeholder-val="{{false}}">
-                    <div class="rec">
+                    </div></sc-if
+                  ><sc-if value="{{undone2}}" hint-placeholder-val="{{false}}"
+                    ><div class="rec">
                       <span class="g"
-                        ><svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.5"
-                        >
-                          <path d="M5.5 4L3 6.5 5.5 9" />
-                          <path d="M3 6.5h6.5a3.5 3.5 0 0 1 0 7H7" /></svg></span
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <g
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M5.5 3.5L2.5 6.5l3 3" />
+                            <path d="M2.5 6.5h7a4 4 0 0 1 0 8H7" />
+                          </g></svg></span
                       ><span class="rl"
                         ><span class="rx">{{undoer2}} undid creating</span
-                        ><span class="rt ell">{{t2}}</span><span class="rm">· 1m</span></span
+                        ><span class="rt ell">{{t2}}</span><span class="rm">· 09:16</span></span
                       >
-                    </div>
-                  </sc-if>
-                  <sc-if value="{{rec3}}" hint-placeholder-val="{{true}}">
-                    <div class="rec">
+                    </div></sc-if
+                  ><sc-if value="{{rec3}}" hint-placeholder-val="{{true}}"
+                    ><div class="rec">
                       <span class="g"
-                        ><svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.5"
-                        >
-                          <path d="M8 3v10M3 8h10" /></svg></span
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <path
+                            d="M8 3v10M3 8h10"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          /></svg></span
                       ><span class="rl"
                         ><span class="rx">Pair created</span
-                        ><a class="chip" href="TaskUnstarted.dc.html"
+                        ><a
+                          class="chip"
+                          href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
                           ><svg
+                            class="si todo"
                             aria-hidden="true"
                             width="12"
                             height="12"
                             viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="var(--muted-foreground)"
-                            stroke-width="1.6"
                           >
-                            <circle cx="8" cy="8" r="6" /></svg
+                            <circle
+                              cx="8"
+                              cy="8"
+                              r="6"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.5"
+                            /></svg
                           ><span class="ell">{{t3}}</span></a
                         ><span class="rm"
-                          >for {{forName3}} · asked by {{askedBy}} · 2m<sc-if
+                          >for {{forName3}}{{askedPart3}} · 09:15<sc-if
                             value="{{canUndo3}}"
                             hint-placeholder-val="{{true}}"
                           >
@@ -2196,56 +3144,133 @@
                             <button
                               type="button"
                               class="linkbtn"
-                              title="Removes the task. Shown to whoever asked and the owner until the owner starts it."
+                              title="Removes the task. Shown to whoever asked and the owner until someone starts a thread on it."
                               onClick="{{undo3}}"
                             >
                               Undo
                             </button></sc-if
+                          ><sc-if value="{{mine3}}" hint-placeholder-val="{{false}}">
+                            ·
+                            <a class="linkbtn go" href="StartThread.dc.html"
+                              >Start a thread</a
+                            ></sc-if
                           ></span
                         ></span
                       >
-                    </div>
-                  </sc-if>
-                  <sc-if value="{{undone3}}" hint-placeholder-val="{{false}}">
-                    <div class="rec">
+                    </div></sc-if
+                  ><sc-if value="{{undone3}}" hint-placeholder-val="{{false}}"
+                    ><div class="rec">
                       <span class="g"
-                        ><svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 16 16"
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <g
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M5.5 3.5L2.5 6.5l3 3" />
+                            <path d="M2.5 6.5h7a4 4 0 0 1 0 8H7" />
+                          </g></svg></span
+                      ><span class="rl"
+                        ><span class="rx">{{undoer3}} undid creating</span
+                        ><span class="rt ell">{{t3}}</span><span class="rm">· 09:16</span></span
+                      >
+                    </div></sc-if
+                  ><sc-if value="{{rec4}}" hint-placeholder-val="{{true}}"
+                    ><div class="rec">
+                      <span class="g"
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <path
+                            d="M8 3v10M3 8h10"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          /></svg></span
+                      ><span class="rl"
+                        ><span class="rx">Pair created</span
+                        ><a
+                          class="chip"
+                          href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                          ><svg
+                            class="si todo"
+                            aria-hidden="true"
+                            width="12"
+                            height="12"
+                            viewBox="0 0 16 16"
+                          >
+                            <circle
+                              cx="8"
+                              cy="8"
+                              r="6"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.5"
+                            /></svg
+                          ><span class="ell">{{t4}}</span></a
+                        ><span class="rm"
+                          >for {{forName4}}{{askedPart4}} · 09:15<sc-if
+                            value="{{canUndo4}}"
+                            hint-placeholder-val="{{true}}"
+                          >
+                            ·
+                            <button
+                              type="button"
+                              class="linkbtn"
+                              title="Removes the task. Shown to whoever asked and the owner until someone starts a thread on it."
+                              onClick="{{undo4}}"
+                            >
+                              Undo
+                            </button></sc-if
+                          ><sc-if value="{{mine4}}" hint-placeholder-val="{{false}}">
+                            ·
+                            <a class="linkbtn go" href="StartThread.dc.html"
+                              >Start a thread</a
+                            ></sc-if
+                          ></span
+                        ></span
+                      >
+                    </div></sc-if
+                  ><sc-if value="{{undone4}}" hint-placeholder-val="{{false}}"
+                    ><div class="rec">
+                      <span class="g"
+                        ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                          <g
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M5.5 3.5L2.5 6.5l3 3" />
+                            <path d="M2.5 6.5h7a4 4 0 0 1 0 8H7" />
+                          </g></svg></span
+                      ><span class="rl"
+                        ><span class="rx">{{undoer4}} undid creating</span
+                        ><span class="rt ell">{{t4}}</span><span class="rm">· 09:16</span></span
+                      >
+                    </div></sc-if
+                  >
+                </div></sc-if
+              >
+              <sc-if value="{{isDismissed}}" hint-placeholder-val="{{false}}"
+                ><div class="recs">
+                  <div class="rec">
+                    <span class="g"
+                      ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                        <path
+                          d="M4.5 4.5l7 7M11.5 4.5l-7 7"
                           fill="none"
                           stroke="currentColor"
                           stroke-width="1.5"
-                        >
-                          <path d="M5.5 4L3 6.5 5.5 9" />
-                          <path d="M3 6.5h6.5a3.5 3.5 0 0 1 0 7H7" /></svg></span
-                      ><span class="rl"
-                        ><span class="rx">{{undoer3}} undid creating</span
-                        ><span class="rt ell">{{t3}}</span><span class="rm">· 1m</span></span
-                      >
-                    </div>
-                  </sc-if>
-                </div>
-              </sc-if>
-
-              <sc-if value="{{isDismissed}}" hint-placeholder-val="{{false}}">
-                <div class="recs">
-                  <div class="rec">
-                    <span class="g"
-                      ><svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg></span
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        /></svg></span
                     ><span
-                      >{{dismisser}} dismissed these suggestions<span class="nw">
-                        · 2m<sc-if value="{{rw}}" hint-placeholder-val="{{true}}">
+                      >{{dismisser}} dismissed these proposed tasks<span class="nw">
+                        · 09:15<sc-if value="{{rw}}" hint-placeholder-val="{{true}}">
                           ·
                           <button type="button" class="linkbtn again" onClick="{{showAgain}}">
                             Show again
@@ -2254,42 +3279,242 @@
                       ></span
                     >
                   </div>
-                </div>
-              </sc-if>
+                </div></sc-if
+              >
             </div>
           </div>
-
           <div class="composer-wrap">
             <div class="composer">
+              <sc-if value="{{replying}}" hint-placeholder-val="{{false}}">
+                <div class="replybar">
+                  <svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                    <g
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M6.5 4L3 7.5 6.5 11" />
+                      <path d="M3 7.5h6.5a3.5 3.5 0 0 1 3.5 3.5v1" />
+                    </g></svg
+                  >Replying to <span class="w5" style="color: var(--foreground)">Kousik</span
+                  ><span class="ell grow"
+                    >Do we tag difficulty when the question is generated, or after review?</span
+                  >
+                  <button
+                    type="button"
+                    class="btn ghost icon sm"
+                    aria-label="Cancel reply"
+                    onClick="{{cancelReply}}"
+                  >
+                    <svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                      <path
+                        d="M4.5 4.5l7 7M11.5 4.5l-7 7"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </sc-if>
+              <sc-if value="{{mentionOpen}}" hint-placeholder-val="{{false}}">
+                <div class="smenu mention-menu" role="listbox" aria-label="Mention">
+                  <div class="mh">Mention</div>
+                  <div
+                    class="smi"
+                    role="option"
+                    aria-disabled="true"
+                    title="@pair is off until an admin adds a Team Claude key"
+                  >
+                    <span class="pairmark" aria-hidden="true" style="color: var(--muted-foreground)"
+                      ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                        <g fill="none" stroke="currentColor" stroke-width="1.6">
+                          <circle cx="6" cy="8" r="3.5" />
+                          <circle cx="10" cy="8" r="3.5" />
+                        </g></svg></span
+                    ><span class="muted">Pair</span
+                    ><span class="mk" style="font-size: 12px">Off · needs a Team Claude key</span>
+                  </div>
+                  <div class="smsep"></div>
+                  <sc-if value="{{vr}}" hint-placeholder-val="{{true}}"
+                    ><button type="button" class="smi on" role="option">
+                      <span class="av k" aria-hidden="true">K</span><span>Kousik</span></button
+                    ><button type="button" class="smi" role="option">
+                      <span class="av h" aria-hidden="true">H</span><span>Hanad</span></button
+                    ><button type="button" class="smi" role="option">
+                      <span class="av a" aria-hidden="true">A</span><span>Ankur</span>
+                    </button></sc-if
+                  >
+                  <sc-if value="{{vk}}" hint-placeholder-val="{{false}}"
+                    ><button type="button" class="smi on" role="option">
+                      <span class="av r" aria-hidden="true">R</span><span>Rutvik</span></button
+                    ><button type="button" class="smi" role="option">
+                      <span class="av h" aria-hidden="true">H</span><span>Hanad</span></button
+                    ><button type="button" class="smi" role="option">
+                      <span class="av a" aria-hidden="true">A</span><span>Ankur</span>
+                    </button></sc-if
+                  >
+                </div>
+              </sc-if>
               <textarea
                 aria-label="Message Question creation"
                 rows="2"
-                placeholder="Message the space · @ to mention Pair or a teammate"
+                placeholder="{{placeholder}}"
                 value="{{draft}}"
                 onChange="{{onDraft}}"
               ></textarea>
               <div class="foot">
-                <button
-                  type="button"
-                  class="btn ghost"
-                  aria-pressed="{{hasPair}}"
-                  onClick="{{tagPair}}"
-                  style="padding: 0 8px"
-                >
-                  <svg
-                    aria-hidden="true"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="var(--primary)"
-                    stroke-width="1.6"
+                <sc-if value="{{hasKey}}" hint-placeholder-val="{{true}}">
+                  <button
+                    type="button"
+                    class="btn ghost"
+                    aria-pressed="{{hasPair}}"
+                    onClick="{{tagPair}}"
+                    title="Mention @pair"
+                    style="padding: 0 8px"
                   >
-                    <circle cx="6" cy="8" r="3.5" />
-                    <circle cx="10" cy="8" r="3.5" /></svg
-                  >@pair
-                </button>
-                <span class="grow ell t12 muted" aria-live="polite">{{hint}}</span>
+                    <svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      style="color: var(--primary)"
+                    >
+                      <g fill="none" stroke="currentColor" stroke-width="1.6">
+                        <circle cx="6" cy="8" r="3.5" />
+                        <circle cx="10" cy="8" r="3.5" />
+                      </g></svg
+                    >@pair
+                  </button>
+                  <span class="grow ell t12 muted" aria-live="polite">{{hint}}</span>
+                </sc-if>
+                <sc-if value="{{noKey}}" hint-placeholder-val="{{false}}">
+                  <span class="offhint" aria-live="polite"
+                    ><span class="offg" aria-hidden="true"
+                      ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                        <g fill="none" stroke="currentColor" stroke-width="1.6">
+                          <circle cx="6" cy="8" r="3.5" />
+                          <circle cx="10" cy="8" r="3.5" />
+                        </g></svg></span
+                    ><span class="ell">@pair is off · needs a Team Claude key</span
+                    ><span aria-hidden="true">·</span></span
+                  >
+                  <sc-if value="{{keyAdmin}}" hint-placeholder-val="{{false}}"
+                    ><span class="keyanchor"
+                      ><button
+                        type="button"
+                        class="btn ghost keyact"
+                        onClick="{{openKey}}"
+                        aria-haspopup="dialog"
+                        aria-expanded="{{addKeyOpen}}"
+                      >
+                        Add key
+                      </button>
+                      <sc-if value="{{addKeyOpen}}" hint-placeholder-val="{{false}}">
+                        <div class="dialog keypop" role="dialog" aria-label="Add Team Claude key">
+                          <div class="dh">
+                            <span class="w6 grow">Add Team Claude key</span
+                            ><button
+                              type="button"
+                              class="btn ghost icon sm"
+                              aria-label="Close"
+                              onClick="{{closeKey}}"
+                            >
+                              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                                <path
+                                  d="M4.5 4.5l7 7M11.5 4.5l-7 7"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.5"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+                          <div class="db">
+                            <span class="t12 muted"
+                              >Pays for @pair in every space on this server. Members' own threads
+                              keep using their own accounts.</span
+                            >
+                            <label class="field"
+                              ><span class="lbl">Anthropic API key</span
+                              ><input
+                                class="input"
+                                type="password"
+                                placeholder="sk-ant-…"
+                                value="sk-ant-api03-placeholder"
+                                autofocus
+                                aria-invalid="{{keyError}}"
+                              /><sc-if value="{{keyError}}" hint-placeholder-val="{{false}}"
+                                ><span class="err" role="alert"
+                                  ><svg
+                                    class="si failed"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                  >
+                                    <g
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="1.5"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    >
+                                      <circle cx="8" cy="8" r="6" />
+                                      <path d="M8 4.8v3.6M8 11h.01" />
+                                    </g></svg
+                                  >Anthropic rejected this key. Check it and try again.</span
+                                ></sc-if
+                              ><sc-if value="{{keyOk}}" hint-placeholder-val="{{true}}"
+                                ><span class="help"
+                                  >Stored on this server. You won't see it again.</span
+                                ></sc-if
+                              ></label
+                            >
+                            <div class="row" style="justify-content: flex-end">
+                              <a
+                                class="t12 grow"
+                                style="color: var(--muted-foreground)"
+                                href="TeamClaudeKey.dc.html"
+                                >Settings → Team</a
+                              ><button type="button" class="btn ghost lg" onClick="{{closeKey}}">
+                                Cancel</button
+                              ><button type="button" class="btn primary lg">Save and check</button>
+                            </div>
+                          </div>
+                        </div>
+                      </sc-if>
+                    </span></sc-if
+                  >
+                  <sc-if value="{{canAsk}}" hint-placeholder-val="{{false}}"
+                    ><button
+                      type="button"
+                      class="btn ghost keyact"
+                      onClick="{{askAdmin}}"
+                      title="Rutvik is a server admin. Adds a message to Rutvik in your draft"
+                    >
+                      Ask Rutvik
+                    </button></sc-if
+                  >
+                  <sc-if value="{{askDrafted}}" hint-placeholder-val="{{false}}"
+                    ><button
+                      type="button"
+                      class="btn ghost keyact"
+                      disabled
+                      title="The request to Rutvik is in your draft. Send it, or edit it first"
+                      style="color: var(--muted-foreground)"
+                    >
+                      Request drafted
+                    </button></sc-if
+                  >
+                  <span class="grow"></span>
+                </sc-if>
                 <button
                   type="button"
                   class="send"
@@ -2297,23 +3522,21 @@
                   disabled="{{emptyDraft}}"
                   onClick="{{send}}"
                 >
-                  <svg
-                    aria-hidden="true"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                  >
-                    <path d="M8 13V3M4 7l4-4 4 4" />
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16">
+                    <path
+                      d="M8 13V3M4 7l4-4 4 4"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
                   </svg>
                 </button>
               </div>
             </div>
           </div>
         </main>
-
         <aside class="panel" aria-label="Space panel">
           <div class="tabs">
             <div role="tablist" aria-label="Space panel" class="row" style="gap: 4px">
@@ -2324,17 +3547,14 @@
                 aria-selected="{{isTasks}}"
                 onClick="{{showTasks}}"
               >
-                <svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                >
+                <svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
                   <path
                     d="M2.5 4.2l1.2 1.2 2-2.2M2.5 9.2l1.2 1.2 2-2.2M8 4.5h5.5M8 9.5h5.5M8 13h5.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
                   /></svg
                 >Overview
               </button>
@@ -2345,17 +3565,17 @@
                 aria-selected="{{isNotes}}"
                 onClick="{{showNotes}}"
               >
-                <svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 2.5h5.5L12 5v8.5H4z" />
-                  <path d="M6 8h4M6 10.5h4" /></svg
+                <svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                  <g
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M4 2.5h5.5L12 5v8.5H4z" />
+                    <path d="M6 8h4M6 10.5h4" />
+                  </g></svg
                 >Notes
               </button>
             </div>
@@ -2365,181 +3585,600 @@
               aria-label="Add: new task, browser, terminal, files"
               title="New task, or open a surface"
             >
-              <svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <path d="M8 3v10M3 8h10" />
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <path
+                  d="M8 3v10M3 8h10"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
               </svg>
             </button>
             <span class="grow"></span>
-            <button type="button" class="btn ghost icon sm" aria-label="Expand panel">
-              <svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-              >
-                <path d="M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9" />
+            <button type="button" class="btn ghost icon sm panel-ctl" aria-label="Expand panel">
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <path
+                  d="M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
               </svg>
             </button>
-            <button type="button" class="btn ghost icon sm" aria-label="Hide panel">
-              <svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-              >
-                <rect x="2" y="3" width="12" height="10" rx="1.5" />
-                <path d="M10 3v10" />
+            <button type="button" class="btn ghost icon sm panel-ctl" aria-label="Hide panel">
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                  <path d="M10 3v10" />
+                </g>
               </svg>
             </button>
           </div>
-
-          <sc-if value="{{isTasks}}" hint-placeholder-val="{{true}}">
-            <div class="scroll ov">
-              <sc-if value="{{noTasks}}" hint-placeholder-val="{{true}}">
-                <p class="empty">No tasks yet. They appear here, grouped by status.</p>
-              </sc-if>
-              <sc-if value="{{hasTasks}}" hint-placeholder-val="{{false}}">
-                <button type="button" class="ghead" aria-expanded="true">
-                  Not started <span class="n">{{taskCount}}</span
+          <sc-if value="{{isTasks}}" hint-placeholder-val="{{true}}"
+            ><div class="scroll ov">
+              <sc-if value="{{noTasks}}" hint-placeholder-val="{{true}}"
+                ><p class="empty">No tasks yet. They appear here, grouped by status.</p></sc-if
+              >
+              <sc-if value="{{hasNeeds}}" hint-placeholder-val="{{false}}"
+                ><button type="button" class="ghead" aria-expanded="true">
+                  Needs you <span class="n">{{needsCount}}</span
                   ><svg
                     aria-hidden="true"
                     width="12"
                     height="12"
                     viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="var(--muted-foreground)"
-                    stroke-width="1.6"
+                    style="color: var(--muted-foreground)"
                   >
-                    <path d="M4 6l4 4 4-4" />
-                  </svg>
-                </button>
-                <sc-if value="{{rec1}}" hint-placeholder-val="{{true}}">
-                  <a class="trow" href="TaskUnstarted.dc.html">
-                    <svg
-                      class="st"
+                    <path
+                      d="M4.5 6.5L8 10l3.5-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg></button
+                ><sc-if value="{{need1}}" hint-placeholder-val="{{false}}"
+                  ><a class="tk" href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                    ><svg
+                      class="si todo"
                       aria-hidden="true"
                       width="14"
                       height="14"
                       viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--muted-foreground)"
-                      stroke-width="1.6"
                     >
-                      <circle cx="8" cy="8" r="6" />
-                    </svg>
-                    <span class="tx"
-                      ><span class="l1">{{t1}}</span
-                      ><span class="l2"
-                        >for <span class="av xs {{oc1}}" aria-hidden="true">{{oi1}}</span
-                        ><span class="who">{{forName1}}</span
-                        ><sc-if value="{{assigned1}}" hint-placeholder-val="{{false}}">
-                          · <span class="ell">assigned by {{askedBy}}</span></sc-if
-                        ></span
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      /></svg
+                    ><span class="tt">{{t1}}</span
+                    ><span class="rt"
+                      ><span class="when">2m</span
+                      ><button
+                        type="button"
+                        class="stc"
+                        aria-label="Status: To do. Change status"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        <svg
+                          class="si todo"
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                        >
+                          <circle
+                            cx="8"
+                            cy="8"
+                            r="6"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          /></svg
+                        >To do<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                          <path
+                            d="M4.5 6.5L8 10l3.5-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg></button></span
+                    ><span class="l2"
+                      ><span class="av xs {{oc1}}" aria-hidden="true">{{oi1}}</span
+                      ><sc-if value="{{notMine1}}" hint-placeholder-val="{{true}}"
+                        ><span class="who">{{ownL21}}</span><span>·</span></sc-if
+                      ><span class="ell"
+                        ><span class="needsyou">Assigned to you</span> · not started</span
                       ></span
-                    >
-                    <span class="rc"><span></span><span class="when">2m</span></span>
-                  </a>
-                </sc-if>
-                <sc-if value="{{rec2}}" hint-placeholder-val="{{true}}">
-                  <a class="trow" href="TaskUnstarted.dc.html">
-                    <svg
-                      class="st"
+                    ></a
+                  ></sc-if
+                ><sc-if value="{{need2}}" hint-placeholder-val="{{false}}"
+                  ><a class="tk" href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                    ><svg
+                      class="si todo"
                       aria-hidden="true"
                       width="14"
                       height="14"
                       viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--muted-foreground)"
-                      stroke-width="1.6"
                     >
-                      <circle cx="8" cy="8" r="6" />
-                    </svg>
-                    <span class="tx"
-                      ><span class="l1">{{t2}}</span
-                      ><span class="l2"
-                        >for <span class="av xs {{oc2}}" aria-hidden="true">{{oi2}}</span
-                        ><span class="who">{{forName2}}</span
-                        ><sc-if value="{{assigned2}}" hint-placeholder-val="{{true}}">
-                          · <span class="ell">assigned by {{askedBy}}</span></sc-if
-                        ></span
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      /></svg
+                    ><span class="tt">{{t2}}</span
+                    ><span class="rt"
+                      ><span class="when">2m</span
+                      ><button
+                        type="button"
+                        class="stc"
+                        aria-label="Status: To do. Change status"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        <svg
+                          class="si todo"
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                        >
+                          <circle
+                            cx="8"
+                            cy="8"
+                            r="6"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          /></svg
+                        >To do<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                          <path
+                            d="M4.5 6.5L8 10l3.5-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg></button></span
+                    ><span class="l2"
+                      ><span class="av xs {{oc2}}" aria-hidden="true">{{oi2}}</span
+                      ><sc-if value="{{notMine2}}" hint-placeholder-val="{{true}}"
+                        ><span class="who">{{ownL22}}</span><span>·</span></sc-if
+                      ><span class="ell"
+                        ><span class="needsyou">Assigned to you</span> · not started</span
                       ></span
-                    >
-                    <span class="rc"><span></span><span class="when">2m</span></span>
-                  </a>
-                </sc-if>
-                <sc-if value="{{rec3}}" hint-placeholder-val="{{true}}">
-                  <a class="trow" href="TaskUnstarted.dc.html">
-                    <svg
-                      class="st"
+                    ></a
+                  ></sc-if
+                ><sc-if value="{{need3}}" hint-placeholder-val="{{false}}"
+                  ><a class="tk" href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                    ><svg
+                      class="si todo"
                       aria-hidden="true"
                       width="14"
                       height="14"
                       viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--muted-foreground)"
-                      stroke-width="1.6"
                     >
-                      <circle cx="8" cy="8" r="6" />
-                    </svg>
-                    <span class="tx"
-                      ><span class="l1">{{t3}}</span
-                      ><span class="l2"
-                        >for <span class="av xs {{oc3}}" aria-hidden="true">{{oi3}}</span
-                        ><span class="who">{{forName3}}</span
-                        ><sc-if value="{{assigned3}}" hint-placeholder-val="{{true}}">
-                          · <span class="ell">assigned by {{askedBy}}</span></sc-if
-                        ></span
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      /></svg
+                    ><span class="tt">{{t3}}</span
+                    ><span class="rt"
+                      ><span class="when">2m</span
+                      ><button
+                        type="button"
+                        class="stc"
+                        aria-label="Status: To do. Change status"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        <svg
+                          class="si todo"
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                        >
+                          <circle
+                            cx="8"
+                            cy="8"
+                            r="6"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          /></svg
+                        >To do<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                          <path
+                            d="M4.5 6.5L8 10l3.5-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg></button></span
+                    ><span class="l2"
+                      ><span class="av xs {{oc3}}" aria-hidden="true">{{oi3}}</span
+                      ><sc-if value="{{notMine3}}" hint-placeholder-val="{{true}}"
+                        ><span class="who">{{ownL23}}</span><span>·</span></sc-if
+                      ><span class="ell"
+                        ><span class="needsyou">Assigned to you</span> · not started</span
                       ></span
+                    ></a
+                  ></sc-if
+                ><sc-if value="{{need4}}" hint-placeholder-val="{{false}}"
+                  ><a class="tk" href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                    ><svg
+                      class="si todo"
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
                     >
-                    <span class="rc"><span></span><span class="when">2m</span></span>
-                  </a>
-                </sc-if>
-              </sc-if>
-              <a class="newrow" href="NewTask.dc.html"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 3v10M3 8h10" /></svg
-                >New task</a
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      /></svg
+                    ><span class="tt">{{t4}}</span
+                    ><span class="rt"
+                      ><span class="when">2m</span
+                      ><button
+                        type="button"
+                        class="stc"
+                        aria-label="Status: To do. Change status"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        <svg
+                          class="si todo"
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                        >
+                          <circle
+                            cx="8"
+                            cy="8"
+                            r="6"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          /></svg
+                        >To do<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                          <path
+                            d="M4.5 6.5L8 10l3.5-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg></button></span
+                    ><span class="l2"
+                      ><span class="av xs {{oc4}}" aria-hidden="true">{{oi4}}</span
+                      ><sc-if value="{{notMine4}}" hint-placeholder-val="{{true}}"
+                        ><span class="who">{{ownL24}}</span><span>·</span></sc-if
+                      ><span class="ell"
+                        ><span class="needsyou">Assigned to you</span> · not started</span
+                      ></span
+                    ></a
+                  ></sc-if
+                ></sc-if
               >
-            </div>
-          </sc-if>
-
-          <sc-if value="{{isNotes}}" hint-placeholder-val="{{false}}">
-            <div class="scroll ov">
-              <div class="band">
-                <span class="lbl">Brief</span><span class="t12 muted">Rutvik · Mon</span
-                ><button type="button" class="btn ghost icon sm hov" aria-label="Edit brief">
-                  <svg
+              <sc-if value="{{hasTodo}}" hint-placeholder-val="{{false}}"
+                ><button type="button" class="ghead" aria-expanded="true">
+                  To do <span class="n">{{todoCount}}</span
+                  ><svg
                     aria-hidden="true"
-                    width="14"
-                    height="14"
+                    width="12"
+                    height="12"
                     viewBox="0 0 16 16"
+                    style="color: var(--muted-foreground)"
+                  >
+                    <path
+                      d="M4.5 6.5L8 10l3.5-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg></button
+                ><sc-if value="{{todo1}}" hint-placeholder-val="{{true}}"
+                  ><a class="tk" href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                    ><svg
+                      class="si todo"
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                    >
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      /></svg
+                    ><span class="tt">{{t1}}</span
+                    ><span class="rt"
+                      ><span class="when">2m</span
+                      ><button
+                        type="button"
+                        class="stc"
+                        aria-label="Status: To do. Change status"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        <svg
+                          class="si todo"
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                        >
+                          <circle
+                            cx="8"
+                            cy="8"
+                            r="6"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          /></svg
+                        >To do<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                          <path
+                            d="M4.5 6.5L8 10l3.5-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg></button></span
+                    ><span class="l2"
+                      ><span class="av xs {{oc1}}" aria-hidden="true">{{oi1}}</span
+                      ><sc-if value="{{notMine1}}" hint-placeholder-val="{{true}}"
+                        ><span class="who">{{ownL21}}</span><span>·</span></sc-if
+                      ><span class="ell">No threads yet · created by Pair</span></span
+                    ></a
+                  ></sc-if
+                ><sc-if value="{{todo2}}" hint-placeholder-val="{{true}}"
+                  ><a class="tk" href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                    ><svg
+                      class="si todo"
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                    >
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      /></svg
+                    ><span class="tt">{{t2}}</span
+                    ><span class="rt"
+                      ><span class="when">2m</span
+                      ><button
+                        type="button"
+                        class="stc"
+                        aria-label="Status: To do. Change status"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        <svg
+                          class="si todo"
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                        >
+                          <circle
+                            cx="8"
+                            cy="8"
+                            r="6"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          /></svg
+                        >To do<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                          <path
+                            d="M4.5 6.5L8 10l3.5-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg></button></span
+                    ><span class="l2"
+                      ><span class="av xs {{oc2}}" aria-hidden="true">{{oi2}}</span
+                      ><sc-if value="{{notMine2}}" hint-placeholder-val="{{true}}"
+                        ><span class="who">{{ownL22}}</span><span>·</span></sc-if
+                      ><span class="ell">No threads yet · created by Pair</span></span
+                    ></a
+                  ></sc-if
+                ><sc-if value="{{todo3}}" hint-placeholder-val="{{true}}"
+                  ><a class="tk" href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                    ><svg
+                      class="si todo"
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                    >
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      /></svg
+                    ><span class="tt">{{t3}}</span
+                    ><span class="rt"
+                      ><span class="when">2m</span
+                      ><button
+                        type="button"
+                        class="stc"
+                        aria-label="Status: To do. Change status"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        <svg
+                          class="si todo"
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                        >
+                          <circle
+                            cx="8"
+                            cy="8"
+                            r="6"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          /></svg
+                        >To do<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                          <path
+                            d="M4.5 6.5L8 10l3.5-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg></button></span
+                    ><span class="l2"
+                      ><span class="av xs {{oc3}}" aria-hidden="true">{{oi3}}</span
+                      ><sc-if value="{{notMine3}}" hint-placeholder-val="{{true}}"
+                        ><span class="who">{{ownL23}}</span><span>·</span></sc-if
+                      ><span class="ell">No threads yet · created by Pair</span></span
+                    ></a
+                  ></sc-if
+                ><sc-if value="{{todo4}}" hint-placeholder-val="{{true}}"
+                  ><a class="tk" href="TaskDetail.dc.html#state=%7B%22task%22%3A%22difficulty%22%7D"
+                    ><svg
+                      class="si todo"
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                    >
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      /></svg
+                    ><span class="tt">{{t4}}</span
+                    ><span class="rt"
+                      ><span class="when">2m</span
+                      ><button
+                        type="button"
+                        class="stc"
+                        aria-label="Status: To do. Change status"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
+                        <svg
+                          class="si todo"
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                        >
+                          <circle
+                            cx="8"
+                            cy="8"
+                            r="6"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          /></svg
+                        >To do<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
+                          <path
+                            d="M4.5 6.5L8 10l3.5-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg></button></span
+                    ><span class="l2"
+                      ><span class="av xs {{oc4}}" aria-hidden="true">{{oi4}}</span
+                      ><sc-if value="{{notMine4}}" hint-placeholder-val="{{true}}"
+                        ><span class="who">{{ownL24}}</span><span>·</span></sc-if
+                      ><span class="ell">No threads yet · created by Pair</span></span
+                    ></a
+                  ></sc-if
+                ></sc-if
+              >
+              <a class="newrow" href="NewTask.dc.html"
+                ><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                  <path
+                    d="M8 3v10M3 8h10"
                     fill="none"
                     stroke="currentColor"
                     stroke-width="1.5"
-                  >
-                    <path d="M10.5 2.5l3 3-8 8H2.5v-3z" />
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg
+                >New task</a
+              >
+            </div></sc-if
+          >
+          <sc-if value="{{isNotes}}" hint-placeholder-val="{{false}}"
+            ><div class="scroll ov">
+              <div class="band">
+                <span class="lbl">Brief</span><span class="t12 muted">Rutvik · Mon</span
+                ><button type="button" class="btn ghost icon sm hov" aria-label="Edit brief">
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                    <path
+                      d="M10.5 2.5l3 3-8 8H2.5v-3z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
                   </svg>
                 </button>
               </div>
@@ -2552,16 +4191,11 @@
                   class="pairmark"
                   aria-hidden="true"
                   style="width: 16px; height: 16px; border-radius: 4px"
-                  ><svg
-                    width="11"
-                    height="11"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                  >
-                    <circle cx="6" cy="8" r="3.5" />
-                    <circle cx="10" cy="8" r="3.5" /></svg></span
+                  ><svg aria-hidden="true" width="11" height="11" viewBox="0 0 16 16">
+                    <g fill="none" stroke="currentColor" stroke-width="1.6">
+                      <circle cx="6" cy="8" r="3.5" />
+                      <circle cx="10" cy="8" r="3.5" />
+                    </g></svg></span
                 ><span class="lbl">Pair's notes</span>
                 <button
                   type="button"
@@ -2569,64 +4203,70 @@
                   aria-label="What Pair reads"
                   title="On every reply Pair reads the brief, these notes, the task list and recent messages. It searches older messages when it needs them."
                 >
-                  <svg
-                    aria-hidden="true"
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                  >
-                    <circle cx="8" cy="8" r="6" />
-                    <path d="M8 7.2V11M8 5h.01" />
+                  <svg aria-hidden="true" width="13" height="13" viewBox="0 0 16 16">
+                    <g
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                      <path d="M8 7.2V11M8 5h.01" />
+                    </g>
                   </svg>
                 </button>
                 <button type="button" class="btn ghost icon sm hov" aria-label="Add a note">
-                  <svg
-                    aria-hidden="true"
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                  >
-                    <path d="M10.5 2.5l3 3-8 8H2.5v-3z" />
+                  <svg aria-hidden="true" width="13" height="13" viewBox="0 0 16 16">
+                    <path
+                      d="M10.5 2.5l3 3-8 8H2.5v-3z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
                   </svg>
                 </button>
               </div>
               <p class="empty" style="padding: 8px 8px 0">
                 Pair adds decisions here as the room talks. You can edit or remove any of them.
               </p>
-            </div>
-          </sc-if>
+            </div></sc-if
+          >
         </aside>
       </div>
     </x-dc>
     <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
-      // state keys: phase ('empty' first run with two start rows | 'replying' Rutvik asked, "Pair is replying" | 'proposal' Pair's task card | 'created' card collapsed to records, tasks in the panel | 'dismissed'),
-      // viewer ('rutvik' the tagger | 'kousik' a non-tagger and owner of task 2: read-only card, "you" for himself in owner, "for" and "asked by" text, Undo only on his task), tab ('tasks'|'notes'), draft (composer text; drives the hint),
-      // off ({"2":true} unticks proposed row 2), own ({"2":"a"} changes row 2's owner: r k h a), pick (1|2|3 opens that row's owner menu), undone ({"3":"r"} task 3 was undone by r, k, h or a; the record says "You undid" only to that person)
+      // state keys: phase ('empty' first run with two start rows | 'replying' Rutvik asked, "Pair is replying" | 'proposal' Pair's task card | 'created' card collapsed to records, tasks in the panel as To do with no threads | 'dismissed'),
+      // viewer ('rutvik' the tagger | 'kousik' a non-tagger and owner of task 2: read-only card, "you" for himself in owner, "for" and "asked by" text, Start a thread only on his task; Undo on every record for any member until it changes again), tab ('tasks'|'notes'), draft (composer text; drives the hint),
+      // off ({"2":true} unticks proposed row 2), own ({"2":"a"} changes row 2's owner: r k h a), pick (1..4 opens that row's owner menu), undone ({"3":"r"} task 3 was undone by r, k, h or a; the record says "You undid" only to that person),
+      // Start a thread shows only on the viewer's own records as a next-step nudge; any member can start one from any task page.
+      // nokey ('admin' | 'member': the server has no Team Claude key; the Ask Pair row is off and the composer shows A's hint with Add key / Ask Rutvik), addkey (with nokey admin: the Add key popover), asked (member pressed Ask Rutvik), error, mention
       class Component extends DCLogic {
       renderVals() {
       const s = this.state || {};
       const phase = s.phase || 'proposal';
       const tab = s.tab || 'tasks';
-      const draft = s.draft || '';
+      const mention = !!s.mention;
+      const askText = '@Rutvik can you add a Team Claude key? Settings → Team';
+      const draft = s.draft || (s.asked ? askText : '') || (mention ? '@' : '');
       const lower = draft.toLowerCase();
       const hasPair = lower.indexOf('@pair') !== -1;
       const named = ['kousik', 'hanad', 'ankur'].filter((p) => lower.indexOf('@' + p) !== -1).map((p) => p[0].toUpperCase() + p.slice(1));
+      const noKey = !!s.nokey;
       let hint = '';
       if (hasPair) hint = 'Pair replies here · Team Claude key';
       else if (named.length) hint = named.join(' and ') + ' will be notified';
-      const ro = (s.viewer || 'rutvik') !== 'rutvik';
+      // the no-key member state is seen by Kousik: only admins (Rutvik) can add a key
+      const ro = (s.viewer || 'rutvik') !== 'rutvik' || s.nokey === 'member';
       const me = ro ? 'k' : 'r';
       const names = { r: 'Rutvik', k: 'Kousik', h: 'Hanad', a: 'Ankur' };
       const T = [
       { t: 'Question schema v2', d: 'Define the v2 question fields and migrate stored questions', o: 'r' },
       { t: 'Generate question from prompt', d: 'Draft interview questions from a role description', o: 'k' },
-      { t: 'Difficulty tagging', d: 'Tag each question easy, medium or hard after review', o: 'h' }
+      { t: 'Difficulty tagging', d: 'Tag each question easy, medium or hard after review', o: 'h' },
+      { t: 'Preview renderer', d: 'Show a generated question the way a candidate sees it', o: 'a' }
       ];
       const off = s.off || {};
       const own = s.own || {};
@@ -2635,8 +4275,8 @@
       const v = {};
       let checked = 0;
       let made = 0;
-      let mineTitle = '';
       let mine = 0;
+      let needs = 0;
       T.forEach((task, idx) => {
       const i = idx + 1;
       const on = !off[i];
@@ -2644,7 +4284,7 @@
       if (on) checked++;
       const live = created && on && !undone[i];
       if (live) made++;
-      if (live && o === me) { mine++; if (!mineTitle) mineTitle = task.t; }
+      if (live && o === me) mine++;
       v['t' + i] = task.t;
       v['d' + i] = task.d;
       v['chk' + i] = on;
@@ -2665,10 +4305,18 @@
       const by = names[undone[i]] ? undone[i] : 'r';
       v['undoer' + i] = by === me ? 'You' : names[by];
       v['forName' + i] = o === me ? 'you' : names[o];
-      v['assigned' + i] = o !== 'r';
+      v['chipName' + i] = o === me ? 'You' : names[o];
+      v['askedPart' + i] = o === 'r' && me === 'r' ? '' : ' · asked by ' + (me === 'r' ? 'you' : 'Rutvik');
       v['canUndo' + i] = me === 'r' || o === me;
+      v['mine' + i] = o === me;
+      v['ownL2' + i] = o === me ? 'You' : names[o];
+      v['notMine' + i] = o !== me;
+      const need = live && ro && o === me;
+      v['need' + i] = need;
+      v['todo' + i] = live && !need;
+      if (need) needs++;
       });
-      const others = made - (mineTitle ? 1 : 0);
+      const others = made - mine;
       return Object.assign(v, {
       ro: ro,
       rw: !ro,
@@ -2680,23 +4328,31 @@
       isCreated: created,
       isDismissed: phase === 'dismissed',
       toProposal: () => this.setState({ phase: 'proposal' }),
+      pairLead: phase !== 'proposal' ? '' : ro ? 'Rutvik decides which to create.' : 'Only you can create them.',
+      creatorName: ro ? 'Rutvik' : 'You',
+      askerHead: ro ? 'Rutvik' : 'You',
+      askerTo: ro ? 'Rutvik' : 'you',
       noneChecked: checked === 0,
-      createLabel: checked === 0 ? 'Create tasks' : checked === 1 ? 'Create 1 task' : 'Create ' + checked + ' tasks',
+      footNote: checked === 0 ? 'Tick at least one task.' : 'Creates ' + checked + (checked === 1 ? ' task' : ' tasks') + ' in To do. Nothing runs until someone starts a thread.',
+      createLabel: checked === 0 ? 'Create tasks' : 'Create ' + checked + (checked === 1 ? ' task' : ' tasks'),
       create: () => this.setState({ phase: 'created', pick: 0 }),
       dismiss: () => this.setState({ phase: 'dismissed', pick: 0 }),
       showAgain: () => this.setState({ phase: 'proposal' }),
       askPair: () => this.setState({ draft: '@pair split the brief into tasks' }),
-      send: () => { if (hasPair && phase === 'empty') this.setState({ phase: 'replying', draft: '' }); },
+      send: () => { if (hasPair && !noKey && phase === 'empty') this.setState({ phase: 'replying', draft: '' }); },
       noTasks: made === 0,
       hasTasks: made > 0,
-      taskCount: made,
-      sideMine: !!mineTitle,
+      hasNeeds: needs > 0,
+      needsCount: needs,
+      hasTodo: made - needs > 0,
+      todoCount: made - needs,
+      needTitle: (T.find((t, idx) => v['need' + (idx + 1)]) || {}).t || '',
+      sideMine: mine > 0,
       mineCount: mine,
+      sideMoreLabel: needs ? (made - needs) + ' more tasks' : made + (made === 1 ? ' task' : ' tasks'),
+      sideMore: made - needs > 0,
       askedBy: me === 'r' ? 'you' : 'Rutvik',
       dismisser: me === 'r' ? 'You' : 'Rutvik',
-      sideTitle: mineTitle,
-      sideMore: others > 0,
-      sideMoreLabel: others + ' more',
       isTasks: tab === 'tasks',
       isNotes: tab === 'notes',
       showTasks: () => this.setState({ tab: 'tasks' }),
@@ -2704,9 +4360,27 @@
       draft: draft,
       hint: hint,
       hasPair: hasPair,
-      emptyDraft: draft.trim() === '',
+      emptyDraft: draft.trim() === '' || draft.trim() === '@',
       onDraft: (e) => this.setState({ draft: e.target.value }),
-      tagPair: () => this.setState({ draft: hasPair ? draft : '@pair ' + draft })
+      tagPair: () => this.setState({ draft: hasPair ? draft : '@pair ' + draft }),
+      hasKey: !noKey,
+      noKey: noKey,
+      placeholder: noKey ? 'Message the space · @ to mention a teammate' : 'Message the space · @ to mention Pair or a teammate',
+      keyError: !!s.error,
+      keyOk: !s.error,
+      keyAdmin: s.nokey === 'admin',
+      keyMember: s.nokey === 'member',
+      canAsk: s.nokey === 'member' && draft.indexOf(askText) === -1,
+      askDrafted: s.nokey === 'member' && draft.indexOf(askText) !== -1,
+      pairTitle: noKey ? '@pair is off · needs a Team Claude key' : 'Mention @pair',
+      pairColor: noKey ? 'var(--muted-foreground)' : 'var(--primary)',
+      addKeyOpen: s.nokey === 'admin' && !!s.addkey,
+      openKey: () => this.setState({ addkey: true }),
+      closeKey: () => this.setState({ addkey: false }),
+      askAdmin: () => this.setState({ draft: draft && draft !== '@' ? draft + ' ' + askText : askText }),
+      mentionOpen: mention && noKey,
+      replying: false,
+      cancelReply: () => {}
       });
       }
       }

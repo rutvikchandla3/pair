@@ -863,6 +863,499 @@
           .backdrop {
             background: var(--overlay);
           }
+
+          /* v2 status icons: the svg draws in currentColor, the class picks the colour */
+          .si {
+            flex: none;
+          }
+          .si.todo,
+          .si.canceled,
+          .si.stopped {
+            color: var(--muted-foreground);
+          }
+          .si.prog,
+          .si.working {
+            color: var(--info-foreground);
+          }
+          .si.review,
+          .si.done {
+            color: var(--success-foreground);
+          }
+          .si.answer {
+            color: var(--input-foreground);
+          }
+          .si.approval,
+          .si.limited {
+            color: var(--warning-foreground);
+          }
+          .si.failed {
+            color: var(--error-foreground);
+          }
+          .si.pr {
+            color: var(--muted-foreground);
+          }
+          /* v2 task rows (Overview panel): line 1 status + title + time, line 2 owner + live activity */
+          .tk {
+            position: relative;
+            display: grid;
+            grid-template-columns: 14px minmax(0, 1fr) auto;
+            column-gap: 8px;
+            row-gap: 2px;
+            align-items: center;
+            min-height: 44px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .tk:hover,
+          .tk.hover {
+            background: var(--accent);
+          }
+          .tk.sel {
+            background: var(--accent);
+            box-shadow: inset 0 0 0 1px var(--border);
+          }
+          .tk .tt {
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .tk .rt {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            justify-self: end;
+          }
+          .tk .when {
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+          }
+          .tk .l2 {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .tk .l2 .who {
+            color: var(--foreground);
+          }
+          .tk .l2 .ell {
+            flex: 0 1 auto;
+          }
+          .tk .stc {
+            display: none;
+          }
+          .tk:hover .stc,
+          .tk.hover .stc {
+            display: inline-flex;
+          }
+          .tk:hover .rt > .when,
+          .tk:hover .rt > .dot,
+          .tk.hover .rt > .when,
+          .tk.hover .rt > .dot {
+            display: none;
+          }
+          /* v2 status control: compact on rows, full size in the task header */
+          .stc {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            height: 24px;
+            margin: -2px 0;
+            padding: 0 6px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .stc:hover {
+            background: var(--accent);
+          }
+          /* v2 menus: status menu, ⋯ menus, mention menu */
+          .smenu {
+            position: absolute;
+            z-index: 20;
+            min-width: 200px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--popover);
+            box-shadow: 0 8px 24px rgba(9, 9, 11, 0.12);
+            font-size: 13px;
+            font-weight: 400;
+          }
+          .smenu .mh {
+            padding: 4px 8px 4px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .smi {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 28px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            text-align: left;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .smi:hover,
+          .smi.on {
+            background: var(--accent);
+          }
+          .smi .mk {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--muted-foreground);
+          }
+          .smi .ck {
+            visibility: hidden;
+          }
+          .smi[aria-checked="true"] .ck {
+            visibility: visible;
+          }
+          .smi[aria-disabled="true"] {
+            cursor: default;
+          }
+          .smi[aria-disabled="true"]:hover {
+            background: none;
+          }
+          .smi.danger {
+            color: var(--error-foreground);
+          }
+          .smsep {
+            height: 1px;
+            margin: 4px -4px;
+            background: var(--border);
+          }
+          /* v2 task page */
+          .tcrumb {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+          }
+          .tcrumb a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex: none;
+            color: var(--muted-foreground);
+          }
+          .tcrumb a:hover {
+            color: var(--foreground);
+          }
+          .tcrumb .sep {
+            color: var(--input);
+          }
+          .tcrumb .cur {
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .tpage {
+            box-sizing: content-box;
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 32px 24px 48px;
+          }
+          .tpage-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 24px;
+          }
+          .tprops {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0 2px;
+            margin: 6px 0 0 -8px;
+          }
+          .tprop {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            font-size: 13px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          button.tprop:disabled {
+            cursor: default;
+          }
+          button.tprop:disabled:hover {
+            background: none;
+          }
+          .tprops.off .v {
+            color: var(--muted-foreground);
+          }
+          button.tprop,
+          a.tprop {
+            cursor: pointer;
+          }
+          button.tprop:hover,
+          button.tprop[aria-expanded="true"],
+          .th .hov[aria-expanded="true"],
+          a.tprop:hover {
+            background: var(--accent);
+          }
+          .tprop .v {
+            color: var(--foreground);
+          }
+          .tdesc {
+            margin-top: 8px;
+            padding: 12px;
+            border-radius: 8px;
+            background: var(--accent);
+          }
+          .tdesc p {
+            margin: 0;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+          .tdesc .linkbtn {
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .sect {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 32px;
+            margin: 28px 0 4px;
+          }
+          .sect h2 {
+            margin: 0;
+            font-size: 13px;
+            font-weight: 500;
+          }
+          .sect .n {
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          /* v2 thread rows on the task page: borderless like panel rows */
+          .th {
+            position: relative;
+            display: grid;
+            grid-template-columns: 14px minmax(0, 1fr) auto;
+            column-gap: 8px;
+            row-gap: 2px;
+            align-items: center;
+            min-height: 44px;
+            margin: 0 -8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .th:hover,
+          .th.hover {
+            background: var(--accent);
+          }
+          .th .t1 {
+            display: block;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .th .t2 {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .th .t2 .who {
+            color: var(--foreground);
+          }
+          .th .rt {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            height: 20px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .th .hov {
+            display: none;
+          }
+          .th:hover .hov,
+          .th.hover .hov {
+            display: inline-flex;
+          }
+          .th:hover .rt > .when,
+          .th.hover .rt > .when {
+            display: none;
+          }
+          .th .ask {
+            grid-column: 2 / 4;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 6px 0 2px;
+          }
+          .code {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            min-width: 0;
+            padding: 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+          }
+          .th:hover .code,
+          .th.hover .code {
+            background: var(--background);
+          }
+          .prc {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .ai {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 28px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .ai .ic {
+            display: inline-flex;
+            justify-content: center;
+            width: 16px;
+            flex: none;
+          }
+          .ai .who,
+          .ai .to {
+            color: var(--foreground);
+          }
+          /* v2 bands: banners and suggestions on the task page, borderless */
+          .tbanner {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 8px;
+            background: var(--accent);
+          }
+          .tbanner.row {
+            min-height: 40px;
+            padding: 6px 6px 6px 12px;
+          }
+          .tbanner + .tdesc,
+          .suggest + .tdesc {
+            margin-top: 8px;
+          }
+          .tempty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            padding: 20px 16px;
+            border: 1px dashed var(--input);
+            border-radius: 8px;
+            text-align: center;
+          }
+          .suggest {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 40px;
+            margin-top: 16px;
+            padding: 6px 6px 6px 12px;
+            border-radius: 8px;
+            background: var(--accent);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .suggest .btn {
+            color: var(--foreground);
+          }
+          /* v2 read-only task status chip (thread header, previews) */
+          .stchip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            flex: none;
+            height: 20px;
+            padding: 0 6px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+          }
+          a.stchip:hover {
+            background: var(--accent);
+          }
+          /* v2 canceled rows read as closed */
+          .tk.off .tt {
+            font-weight: 400;
+            color: var(--muted-foreground);
+          }
+          /* v2 narrow shells (opt in with .narrowpanel): below 1100 the panel becomes an overlay
+             under the header, opened by .panel-toggle */
+          .panel-toggle {
+            display: none;
+          }
+          @media (max-width: 1100px) {
+            .shell.narrowpanel {
+              position: relative;
+            }
+            .shell.narrowpanel .panel {
+              display: none;
+            }
+            .shell.narrowpanel .panel-toggle {
+              display: inline-flex;
+            }
+            .shell.narrowpanel.panel-open .panel {
+              display: flex;
+              position: absolute;
+              top: 52px;
+              right: 0;
+              bottom: 0;
+              z-index: 30;
+              width: 340px;
+              border-left: 1px solid var(--border);
+              box-shadow: -8px 0 24px rgba(9, 9, 11, 0.16);
+            }
+            .shell.narrowpanel .panel .panel-ctl {
+              display: none;
+            }
+          }
           /*shared-end*/
           .msg {
             position: relative;
@@ -1428,957 +1921,632 @@
               flex-basis: 100%;
             }
           }
+
+          /* builder C (v2): local overrides. Status icons drawn inline; candidates for shared.css. */
+          .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          }
+          .c-list {
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            max-height: 162px;
+            overflow: auto;
+            scrollbar-width: thin;
+          }
+          .c-opt {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 32px;
+            padding: 0 10px;
+            cursor: pointer;
+            user-select: none;
+          }
+          .c-opt + .c-opt {
+            border-top: 1px solid var(--border);
+          }
+          .c-opt:hover {
+            background: var(--accent);
+          }
+          .c-opt .nm {
+            flex: none;
+            font-weight: 500;
+          }
+          .c-opt .path {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-opt .tagx {
+            flex: none;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-cb {
+            flex: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border: 1px solid var(--input);
+            border-radius: 4px;
+            background: var(--card);
+            color: var(--primary-foreground);
+          }
+          .c-cb svg {
+            visibility: hidden;
+          }
+          .c-cb.on {
+            background: var(--primary);
+            border-color: transparent;
+          }
+          .c-cb.on svg {
+            visibility: visible;
+          }
+          .c-out {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-out > svg {
+            flex: none;
+            margin-top: 2px;
+          }
+          .c-out b {
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .c-out.bad,
+          .c-out.bad b {
+            color: var(--error-foreground);
+          }
+          .c-outs {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+          }
+          .c-key {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 52px;
+            padding: 8px 10px 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card);
+          }
+          .c-key > svg {
+            flex: none;
+            color: var(--muted-foreground);
+          }
+          .c-key .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .c-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-stat > svg {
+            flex: none;
+          }
+          .c-ok {
+            color: var(--success-foreground);
+          }
+          .c-sdot {
+            flex: none;
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            border: 1.5px solid var(--muted-foreground);
+          }
+          .c-tag {
+            display: inline-flex;
+            align-items: center;
+            height: 20px;
+            padding: 0 6px;
+            border-radius: 6px;
+            background: var(--accent);
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .scrim.l2 {
+            z-index: 44;
+          }
+          .vp.l2 {
+            z-index: 45;
+          }
+          .vp > .dialog.kd {
+            max-width: 480px;
+          }
+          .kd .db {
+            gap: 12px;
+          }
+          .kd .lead {
+            margin: 0;
+            color: var(--muted-foreground);
+          }
+          .kd .input.bad {
+            border-color: var(--error-foreground);
+          }
+          .kd .input:disabled {
+            opacity: 1;
+            color: var(--muted-foreground);
+          }
+          .kd .df .note a {
+            color: var(--muted-foreground);
+          }
+          .kd .df .note a:hover {
+            color: var(--foreground);
+          }
+          .c-al {
+            padding: 20px 20px 16px;
+          }
+          .c-al p {
+            margin: 6px 0 0;
+            color: var(--muted-foreground);
+          }
+
+          .c-bg {
+            position: absolute;
+            inset: 0;
+            display: block;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: var(--background);
+          }
+          .c-fltr {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 32px;
+            padding: 0 10px;
+            border-bottom: 1px solid var(--border);
+            color: var(--muted-foreground);
+          }
+          .c-fltr input {
+            flex: 1;
+            min-width: 0;
+            height: 30px;
+            padding: 0;
+            border: 0;
+            outline: 0;
+            background: transparent;
+            font: inherit;
+            color: var(--foreground);
+          }
+          .c-fltr input::placeholder {
+            color: var(--muted-foreground);
+          }
+          .c-scroll-l {
+            position: relative;
+            max-height: 160px;
+            overflow: auto;
+            scrollbar-width: thin;
+          }
+          .c-listbox {
+            position: relative;
+          }
+          .c-listbox.more::after {
+            content: "";
+            position: absolute;
+            left: 1px;
+            right: 1px;
+            bottom: 1px;
+            height: 8px;
+            border-radius: 0 0 7px 7px;
+            background: linear-gradient(to bottom, transparent, var(--card));
+            pointer-events: none;
+          }
+          .c-ob {
+            display: grid;
+            grid-template-columns: 16px minmax(0, 1fr);
+            column-gap: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .c-ob > svg {
+            margin-top: 1px;
+          }
+          .c-ob > .l {
+            grid-column: 2;
+          }
+          .c-ob b {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .c-ob.bad,
+          .c-ob.bad b {
+            color: var(--error-foreground);
+          }
+          .c-krow {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 50px;
+            padding: 6px 8px 6px 12px;
+          }
+          .c-krow > svg {
+            flex: none;
+            color: var(--muted-foreground);
+          }
+          .c-krow .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .c-key.v2 {
+            display: block;
+            min-height: 0;
+            padding: 0;
+          }
+          .c-kadd {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 0 8px 10px 38px;
+          }
+          .c-kadd .input.bad {
+            border-color: var(--error-foreground);
+          }
+          .c-kadd .input:disabled {
+            opacity: 1;
+            color: var(--muted-foreground);
+          }
+          .c-kline {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+          }
+          .c-kline .input {
+            flex: 1;
+            min-width: 0;
+          }
+          .c-kline .err,
+          .c-kline .help {
+            min-width: 0;
+          }
+          .c-kacts {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 4px;
+          }
+          .c-ext {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-weight: 500;
+            color: var(--foreground);
+          }
+          .c-bad {
+            color: var(--error-foreground);
+          }
+
+          .c-list.c-listbox {
+            max-height: none;
+            overflow: hidden;
+          }
+          .c-list .c-opt.muted {
+            cursor: default;
+            color: var(--muted-foreground);
+          }
+          .c-list .c-opt.muted:hover {
+            background: transparent;
+          }
+          @media (max-width: 639px) {
+            .c-opt .path {
+              direction: rtl;
+              text-align: left;
+            }
+            .c-opt .path .ltr {
+              direction: ltr;
+              unicode-bidi: isolate;
+            }
+          }
+
+          .c-kact {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: none;
+          }
+          .btn.ghost.c-act {
+            font-weight: 500;
+            color: var(--foreground);
+            gap: 6px;
+          }
+          .btn.ghost.c-act:disabled {
+            color: var(--muted-foreground);
+            opacity: 1;
+          }
+          .btn.ghost.c-danger {
+            font-weight: 500;
+            color: var(--destructive);
+          }
+          .c-stat.ok,
+          .c-stat.ok svg {
+            color: var(--success-foreground);
+          }
+          .c-kadd {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 0 12px 12px 38px;
+          }
+          .c-kadd > .input {
+            width: 100%;
+            height: 32px;
+          }
+          .c-kerr {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--destructive);
+          }
+          .c-kerr svg {
+            flex: none;
+          }
+          .c-kacts {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 2px;
+          }
+          .c-kacts .c-act {
+            margin-left: -8px;
+          }
+          .c-lfoot {
+            display: flex;
+            align-items: center;
+            height: 28px;
+            padding: 0 10px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .pair .c-wsname {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0;
+            border: 0;
+            border-bottom: 1px solid transparent;
+            background: none;
+            font: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--foreground);
+            cursor: text;
+          }
+          .c-wsname:hover {
+            border-bottom-color: var(--border);
+          }
+          .c-wsname svg {
+            color: var(--muted-foreground);
+          }
+          .pair .c-wsin {
+            height: 24px;
+            padding: 0 6px;
+            border: 1px solid var(--input);
+            border-radius: 6px;
+            background: var(--background);
+            font: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--foreground);
+            outline: 2px solid var(--primary);
+            outline-offset: 0;
+          }
+          .c-notesave {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--warning-foreground);
+          }
+          @media (max-width: 639px) {
+            .c-krow {
+              flex-wrap: wrap;
+              row-gap: 6px;
+            }
+            .c-krow > .tx {
+              flex-basis: calc(100% - 26px);
+            }
+            .c-krow .c-kact {
+              flex-basis: 100%;
+              padding-left: 26px;
+            }
+            .c-kadd {
+              padding-left: 12px;
+            }
+          }
+
+          .c-nw,
+          .c-ob b {
+            white-space: nowrap;
+          }
+          .pair .c-wsin {
+            box-sizing: border-box;
+            height: 28px;
+            min-width: 160px;
+            max-width: 280px;
+            vertical-align: middle;
+          }
+
+          .vp > .dialog.ss {
+            max-height: calc(100vh - 32px);
+          }
+          .ss .db {
+            gap: 16px;
+            overflow: auto;
+            min-height: 0;
+          }
+          .ss .dzrow .anchor .pop {
+            bottom: calc(100% + 4px);
+            right: 0;
+            left: auto;
+            top: auto;
+            width: 200px;
+          }
+          .c-repobox {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-height: 40px;
+            padding: 5px 6px 5px 6px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+          }
+          .c-rchip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+            font-size: 12px;
+            font-weight: 500;
+          }
+          .c-rchip svg {
+            color: var(--muted-foreground);
+          }
+          .c-repobox .btn {
+            margin-left: auto;
+          }
+          .c-editbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          .c-wsl {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+          }
+          .c-wsl svg {
+            flex: none;
+            color: var(--muted-foreground);
+          }
+          .c-editbar .btn {
+            flex: none;
+          }
+          .al-p {
+            margin: 6px 0 0;
+            color: var(--muted-foreground);
+          }
+          .rrow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            font-size: 13px;
+          }
+          .cb {
+            width: 16px;
+            height: 16px;
+            flex: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border: 1px solid var(--input);
+            border-radius: 4px;
+            background: var(--card);
+            color: var(--primary-foreground);
+            cursor: pointer;
+          }
+          .cb[aria-checked="true"] {
+            border-color: transparent;
+            background: var(--primary);
+          }
+          .cb[aria-checked="false"] svg {
+            visibility: hidden;
+          }
+          .rrow .rto {
+            height: 28px;
+            border: 1px solid var(--input);
+          }
+          .rrow:has(.cb[aria-checked="false"]) .rto {
+            opacity: 0.5;
+          }
+          .al-p.rnote {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .vp > .dialog.alert:has(.rrow) {
+            max-width: 460px;
+          }
+          .c-mem {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+          }
+          .c-mem .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .c-key.compact {
+            min-height: 40px;
+            padding: 5px 6px 5px 12px;
+            border-color: var(--input);
+          }
+          .c-key.compact .c-stat {
+            font-size: 13px;
+            color: var(--foreground);
+          }
+          .c-key.compact .c-sdot + .ell {
+            color: var(--muted-foreground);
+          }
+          .ro .c-stat {
+            font-size: 13px;
+          }
+          .ss .c-key + .help {
+            margin-top: 0;
+          }
+          @media (max-width: 639px) {
+            .vp > .dialog.ss {
+              max-height: calc(100dvh - 48px);
+            }
+            .c-mem .stack {
+              display: none;
+            }
+          }
         </style>
       </helmet>
       <div class="pair stage">
-        <div class="shell room" inert aria-hidden="true">
-          <nav class="side" aria-label="Sidebar">
-            <div class="side-top">
-              <span class="w6">Pair</span><span class="t12 muted">Pair Cloud</span>
-            </div>
-            <div class="side-body">
-              <a class="srow" href="#new"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 3v10M3 8h10" /></svg
-                >New thread</a
-              >
-              <a class="srow" href="#mine"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <circle cx="8" cy="5.5" r="2.5" />
-                  <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" /></svg
-                ><span class="grow">Assigned to me</span><span class="meta">1</span></a
-              >
+        <iframe
+          class="c-bg"
+          src="{{bgSrc}}"
+          title=""
+          tabindex="-1"
+          aria-hidden="true"
+          inert
+        ></iframe>
 
-              <div class="slabel">
-                <span>Spaces</span
-                ><a class="btn ghost icon sm" href="NewSpace.dc.html" aria-label="New space"
-                  ><svg
-                    aria-hidden="true"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                  >
-                    <path d="M8 3v10M3 8h10" /></svg
-                ></a>
-              </div>
-              <a class="srow" href="#room" aria-current="page"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <circle cx="5.5" cy="6" r="2.5" />
-                  <circle cx="10.5" cy="6" r="2.5" />
-                  <path
-                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                  /></svg
-                ><span class="grow ell">Question creation</span></a
-              >
-              <a class="srow sub" href="Task.dc.html"
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--warning-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" /></svg
-                ><span class="grow ell">Seed role catalog</span
-                ><span class="meta" style="color: var(--warning-foreground)">Needs you</span></a
-              >
-              <a class="srow sub" href="Task.dc.html"
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--success-foreground)"
-                  stroke-width="1.7"
-                >
-                  <circle cx="4.5" cy="3.8" r="1.8" />
-                  <circle cx="4.5" cy="12.2" r="1.8" />
-                  <circle cx="11.5" cy="12.2" r="1.8" />
-                  <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg
-                ><span class="grow ell">Question schema v2</span
-                ><span class="meta">In review</span></a
-              >
-              <a class="srow more" href="#room">5 more</a>
-              <a class="srow" href="#space-2"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <circle cx="5.5" cy="6" r="2.5" />
-                  <circle cx="10.5" cy="6" r="2.5" />
-                  <path
-                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                  /></svg
-                ><span class="grow ell">Onboarding revamp</span
-                ><span class="dot" role="img" aria-label="Unread"></span
-              ></a>
-
-              <div class="slabel"><span>Projects</span></div>
-              <a class="srow" href="#p1"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
-                >pair-fe</a
-              >
-              <a class="srow sub" href="#t1"
-                ><span class="grow ell">Fix sidebar drag flicker</span
-                ><span class="meta">2d</span></a
-              >
-              <a class="srow" href="#p2"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
-                >pair-be</a
-              >
-              <a class="srow sub" href="#t3"
-                ><span class="grow ell">Bundle upload retries</span><span class="meta">5d</span></a
-              >
-            </div>
-          </nav>
-
-          <main class="col">
-            <header class="top">
-              <svg
-                aria-hidden="true"
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="var(--muted-foreground)"
-                stroke-width="1.4"
-              >
-                <circle cx="5.5" cy="6" r="2.5" />
-                <circle cx="10.5" cy="6" r="2.5" />
-                <path
-                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
-                />
-              </svg>
-              <h1
-                class="w6 ell"
-                style="margin: 0; font-size: 13px; flex: 0 0 auto; max-width: 50%"
-                title="Let a recruiter describe a role and get interview questions drafted, tagged and previewed. Repos: pair-fe, pair-be"
-              >
-                Question creation
-              </h1>
-              <span class="row t12 muted repos" style="gap: 4px"
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
-                ><span class="ell">pair-fe, pair-be</span></span
-              >
-              <span class="grow"></span>
-              <button
-                type="button"
-                class="btn ghost"
-                aria-label="{{memLabel}}"
-                style="padding: 0 6px"
-              >
-                <span class="stack"
-                  ><sc-if value="{{stf_r}}" hint-placeholder-val="{{true}}"
-                    ><span class="av r" aria-hidden="true">R</span></sc-if
-                  ><sc-if value="{{stf_k}}" hint-placeholder-val="{{false}}"
-                    ><span class="av k" aria-hidden="true">K</span></sc-if
-                  ><sc-if value="{{stf_h}}" hint-placeholder-val="{{false}}"
-                    ><span class="av h" aria-hidden="true">H</span></sc-if
-                  ><sc-if value="{{stf_a}}" hint-placeholder-val="{{false}}"
-                    ><span class="av a" aria-hidden="true">A</span></sc-if
-                  ><sc-if value="{{st_r}}" hint-placeholder-val="{{false}}"
-                    ><span class="av r" aria-hidden="true">R</span></sc-if
-                  ><sc-if value="{{st_k}}" hint-placeholder-val="{{true}}"
-                    ><span class="av k" aria-hidden="true">K</span></sc-if
-                  ><sc-if value="{{st_h}}" hint-placeholder-val="{{true}}"
-                    ><span class="av h" aria-hidden="true">H</span></sc-if
-                  ><sc-if value="{{st_a}}" hint-placeholder-val="{{true}}"
-                    ><span class="av a" aria-hidden="true">A</span></sc-if
-                  ></span
-                >
-              </button>
-              <a
-                class="btn ghost icon"
-                href="SpaceSettings.dc.html"
-                aria-label="Space settings: rename, brief, members, leave, archive"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                >
-                  <circle cx="3.5" cy="8" r="1.2" />
-                  <circle cx="8" cy="8" r="1.2" />
-                  <circle cx="12.5" cy="8" r="1.2" /></svg
-              ></a>
-            </header>
-
-            <div class="scroll">
-              <div class="feed" role="log" aria-label="Room messages">
-                <div class="daysep">Tuesday 10 November</div>
-
-                <div class="sys first">
-                  Rutvik created
-                  <a class="chip" href="Task.dc.html"
-                    ><svg
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--info-foreground)"
-                      stroke-width="1.6"
-                      stroke-dasharray="2.2 2.2"
-                    >
-                      <circle cx="8" cy="8" r="6" /></svg
-                    >Generate question from prompt</a
-                  >
-                  for Kousik and
-                  <a class="chip" href="TaskUnstarted.dc.html"
-                    ><svg
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--muted-foreground)"
-                      stroke-width="1.6"
-                    >
-                      <circle cx="8" cy="8" r="6" /></svg
-                    >Difficulty tagging</a
-                  >
-                  for Hanad <span class="nw">· 10:30</span>
-                </div>
-
-                <div class="msg">
-                  <span class="av r" aria-hidden="true">R</span>
-                  <div class="head">
-                    <span class="w6">Rutvik</span><span class="t12 muted">10:31</span>
-                  </div>
-                  <div class="body">
-                    <p>
-                      <span class="mention">@Kousik</span> <span class="mention">@Hanad</span> two
-                      tasks are assigned to you. Can you pick them up?
-                    </p>
-                  </div>
-                </div>
-
-                <div class="msg">
-                  <span class="av a" aria-hidden="true">A</span>
-                  <div class="head">
-                    <span class="w6">Ankur</span><span class="t12 muted">10:34</span>
-                  </div>
-                  <div class="body"><p>I'll take the preview renderer.</p></div>
-                </div>
-                <div class="sys">
-                  Ankur created
-                  <a class="chip" href="Task.dc.html"
-                    ><svg
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--input-foreground)"
-                      stroke-width="1.6"
-                    >
-                      <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
-                      <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
-                    >Preview renderer</a
-                  ><span class="nw"> · 10:34</span>
-                </div>
-
-                <div class="newsep">New</div>
-
-                <div class="msg" id="kousik-1040">
-                  <span class="av k" aria-hidden="true">K</span>
-                  <div class="head">
-                    <span class="w6">Kousik</span><span class="t12 muted">10:40</span>
-                  </div>
-                  <div class="body">
-                    <p>Do we tag difficulty when the question is generated, or after review?</p>
-                  </div>
-                  <div class="hoverbar" role="toolbar" aria-label="Message actions">
-                    <button type="button" class="btn ghost icon sm" aria-label="Reply">
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path d="M6.5 4L3 7.5 6.5 11" />
-                        <path d="M3 7.5h6.5a3.5 3.5 0 0 1 3.5 3.5v1" />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      class="btn ghost icon sm"
-                      aria-label="Add to Pair's notes"
-                    >
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path d="M4.5 2.5h7v11L8 11l-3.5 2.5z" />
-                      </svg>
-                    </button>
-                    <button type="button" class="btn ghost icon sm" aria-label="Copy link">
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path
-                          d="M7 9a3 3 0 0 0 4.2 0l2-2A3 3 0 0 0 9 2.8l-.8.8M9 7a3 3 0 0 0-4.2 0l-2 2A3 3 0 0 0 7 13.2l.8-.8"
-                        />
-                      </svg>
-                    </button>
-                    <button type="button" class="btn ghost icon sm" aria-label="More: edit, delete">
-                      <svg
-                        aria-hidden="true"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="currentColor"
-                      >
-                        <circle cx="3.5" cy="8" r="1.1" />
-                        <circle cx="8" cy="8" r="1.1" />
-                        <circle cx="12.5" cy="8" r="1.1" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-
-                <div class="msg">
-                  <span class="av h" aria-hidden="true">H</span>
-                  <div class="head">
-                    <span class="w6">Hanad</span><span class="t12 muted">10:42</span>
-                  </div>
-                  <a class="quote" href="#kousik-1040"
-                    ><svg
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                    >
-                      <path d="M3 3v4.5a2 2 0 0 0 2 2h8M10 6.5l3 3-3 3" /></svg
-                    ><span class="w5" style="color: var(--foreground)">Kousik</span
-                    ><span class="ell"
-                      >Do we tag difficulty when the question is generated, or after review?</span
-                    ></a
-                  >
-                  <div class="body">
-                    <p>After review. The reviewer usually changes it anyway.</p>
-                  </div>
-                </div>
-
-                <div class="sys first">
-                  <svg
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="var(--input-foreground)"
-                    stroke-width="1.6"
-                  >
-                    <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
-                    <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
-                  ><a class="chip" href="Task.dc.html">Preview renderer</a> needs Ankur: Which image
-                  sizes should the preview support?<span class="nw"> · 10:58</span>
-                </div>
-
-                <div class="msg">
-                  <span class="av r" aria-hidden="true">R</span>
-                  <div class="head">
-                    <span class="w6">Rutvik</span><span class="t12 muted">11:05</span>
-                  </div>
-                  <div class="body">
-                    <p>
-                      <span class="mention">@pair</span> what did we decide on difficulty tagging,
-                      and is anything blocked?
-                    </p>
-                  </div>
-                </div>
-
-                <div class="msg">
-                  <span class="pairmark" aria-hidden="true"
-                    ><svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.6"
-                    >
-                      <circle cx="6" cy="8" r="3.5" />
-                      <circle cx="10" cy="8" r="3.5" /></svg
-                  ></span>
-                  <div class="head">
-                    <span class="w6">Pair</span><span class="tag">Agent</span
-                    ><a class="t12 muted" href="#rutvik-1105">replying to Rutvik</a
-                    ><span class="t12 muted">11:05</span>
-                  </div>
-                  <div class="body">
-                    <p>
-                      Difficulty is tagged after review, not when a question is generated (Hanad,
-                      10:42).
-                    </p>
-                    <p>
-                      One task is blocked:
-                      <a class="chip" href="Task.dc.html"
-                        ><svg
-                          aria-hidden="true"
-                          width="12"
-                          height="12"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="var(--input-foreground)"
-                          stroke-width="1.6"
-                        >
-                          <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
-                          <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
-                        >Preview renderer</a
-                      >
-                      is waiting on Ankur to choose image sizes.
-                      <a class="chip" href="Task.dc.html"
-                        ><svg
-                          aria-hidden="true"
-                          width="12"
-                          height="12"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="var(--info-foreground)"
-                          stroke-width="1.6"
-                          stroke-dasharray="2.2 2.2"
-                        >
-                          <circle cx="8" cy="8" r="6" /></svg
-                        >Generate question from prompt</a
-                      >
-                      is moving, and
-                      <a class="chip" href="TaskUnstarted.dc.html"
-                        ><svg
-                          aria-hidden="true"
-                          width="12"
-                          height="12"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="var(--muted-foreground)"
-                          stroke-width="1.6"
-                        >
-                          <circle cx="8" cy="8" r="6" /></svg
-                        >Difficulty tagging</a
-                      >
-                      hasn't started.
-                    </p>
-                    <div class="receipt">
-                      <svg
-                        aria-hidden="true"
-                        width="12"
-                        height="12"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path d="M4.5 2.5h7v11L8 11l-3.5 2.5z" /></svg
-                      ><span
-                        >Added to <button type="button" class="linkbtn">notes</button>: "Difficulty
-                        is tagged after review" ·
-                        <button type="button" class="linkbtn">Undo</button></span
-                      >
-                    </div>
-                  </div>
-                </div>
-
-                <div class="msg">
-                  <span class="av h" aria-hidden="true">H</span>
-                  <div class="head">
-                    <span class="w6">Hanad</span><span class="t12 muted">11:12</span>
-                  </div>
-                  <div class="body">
-                    <p><span class="mention">@pair</span> which task touches the review list?</p>
-                  </div>
-                </div>
-                <sc-if value="{{sys0}}" hint-placeholder-val="{{false}}"
-                  ><div class="sys">{{sys0Text}} <span class="nw">· 11:20</span></div></sc-if
-                >
-                <sc-if value="{{sys1}}" hint-placeholder-val="{{false}}"
-                  ><div class="sys">{{sys1Text}} <span class="nw">· 11:21</span></div></sc-if
-                >
-                <sc-if value="{{sys2}}" hint-placeholder-val="{{false}}"
-                  ><div class="sys">{{sys2Text}} <span class="nw">· 11:22</span></div></sc-if
-                >
-                <div class="sys">
-                  <svg
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    stroke-dasharray="2.2 2.2"
-                  >
-                    <circle cx="8" cy="8" r="6" /></svg
-                  >Pair is replying to Hanad
-                </div>
-              </div>
-            </div>
-
-            <div class="composer-wrap">
-              <div class="composer">
-                <div class="fakeph" aria-hidden="true">
-                  Message the space<span class="phlong"> · @ to mention Pair or a teammate</span>
-                </div>
-                <div class="foot">
-                  <button
-                    type="button"
-                    class="btn ghost"
-                    aria-pressed="false"
-                    style="padding: 0 8px"
-                  >
-                    <svg
-                      aria-hidden="true"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--primary)"
-                      stroke-width="1.6"
-                    >
-                      <circle cx="6" cy="8" r="3.5" />
-                      <circle cx="10" cy="8" r="3.5" /></svg
-                    >@pair
-                  </button>
-                  <span class="grow ell t12 muted" aria-live="polite"></span>
-                  <button type="button" class="send" aria-label="Send" disabled="true">
-                    <svg
-                      aria-hidden="true"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                    >
-                      <path d="M8 13V3M4 7l4-4 4 4" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </main>
-
-          <aside class="panel" aria-label="Space panel">
-            <div class="tabs">
-              <div role="tablist" aria-label="Space panel" class="row" style="gap: 4px">
-                <button type="button" class="tab" role="tab" aria-selected="true">
-                  <svg
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                  >
-                    <path
-                      d="M2.5 4.2l1.2 1.2 2-2.2M2.5 9.2l1.2 1.2 2-2.2M8 4.5h5.5M8 9.5h5.5M8 13h5.5"
-                    /></svg
-                  >Overview
-                </button>
-                <button type="button" class="tab" role="tab" aria-selected="false">
-                  <svg
-                    aria-hidden="true"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                  >
-                    <path d="M4 2.5h5.5L12 5v8.5H4z" />
-                    <path d="M6 8h4M6 10.5h4" /></svg
-                  >Notes
-                </button>
-              </div>
-              <button
-                type="button"
-                class="btn ghost icon sm"
-                aria-label="Add: new task, browser, terminal, files"
-                title="New task, or open a surface"
-              >
-                <svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 3v10M3 8h10" />
-                </svg>
-              </button>
-              <span class="grow"></span>
-              <button type="button" class="btn ghost icon sm" aria-label="Expand panel">
-                <svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <path d="M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9" />
-                </svg>
-              </button>
-              <button type="button" class="btn ghost icon sm" aria-label="Hide panel">
-                <svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                >
-                  <rect x="2" y="3" width="12" height="10" rx="1.5" />
-                  <path d="M10 3v10" />
-                </svg>
-              </button>
-            </div>
-
-            <div class="scroll ov">
-              <button type="button" class="ghead" aria-expanded="true">
-                Needs you <span class="n">1</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </button>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--warning-foreground)"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" />
-                  <path d="M6.6 6.3a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1.1-1.5 2.1M8 10.9h.01" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Seed role catalog</span
-                  ><span class="l2"
-                    >for you · <span class="ell">wants to run pnpm db:migrate</span></span
-                  ></span
-                >
-                <span class="rc"
-                  ><span class="dot" role="img" aria-label="Updated since you looked"></span
-                  ><span class="when">2m</span></span
-                >
-              </a>
-
-              <button type="button" class="ghead" aria-expanded="true">
-                In progress <span class="n">3</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </button>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--error-foreground)"
-                  stroke-width="1.6"
-                >
-                  <circle cx="8" cy="8" r="6" />
-                  <path d="M8 4.8v3.6M8 11h.01" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Sample role fixtures</span
-                  ><span class="l2"
-                    >for <span class="av xs k" aria-hidden="true">K</span
-                    ><span class="who">Kousik</span> ·
-                    <span class="ell">failed: fixtures.test.ts</span></span
-                  ></span
-                >
-                <span class="rc"><span></span><span class="when">1h</span></span>
-              </a>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--input-foreground)"
-                  stroke-width="1.5"
-                >
-                  <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
-                  <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Preview renderer</span
-                  ><span class="l2"
-                    >for <span class="av xs a" aria-hidden="true">A</span
-                    ><span class="who">Ankur</span> ·
-                    <span class="ell">needs Ankur: Which image sizes…</span></span
-                  ></span
-                >
-                <span class="rc"><span></span><span class="when">12m</span></span>
-              </a>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--info-foreground)"
-                  stroke-width="1.6"
-                  stroke-dasharray="2.2 2.2"
-                >
-                  <circle cx="8" cy="8" r="6" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Generate question from prompt</span
-                  ><span class="l2"
-                    >for <span class="av xs k" aria-hidden="true">K</span
-                    ><span class="who">Kousik</span></span
-                  ></span
-                >
-                <span class="rc"
-                  ><span class="dot" role="img" aria-label="Updated since you looked"></span
-                  ><span class="when">4m</span></span
-                >
-              </a>
-
-              <button type="button" class="ghead" aria-expanded="true">
-                Not started <span class="n">1</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </button>
-              <a class="trow" href="TaskUnstarted.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <circle cx="8" cy="8" r="6" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1">Difficulty tagging</span
-                  ><span class="l2"
-                    >for <span class="av xs h" aria-hidden="true">H</span
-                    ><span class="who">Hanad</span> ·
-                    <span class="ell">assigned by Rutvik</span></span
-                  ></span
-                >
-                <span class="rc"><span></span><span class="when">34m</span></span>
-              </a>
-
-              <button type="button" class="ghead" aria-expanded="true">
-                In review <span class="n">1</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </button>
-              <a class="trow" href="Task.dc.html">
-                <svg
-                  class="st"
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--success-foreground)"
-                  stroke-width="1.6"
-                >
-                  <circle cx="4.5" cy="3.8" r="1.8" />
-                  <circle cx="4.5" cy="12.2" r="1.8" />
-                  <circle cx="11.5" cy="12.2" r="1.8" />
-                  <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" />
-                </svg>
-                <span class="tx"
-                  ><span class="l1"
-                    ><span
-                      class="muted"
-                      style="font-weight: 400; font-variant-numeric: tabular-nums"
-                      >pair-be#482</span
-                    >
-                    Question schema v2</span
-                  ><span class="l2"
-                    ><span class="ell"
-                      >main ← rutvik/schema-v2 <span class="add">+212</span>
-                      <span class="del">−40</span> · for you</span
-                    ></span
-                  ></span
-                >
-                <span class="rc"
-                  ><svg
-                    role="img"
-                    aria-label="Checks passed"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="var(--success-foreground)"
-                    stroke-width="1.8"
-                  >
-                    <path d="M3.5 8.5l3 3 6-7" /></svg
-                  ><span class="when">20m</span></span
-                >
-              </a>
-
-              <button type="button" class="ghead" aria-expanded="false">
-                Done <span class="n">1</span
-                ><svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="var(--muted-foreground)"
-                  stroke-width="1.6"
-                >
-                  <path d="M6 4l4 4-4 4" />
-                </svg>
-              </button>
-
-              <a class="newrow" href="NewTask.dc.html"
-                ><svg
-                  aria-hidden="true"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path d="M8 3v10M3 8h10" /></svg
-                >New task</a
-              >
-            </div>
-          </aside>
-        </div>
         <div class="scrim backdrop"></div>
         <div class="vp">
           <div
@@ -2400,6 +2568,8 @@
                   fill="none"
                   stroke="currentColor"
                   stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
                 >
                   <path d="M4 4l8 8M12 4l-8 8" /></svg
               ></a>
@@ -2419,6 +2589,8 @@
                           fill="none"
                           stroke="currentColor"
                           stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
                         >
                           <path d="M3.5 8.5l3 3 6-7" /></svg
                         >Saved</span
@@ -2434,11 +2606,44 @@
                     autocomplete="off"
                   />
                 </div>
+              </sc-if>
 
+              <div class="c-mem">
+                <div class="tx">
+                  <div class="w5">Members</div>
+                  <div class="t12 muted ell">{{memberLine}}</div>
+                </div>
+                <span class="stack" aria-hidden="true"
+                  ><span class="av {{sk0}}">{{si0}}</span><span class="av {{sk1}}">{{si1}}</span
+                  ><span class="av {{sk2}}">{{si2}}</span
+                  ><span class="av {{sk3}}">{{si3}}</span></span
+                >
+                <a class="btn" href="SpaceMembers.dc.html"
+                  ><svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="5.5" cy="6" r="2.5" />
+                    <circle cx="10.5" cy="6" r="2.5" />
+                    <path
+                      d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                    /></svg
+                  >{{memberCta}}</a
+                >
+              </div>
+
+              <sc-if value="{{isOwner}}" hint-placeholder-val="{{true}}">
                 <div class="field">
                   <div class="lblrow">
-                    <label class="lbl" for="ss-project">Project</label
-                    ><sc-if value="{{savedProject}}" hint-placeholder-val="{{false}}"
+                    <span class="lbl" id="ss-repos">Repositories</span
+                    ><sc-if value="{{savedRepos}}" hint-placeholder-val="{{false}}"
                       ><span class="aside saved" role="status"
                         ><svg
                           aria-hidden="true"
@@ -2448,45 +2653,789 @@
                           fill="none"
                           stroke="currentColor"
                           stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
                         >
                           <path d="M3.5 8.5l3 3 6-7" /></svg
                         >Saved</span
                       ></sc-if
+                    ><sc-if value="{{editing}}" hint-placeholder-val="{{false}}"
+                      ><span class="aside">{{countLabel}}</span></sc-if
                     >
                   </div>
-                  <div class="input selbox">
-                    <svg
-                      aria-hidden="true"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--muted-foreground)"
-                      stroke-width="1.4"
-                    >
-                      <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
-                    ><span>{{projName}}</span><span class="t12 muted ell">{{projRepos}}</span
-                    ><svg
-                      class="chev"
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.6"
-                    >
-                      <path d="M4 6l4 4 4-4" />
-                    </svg>
-                    <select id="ss-project" value="{{project}}" onChange="{{onProject}}">
-                      <option value="web">Pair web and API · pair-fe, pair-be</option>
-                      <option value="fe">pair-fe</option>
-                      <option value="be">pair-be</option>
-                    </select>
-                  </div>
-                  <span class="help"
-                    >New tasks check out these repositories. Running tasks keep theirs.</span
-                  >
+                  <sc-if value="{{notEditing}}" hint-placeholder-val="{{true}}">
+                    <div class="c-repobox">
+                      <span class="c-rchip"
+                        ><svg
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                        >pair-fe</span
+                      >
+                      <span class="c-rchip"
+                        ><svg
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                        >pair-be</span
+                      >
+                      <button type="button" class="btn" onClick="{{startEdit}}">Edit</button>
+                    </div>
+                    <div class="c-ob">
+                      <svg
+                        aria-hidden="true"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M4.5 3h3l1 1h5v6" />
+                        <path d="M2 5.5h3.5l1 1h5v6H2z" /></svg
+                      ><span>New threads start in this workspace by default.</span>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{editing}}" hint-placeholder-val="{{false}}">
+                    <div class="c-list c-listbox {{listMore}}">
+                      <label class="c-fltr"
+                        ><svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="7" cy="7" r="4.5" />
+                          <path d="M10.5 10.5l3 3" /></svg
+                        ><input
+                          type="text"
+                          placeholder="Filter repositories"
+                          aria-label="Filter repositories"
+                          value="{{rq}}"
+                          onChange="{{onRq}}"
+                      /></label>
+                      <div
+                        class="c-scroll-l"
+                        role="listbox"
+                        aria-multiselectable="true"
+                        aria-labelledby="ss-repos"
+                      >
+                        <sc-if value="{{von_fe}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_fe}}"
+                            onClick="{{rt_fe}}"
+                          >
+                            <span class="c-cb {{rc_fe}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-fe</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-fe</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_be}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_be}}"
+                            onClick="{{rt_be}}"
+                          >
+                            <span class="c-cb {{rc_be}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-be</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-be</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_ai}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ai}}"
+                            onClick="{{rt_ai}}"
+                          >
+                            <span class="c-cb {{rc_ai}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-ai</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-ai</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_ade}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ade}}"
+                            onClick="{{rt_ade}}"
+                          >
+                            <span class="c-cb {{rc_ade}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">ade</span
+                            ><span class="path mono"><span class="ltr">/srv/repos/ade</span></span>
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_ct}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ct}}"
+                            onClick="{{rt_ct}}"
+                          >
+                            <span class="c-cb {{rc_ct}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-cloud-test</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-cloud-test</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_rep}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_rep}}"
+                            onClick="{{rt_rep}}"
+                          >
+                            <span class="c-cb {{rc_rep}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-reports</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-reports</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_mob}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_mob}}"
+                            onClick="{{rt_mob}}"
+                          >
+                            <span class="c-cb {{rc_mob}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-mobile</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-mobile</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_docs}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_docs}}"
+                            onClick="{{rt_docs}}"
+                          >
+                            <span class="c-cb {{rc_docs}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-docs</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-docs</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_infra}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_infra}}"
+                            onClick="{{rt_infra}}"
+                          >
+                            <span class="c-cb {{rc_infra}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-infra</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-infra</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_ev}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ev}}"
+                            onClick="{{rt_ev}}"
+                          >
+                            <span class="c-cb {{rc_ev}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-evals</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-evals</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{von_ds}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ds}}"
+                            onClick="{{rt_ds}}"
+                          >
+                            <span class="c-cb {{rc_ds}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-design</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-design</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_fe}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_fe}}"
+                            onClick="{{rt_fe}}"
+                          >
+                            <span class="c-cb {{rc_fe}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-fe</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-fe</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_be}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_be}}"
+                            onClick="{{rt_be}}"
+                          >
+                            <span class="c-cb {{rc_be}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-be</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-be</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_ai}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ai}}"
+                            onClick="{{rt_ai}}"
+                          >
+                            <span class="c-cb {{rc_ai}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-ai</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-ai</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_ade}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ade}}"
+                            onClick="{{rt_ade}}"
+                          >
+                            <span class="c-cb {{rc_ade}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">ade</span
+                            ><span class="path mono"><span class="ltr">/srv/repos/ade</span></span>
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_ct}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ct}}"
+                            onClick="{{rt_ct}}"
+                          >
+                            <span class="c-cb {{rc_ct}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-cloud-test</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-cloud-test</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_rep}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_rep}}"
+                            onClick="{{rt_rep}}"
+                          >
+                            <span class="c-cb {{rc_rep}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-reports</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-reports</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_mob}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_mob}}"
+                            onClick="{{rt_mob}}"
+                          >
+                            <span class="c-cb {{rc_mob}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-mobile</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-mobile</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_docs}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_docs}}"
+                            onClick="{{rt_docs}}"
+                          >
+                            <span class="c-cb {{rc_docs}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-docs</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-docs</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_infra}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_infra}}"
+                            onClick="{{rt_infra}}"
+                          >
+                            <span class="c-cb {{rc_infra}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-infra</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-infra</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_ev}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ev}}"
+                            onClick="{{rt_ev}}"
+                          >
+                            <span class="c-cb {{rc_ev}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-evals</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-evals</span></span
+                            >
+                          </div></sc-if
+                        >
+                        <sc-if value="{{voff_ds}}" hint-placeholder-val="{{false}}"
+                          ><div
+                            class="c-opt"
+                            role="option"
+                            aria-selected="{{rs_ds}}"
+                            onClick="{{rt_ds}}"
+                          >
+                            <span class="c-cb {{rc_ds}}" aria-hidden="true"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" /></svg></span
+                            ><span class="nm">pair-design</span
+                            ><span class="path mono"
+                              ><span class="ltr">/srv/repos/pair-design</span></span
+                            >
+                          </div></sc-if
+                        ><sc-if value="{{rNoMatch}}" hint-placeholder-val="{{false}}"
+                          ><div class="c-opt muted">No repository matches</div></sc-if
+                        >
+                      </div>
+                      <sc-if value="{{rHidOn}}" hint-placeholder-val="{{false}}"
+                        ><div class="c-lfoot" aria-live="polite">
+                          +{{rHidN}} more selected below
+                        </div></sc-if
+                      >
+                    </div>
+                    <div aria-live="polite">
+                      <div class="c-ob {{outCls}}">
+                        <sc-if value="{{outIsBad}}" hint-placeholder-val="{{false}}"
+                          ><svg
+                            aria-hidden="true"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <circle cx="8" cy="8" r="6" />
+                            <path d="M8 4.8v3.6M8 11h.01" /></svg></sc-if
+                        ><sc-if value="{{outIsWs}}" hint-placeholder-val="{{true}}"
+                          ><svg
+                            aria-hidden="true"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M4.5 3h3l1 1h5v6" />
+                            <path d="M2 5.5h3.5l1 1h5v6H2z" /></svg></sc-if
+                        ><sc-if value="{{outIsOne}}" hint-placeholder-val="{{false}}"
+                          ><svg
+                            aria-hidden="true"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg></sc-if
+                        ><span
+                          >{{outPre}}<sc-if value="{{outBOn}}" hint-placeholder-val="{{true}}"
+                            ><b>{{outB}}</b></sc-if
+                          ><sc-if value="{{wsEdOn}}" hint-placeholder-val="{{false}}"
+                            ><button
+                              type="button"
+                              class="c-wsname"
+                              onClick="{{wsOpen}}"
+                              aria-label="Workspace name: {{wsAuto}}. Rename"
+                            >
+                              {{wsAuto}}<svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M10.5 3l2.5 2.5L6 12.5H3.5V10z" />
+                              </svg></button></sc-if
+                          ><sc-if value="{{wsEdOpen}}" hint-placeholder-val="{{false}}"
+                            ><input
+                              class="c-wsin"
+                              type="text"
+                              aria-label="Workspace name"
+                              value="{{wsAuto}}"
+                              style="width: calc({{wsLen}}ch + 24px)"
+                              onkeydown="{{wsKey}}"
+                              onblur="{{wsCommit}}" /></sc-if
+                          >{{outMid}}<sc-if value="{{nw0}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn0}}</span>{{nws0}}</sc-if
+                          ><sc-if value="{{nw1}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn1}}</span>{{nws1}}</sc-if
+                          ><sc-if value="{{nw2}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn2}}</span>{{nws2}}</sc-if
+                          ><sc-if value="{{nw3}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn3}}</span>{{nws3}}</sc-if
+                          ><sc-if value="{{nw4}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn4}}</span>{{nws4}}</sc-if
+                          ><sc-if value="{{nw5}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn5}}</span>{{nws5}}</sc-if
+                          ><sc-if value="{{nw6}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn6}}</span>{{nws6}}</sc-if
+                          ><sc-if value="{{nw7}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn7}}</span>{{nws7}}</sc-if
+                          ><sc-if value="{{nw8}}" hint-placeholder-val="{{false}}"
+                            ><span class="c-nw">{{nwn8}}</span>{{nws8}}</sc-if
+                          >{{outPost}}</span
+                        ><sc-if value="{{outNote}}" hint-placeholder-val="{{true}}"
+                          ><span class="l"
+                            >New threads use the new set. Existing threads keep theirs.</span
+                          ></sc-if
+                        >
+                      </div>
+                    </div>
+                    <div class="c-editbar">
+                      <span class="grow"></span>
+                      <button type="button" class="btn ghost" onClick="{{cancelEdit}}">
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        class="btn"
+                        onClick="{{saveEdit}}"
+                        disabled="{{cantSave}}"
+                      >
+                        Save repositories
+                      </button>
+                    </div>
+                  </sc-if>
                 </div>
 
                 <div class="linkrow">
@@ -2500,12 +3449,14 @@
                   <a class="btn" href="Main.dc.html#state=%7B%22tab%22%3A%22notes%22%7D"
                     ><svg
                       aria-hidden="true"
-                      width="12"
-                      height="12"
+                      width="14"
+                      height="14"
                       viewBox="0 0 16 16"
                       fill="none"
                       stroke="currentColor"
                       stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
                     >
                       <path d="M4 2.5h5.5L12 5v8.5H4z" />
                       <path d="M6 8h4M6 10.5h4" /></svg
@@ -2514,55 +3465,233 @@
                 </div>
 
                 <div class="field">
-                  <div class="lblrow">
-                    <label class="lbl" for="ss-bill">@pair replies run on</label
-                    ><sc-if value="{{savedBill}}" hint-placeholder-val="{{false}}"
-                      ><span class="aside saved" role="status"
-                        ><svg
-                          aria-hidden="true"
-                          width="12"
-                          height="12"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
+                  <span class="lbl">@pair</span>
+                  <div class="c-key v2">
+                    <div class="c-krow">
+                      <svg
+                        aria-hidden="true"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="5.5" cy="10.5" r="2.8" />
+                        <path d="M7.5 8.5L13 3M10.8 5.2l1.7 1.7M9.4 6.6l1.2 1.2" />
+                      </svg>
+                      <div class="tx">
+                        <div class="w5">Team Claude key</div>
+                        <div class="c-stat {{krStatCls}}">
+                          <sc-if value="{{krSet}}" hint-placeholder-val="{{true}}"
+                            ><svg
+                              class="c-ok"
+                              aria-hidden="true"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M3.5 8.5l3 3 6-7" /></svg></sc-if
+                          ><sc-if value="{{krPending}}" hint-placeholder-val="{{false}}"
+                            ><svg
+                              aria-hidden="true"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5" /></svg></sc-if
+                          ><span class="ell">{{krStatus}}</span>
+                        </div>
+                      </div>
+                      <sc-if value="{{krHasAct}}" hint-placeholder-val="{{true}}"
+                        ><div class="c-kact">
+                          <sc-if value="{{krShowAdd}}" hint-placeholder-val="{{false}}"
+                            ><button
+                              type="button"
+                              class="btn"
+                              onClick="{{krOpen}}"
+                              disabled="{{krBusy}}"
+                            >
+                              <svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M8 3v10M3 8h10" /></svg
+                              >Add key
+                            </button></sc-if
+                          >
+                          <sc-if value="{{krShowAsk}}" hint-placeholder-val="{{false}}"
+                            ><button
+                              type="button"
+                              class="btn ghost c-act"
+                              onClick="{{krAsk}}"
+                              disabled="{{krAskDis}}"
+                            >
+                              <sc-if value="{{krAsked}}" hint-placeholder-val="{{false}}"
+                                ><svg
+                                  class="c-ok"
+                                  aria-hidden="true"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.8"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <path d="M3.5 8.5l3 3 6-7" /></svg></sc-if
+                              ><sc-if value="{{krNotAsked}}" hint-placeholder-val="{{true}}"
+                                ><svg
+                                  aria-hidden="true"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.5"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <circle cx="8" cy="8" r="2.4" />
+                                  <path
+                                    d="M10.4 8v1a1.8 1.8 0 0 0 3.6 0V8A6 6 0 1 0 11 13.2"
+                                  /></svg></sc-if
+                              >{{krAskLabel}}
+                            </button></sc-if
+                          >
+                          <sc-if value="{{krLinkSet}}" hint-placeholder-val="{{false}}"
+                            ><a
+                              class="btn ghost c-act"
+                              href="TeamClaudeKey.dc.html#state=%7B%22key%22%3A%22set%22%7D"
+                              >Open in Settings<svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M5 11l6-6M6.5 5H11v4.5" /></svg></a
+                          ></sc-if></div
+                      ></sc-if>
+                    </div>
+                    <sc-if value="{{krAdding}}" hint-placeholder-val="{{false}}">
+                      <div class="c-kadd">
+                        <input
+                          id="kr-key"
+                          class="input mono {{krInputCls}}"
+                          type="password"
+                          autocomplete="off"
+                          spellcheck="false"
+                          aria-label="Anthropic API key"
+                          placeholder="sk-ant-api03-…"
+                          value="{{krValue}}"
+                          disabled="{{krChecking}}"
+                          aria-invalid="{{krErr}}"
+                          aria-describedby="kr-help"
+                        />
+                        <sc-if value="{{krErr}}" hint-placeholder-val="{{false}}"
+                          ><span class="c-kerr" id="kr-help" role="alert"
+                            ><svg
+                              aria-hidden="true"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <circle cx="8" cy="8" r="6" />
+                              <path d="M8 4.8v3.6M8 11h.01" /></svg
+                            >Anthropic rejected this key. Check it and try again.</span
+                          ></sc-if
                         >
-                          <path d="M3.5 8.5l3 3 6-7" /></svg
-                        >Saved</span
-                      ></sc-if
-                    >
+                        <sc-if value="{{krNoErr}}" hint-placeholder-val="{{true}}"
+                          ><span class="help" id="kr-help"
+                            >Stored on this server. You won't see it again.</span
+                          ></sc-if
+                        >
+                        <div class="c-kacts">
+                          <a
+                            class="btn ghost c-act"
+                            href="https://console.anthropic.com/settings/keys"
+                            target="_blank"
+                            rel="noreferrer"
+                            >Anthropic Console<svg
+                              aria-hidden="true"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.5"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M9 3h4v4M13 3L7.5 8.5M11.5 9.5V13H3V4.5h3.5" /></svg
+                          ></a>
+                          <span class="grow"></span>
+                          <button
+                            type="button"
+                            class="btn ghost"
+                            onClick="{{krCancel}}"
+                            disabled="{{krChecking}}"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            class="btn"
+                            onClick="{{krSave}}"
+                            disabled="{{krChecking}}"
+                          >
+                            <sc-if value="{{krChecking}}" hint-placeholder-val="{{false}}"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5" /></svg></sc-if
+                            >{{krSaveLabel}}
+                          </button>
+                        </div>
+                      </div>
+                    </sc-if>
                   </div>
-                  <div class="input selbox">
-                    <svg
-                      aria-hidden="true"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="var(--muted-foreground)"
-                      stroke-width="1.6"
-                    >
-                      <circle cx="6" cy="8" r="3.5" />
-                      <circle cx="10" cy="8" r="3.5" /></svg
-                    ><span>{{billLabel}}</span
-                    ><svg
-                      class="chev"
-                      aria-hidden="true"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.6"
-                    >
-                      <path d="M4 6l4 4 4-4" />
-                    </svg>
-                    <select id="ss-bill" value="{{bill}}" onChange="{{onBill}}">
-                      <option value="team">Team Claude key</option>
-                      <option value="mine">My Claude account</option>
-                    </select>
-                  </div>
-                  <span class="help">Pays for @pair replies and ownerless tasks.</span>
+                  <sc-if value="{{keyHelpOn}}" hint-placeholder-val="{{true}}"
+                    ><span class="help">{{keyHelp}}</span></sc-if
+                  >
                 </div>
               </sc-if>
 
@@ -2573,8 +3702,23 @@
                     <dd>{{name}}</dd>
                   </div>
                   <div>
-                    <dt>Project</dt>
-                    <dd>{{projName}} <span class="t12 muted">{{projRepos}}</span></dd>
+                    <dt>Repositories</dt>
+                    <dd class="c-wsl">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M4.5 3h3l1 1h5v6" />
+                        <path d="M2 5.5h3.5l1 1h5v6H2z" /></svg
+                      >pair-fe, pair-be
+                    </dd>
                   </div>
                   <div>
                     <dt>Brief</dt>
@@ -2582,18 +3726,254 @@
                       <span class="ell muted"
                         >Let a recruiter describe a role and get interview questions drafted, tagged
                         and previewed.</span
-                      ><a
-                        class="linkbtn t12"
-                        href="Main.dc.html#state=%7B%22tab%22%3A%22notes%22%7D"
+                      ><a class="btn" href="Main.dc.html#state=%7B%22tab%22%3A%22notes%22%7D"
+                        ><svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M4 2.5h5.5L12 5v8.5H4z" />
+                          <path d="M6 8h4M6 10.5h4" /></svg
                         >Open in Notes</a
                       >
                     </dd>
                   </div>
-                  <div>
-                    <dt>@pair replies run on</dt>
-                    <dd>{{billLabel}} <span class="t12 muted">· set by Rutvik</span></dd>
-                  </div>
                 </dl>
+                <div class="field">
+                  <span class="lbl">@pair</span>
+                  <div class="c-key v2">
+                    <div class="c-krow">
+                      <svg
+                        aria-hidden="true"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="5.5" cy="10.5" r="2.8" />
+                        <path d="M7.5 8.5L13 3M10.8 5.2l1.7 1.7M9.4 6.6l1.2 1.2" />
+                      </svg>
+                      <div class="tx">
+                        <div class="w5">Team Claude key</div>
+                        <div class="c-stat {{krStatCls}}">
+                          <sc-if value="{{krSet}}" hint-placeholder-val="{{true}}"
+                            ><svg
+                              class="c-ok"
+                              aria-hidden="true"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M3.5 8.5l3 3 6-7" /></svg></sc-if
+                          ><sc-if value="{{krPending}}" hint-placeholder-val="{{false}}"
+                            ><svg
+                              aria-hidden="true"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5" /></svg></sc-if
+                          ><span class="ell">{{krStatus}}</span>
+                        </div>
+                      </div>
+                      <sc-if value="{{krHasAct}}" hint-placeholder-val="{{true}}"
+                        ><div class="c-kact">
+                          <sc-if value="{{krShowAdd}}" hint-placeholder-val="{{false}}"
+                            ><button
+                              type="button"
+                              class="btn"
+                              onClick="{{krOpen}}"
+                              disabled="{{krBusy}}"
+                            >
+                              <svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M8 3v10M3 8h10" /></svg
+                              >Add key
+                            </button></sc-if
+                          >
+                          <sc-if value="{{krShowAsk}}" hint-placeholder-val="{{false}}"
+                            ><button
+                              type="button"
+                              class="btn ghost c-act"
+                              onClick="{{krAsk}}"
+                              disabled="{{krAskDis}}"
+                            >
+                              <sc-if value="{{krAsked}}" hint-placeholder-val="{{false}}"
+                                ><svg
+                                  class="c-ok"
+                                  aria-hidden="true"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.8"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <path d="M3.5 8.5l3 3 6-7" /></svg></sc-if
+                              ><sc-if value="{{krNotAsked}}" hint-placeholder-val="{{true}}"
+                                ><svg
+                                  aria-hidden="true"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.5"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <circle cx="8" cy="8" r="2.4" />
+                                  <path
+                                    d="M10.4 8v1a1.8 1.8 0 0 0 3.6 0V8A6 6 0 1 0 11 13.2"
+                                  /></svg></sc-if
+                              >{{krAskLabel}}
+                            </button></sc-if
+                          >
+                          <sc-if value="{{krLinkSet}}" hint-placeholder-val="{{false}}"
+                            ><a
+                              class="btn ghost c-act"
+                              href="TeamClaudeKey.dc.html#state=%7B%22key%22%3A%22set%22%7D"
+                              >Open in Settings<svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M5 11l6-6M6.5 5H11v4.5" /></svg></a
+                          ></sc-if></div
+                      ></sc-if>
+                    </div>
+                    <sc-if value="{{krAdding}}" hint-placeholder-val="{{false}}">
+                      <div class="c-kadd">
+                        <input
+                          id="kr-key"
+                          class="input mono {{krInputCls}}"
+                          type="password"
+                          autocomplete="off"
+                          spellcheck="false"
+                          aria-label="Anthropic API key"
+                          placeholder="sk-ant-api03-…"
+                          value="{{krValue}}"
+                          disabled="{{krChecking}}"
+                          aria-invalid="{{krErr}}"
+                          aria-describedby="kr-help"
+                        />
+                        <sc-if value="{{krErr}}" hint-placeholder-val="{{false}}"
+                          ><span class="c-kerr" id="kr-help" role="alert"
+                            ><svg
+                              aria-hidden="true"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <circle cx="8" cy="8" r="6" />
+                              <path d="M8 4.8v3.6M8 11h.01" /></svg
+                            >Anthropic rejected this key. Check it and try again.</span
+                          ></sc-if
+                        >
+                        <sc-if value="{{krNoErr}}" hint-placeholder-val="{{true}}"
+                          ><span class="help" id="kr-help"
+                            >Stored on this server. You won't see it again.</span
+                          ></sc-if
+                        >
+                        <div class="c-kacts">
+                          <a
+                            class="btn ghost c-act"
+                            href="https://console.anthropic.com/settings/keys"
+                            target="_blank"
+                            rel="noreferrer"
+                            >Anthropic Console<svg
+                              aria-hidden="true"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.5"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M9 3h4v4M13 3L7.5 8.5M11.5 9.5V13H3V4.5h3.5" /></svg
+                          ></a>
+                          <span class="grow"></span>
+                          <button
+                            type="button"
+                            class="btn ghost"
+                            onClick="{{krCancel}}"
+                            disabled="{{krChecking}}"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            class="btn"
+                            onClick="{{krSave}}"
+                            disabled="{{krChecking}}"
+                          >
+                            <sc-if value="{{krChecking}}" hint-placeholder-val="{{false}}"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5" /></svg></sc-if
+                            >{{krSaveLabel}}
+                          </button>
+                        </div>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <sc-if value="{{keyHelpOn}}" hint-placeholder-val="{{true}}"
+                    ><span class="help">{{keyHelp}}</span></sc-if
+                  >
+                </div>
                 <p class="help" style="margin: 0">
                   Only {{ownerName}}, the owner, can change these. Anyone in the space can edit the
                   brief.
@@ -2614,12 +3994,14 @@
                       <button type="button" class="btn" onClick="{{askArchive}}">
                         <svg
                           aria-hidden="true"
-                          width="12"
-                          height="12"
+                          width="14"
+                          height="14"
                           viewBox="0 0 16 16"
                           fill="none"
                           stroke="currentColor"
                           stroke-width="1.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
                         >
                           <rect x="2" y="3" width="12" height="3" rx="1" />
                           <path d="M3 6v7h10V6M6.5 9h3" /></svg
@@ -2643,12 +4025,14 @@
                         >
                           <svg
                             aria-hidden="true"
-                            width="12"
-                            height="12"
+                            width="14"
+                            height="14"
                             viewBox="0 0 16 16"
                             fill="none"
                             stroke="currentColor"
                             stroke-width="1.4"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
                           >
                             <path
                               d="M3 5.5h9.5M10 3l2.5 2.5L10 8M13 10.5H3.5M6 8l-2.5 2.5L6 13"
@@ -2695,19 +4079,21 @@
                       <div class="tx">
                         <div class="w5">Leave space</div>
                         <div class="t12 muted">
-                          Your 2 tasks stay here and keep running. You'll still see them in Assigned
-                          to me.
+                          Your threads keep running on your account. Your open tasks move to the
+                          owner unless you choose otherwise.
                         </div>
                       </div>
                       <button type="button" class="btn" onClick="{{askLeave}}">
                         <svg
                           aria-hidden="true"
-                          width="12"
-                          height="12"
+                          width="14"
+                          height="14"
                           viewBox="0 0 16 16"
                           fill="none"
                           stroke="currentColor"
                           stroke-width="1.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
                         >
                           <path d="M9.5 3H13v10H9.5M7 5L4 8l3 3M4 8h6.5" /></svg
                         >Leave
@@ -2733,7 +4119,7 @@
               <div class="al-b">
                 <h2 class="dt" id="al-t">Make {{whoName}} the owner?</h2>
                 <p class="al-p" id="al-d">
-                  You'll stay a member. {{whoName}} will manage members, settings and @pair billing.
+                  You'll stay a member. {{whoName}} will manage members, repositories and settings.
                 </p>
               </div>
               <div class="df">
@@ -2759,19 +4145,63 @@
               aria-describedby="al-d2"
             >
               <div class="al-b">
-                <h2 class="dt" id="al-t2">Leave {{name}}?</h2>
-                <p class="al-p" id="al-d2">
-                  You lose access to the room. Your 2 tasks keep running on your account, and you'll
-                  still see them in Assigned to me. {{ownerName}} can add you back.
-                </p>
+                <h2 class="dt" id="al-t2">Leave Question creation?</h2>
+                <p class="al-p" id="al-d2">You lose access to the room, tasks and notes.</p>
+                <sc-if value="{{leaveHasOpen}}" hint-placeholder-val="{{true}}"
+                  ><div class="rrow">
+                    <button
+                      type="button"
+                      class="cb"
+                      role="checkbox"
+                      aria-checked="{{reassign}}"
+                      aria-label="Reassign your open tasks"
+                      onClick="{{toggleReassign}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="10"
+                        height="10"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg></button
+                    ><span class="grow">You own 2 open tasks. Reassign them to</span
+                    ><button
+                      type="button"
+                      class="tprop rto"
+                      aria-haspopup="listbox"
+                      aria-label="Reassign to: {{ownerName}}"
+                    >
+                      <span class="av xs {{owner}}" aria-hidden="true">{{ownerIni}}</span
+                      ><span class="v">{{ownerName}}</span
+                      ><svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M4 6l4 4 4-4" />
+                      </svg>
+                    </button>
+                  </div>
+                  <p class="al-p rnote">{{leaveNote}}</p></sc-if
+                >
               </div>
               <div class="df">
                 <span class="grow"></span
                 ><button type="button" class="btn lg ghost cancel" onClick="{{cancel}}">
                   Cancel</button
-                ><a class="btn lg danger" href="NotMember.dc.html#state=%7B%22left%22%3Atrue%7D"
-                  >Leave</a
-                >
+                ><a class="btn lg danger" href="{{leaveHref}}">Leave</a>
               </div>
             </div>
           </div>
@@ -2844,45 +4274,217 @@
             </div>
           </div>
         </sc-if>
+
+        <sc-if value="{{toastKey}}" hint-placeholder-val="{{false}}">
+          <div class="toast" role="status">
+            <svg
+              aria-hidden="true"
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="var(--success-foreground)"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M3.5 8.5l3 3 6-7" />
+            </svg>
+            <div class="tx">
+              <div class="tt">Team Claude key saved · @pair is on in 3 spaces</div>
+            </div>
+            <div class="acts">
+              <button
+                type="button"
+                class="btn ghost icon sm"
+                aria-label="Dismiss"
+                onClick="{{dismiss}}"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 4l8 8M12 4l-8 8" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </sc-if>
       </div>
     </x-dc>
     <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
-      // Changes apply as you make them (no Done). State keys: owner ('r' = Rutvik owns it, the default; 'k'|'h'|'a' = non-owner view after a transfer),
-      // name, project ('web'|'fe'|'be'), bill ('team'|'mine'), saved ('name'|'project'|'bill': which field just saved),
-      // pop ('xfer': Transfer ownership picker open), confirm ('owner': make-owner alert for who; 'leave': leave alert; 'archive': archive alert, whose Archive opens SpaceArchived), who ('k'|'h'|'a'),
-      // toast ('owner': "is now the owner" after a transfer).
+      // Name saves as you type; repositories save with "Save repositories". @pair always replies on the Team Claude key (no per-space billing).
+      // State keys: owner ('r' = you, Rutvik, own it, the default; 'k'|'h'|'a' = non-owner view after a transfer; you are still a server admin),
+      // viewer ('member': you are Kousik, not the owner and not a server admin), key ('set' default|'none': no Team Claude key; admins get Add key, members get Ask Rutvik,
+      // which closes settings and drafts "@Rutvik can you add a Team Claude key? Settings → Team" in the room composer, unsent),
+      // adding (admin, key 'none': the key row expands in place; with checking / error), edit ('repos': the Repositories picker is open),
+      // repos (picked ids while editing, default ['fe','be','rep'] = creates "Question creation 2", an editable name (wsEdit: inline input open, wsName: edited name); ['fe','be','ai'] = reuses QC stack; ['ai','ade'] = reuses Interview kit; ['fe','be'] = no change), rq (filter),
+      // name, saved ('name'|'repos'), pop ('xfer': Transfer ownership picker open),
+      // confirm ('owner' with who 'k'|'h'|'a' | 'leave': D's Leave dialog, reassign false unticks "Reassign them to" | 'archive'), toast ('owner' after a transfer, 'key' after a key is saved), keyJustSet (the in-place add just saved: row reads "Saved · @pair is on" with a check, plus the saved toast).
       class Component extends DCLogic {
       renderVals() {
       const s = Object.assign({}, this.state || {});
-      const owner = s.owner || 'r';
+
+      const PROJ = [['fe','pair-fe'],['be','pair-be'],['ai','pair-ai'],['ade','ade'],['ct','pair-cloud-test'],['rep','pair-reports'],['mob','pair-mobile'],['docs','pair-docs'],['infra','pair-infra'],['ev','pair-evals'],['ds','pair-design']];
+      const repoVals = (sel, set) => {
+      const o = {};
+      PROJ.forEach(([id]) => {
+      const on = sel.indexOf(id) !== -1;
+      o['rs_' + id] = on;
+      o['rc_' + id] = on ? 'on' : '';
+      o['rt_' + id] = () => set(on ? sel.filter((x) => x !== id) : PROJ.map((p) => p[0]).filter((x) => x === id || sel.indexOf(x) !== -1));
+      });
+      return o;
+      };
+      const repoNames = (sel) => PROJ.filter((p) => sel.indexOf(p[0]) !== -1).map((p) => p[1]);
+      const andList = (a) => a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+
+      const repoVals2 = (sel, rq, set) => {
+      const o = repoVals(sel, set);
+      const ql = (rq || '').trim().toLowerCase();
+      let vis = 0;
+      PROJ.forEach(([id, nm]) => {
+      const hit = ql === '' || nm.toLowerCase().indexOf(ql) !== -1;
+      const on = sel.indexOf(id) !== -1;
+      o['von_' + id] = hit && on;
+      o['voff_' + id] = hit && !on;
+      if (hit) vis++;
+      });
+      const visOn = PROJ.filter(([id, nm]) => sel.indexOf(id) !== -1 && (ql === '' || nm.toLowerCase().indexOf(ql) !== -1)).length;
+      o.rHidN = Math.max(0, visOn - 5);
+      o.rHidOn = visOn > 5;
+      o.listMore = vis > 5 && visOn <= 5 ? 'more' : '';
+      o.rNoMatch = vis === 0;
+      return o;
+      };
+
+      const nwVals = (names, and) => {
+        const o = {};
+        for (let i = 0; i < 9; i++) {
+          o['nw' + i] = i < names.length;
+          o['nwn' + i] = names[i] || '';
+          o['nws' + i] = i >= names.length - 1 ? '' : (and && i === names.length - 2 ? ' and ' : ', ');
+        }
+        return o;
+      };
+
+      const member = s.viewer === 'member';
+      const owner = member ? 'r' : (s.owner || 'r');
       const names = { r: 'Rutvik', k: 'Kousik', h: 'Hanad', a: 'Ankur' };
-      const isOwner = owner === 'r';
-      const project = s.project || 'web';
-      const proj = { web: ['Pair web and API', 'pair-fe · pair-be'], fe: ['pair-fe', ''], be: ['pair-be', ''] }[project];
-      const bill = s.bill || 'team';
+      const me = member ? 'k' : 'r';
+      const reassign = s.reassign !== false;
+      const isOwner = owner === 'r' && !member;
+      const admin = !member;
+      const keySet = (s.key || 'set') === 'set' || !!s.keyJustSet;
       const who = s.who || 'k';
       const confirm = s.confirm || '';
+      const editing = isOwner && s.edit === 'repos';
+      const repos = s.repos || ['fe', 'be', 'rep'];
+      const rn = repoNames(repos);
+      const n = rn.length;
+      const has = (a) => n === a.length && a.every((x) => repos.indexOf(x) !== -1);
+      const same = has(['fe', 'be']);
+      const reuseWs = has(['fe', 'be', 'ai']) ? 'QC stack' : (has(['ai', 'ade']) ? 'Interview kit' : '');
+      const reuse = !!reuseWs;
+      let outPre = '', outB = '', outPost = '', outMid = '', nwNames = [];
+      if (n === 0) outPre = 'Pick at least one repository.';
+      else if (n === 1) { outPre = 'New threads run in '; outB = rn[0]; outPost = '. The workspace stays as it is.'; }
+      else if (n > 8) outPre = 'A workspace holds up to 8 repositories. Remove ' + (n - 8) + ' to continue.';
+      else if (same) outPre = 'No change.';
+      else if (reuse) { outPre = 'Moves to the workspace '; outB = reuseWs; outPost = ', which has the same repositories.'; }
+      else { outPre = 'Creates the workspace '; outMid = ' with '; nwNames = rn; outPost = '.'; }
+      const created = n >= 2 && n <= 8 && !same && !reuse;
+      const auto = s.wsName || 'Question creation 2';
+      const hasKey = keySet;
+      const busy = false;
+      const setText = 'Set · sk-ant-…4f2a · last used 2m ago';
+      const noneText = admin ? 'Not set · @pair is off in this space' : 'Not set';
+      const askHref = 'Main.dc.html#state=' + encodeURIComponent(JSON.stringify({ nokey: 'member', asked: true }));
+      const linkWhenSet = true;
+      { const member = !admin;
+
+      const krAdding = !member && !hasKey && !!s.adding;
+      const krSaved = hasKey && !!s.keyJustSet;
+      const krVals = {
+      krSet: hasKey,
+      krPending: false,
+      krStatus: krSaved ? 'Saved · @pair is on' : (hasKey ? setText : noneText),
+      krStatCls: krSaved ? 'ok' : '',
+      krHasAct: (!member && !hasKey && !krAdding) || (member && !hasKey) || (!member && hasKey && linkWhenSet),
+      krShowAdd: !member && !hasKey && !krAdding,
+      krShowAsk: member && !hasKey,
+      krAskLabel: s.asked ? 'Asked' : 'Ask Rutvik',
+      krAsked: !!s.asked,
+      krNotAsked: !s.asked,
+      krAskDis: !!busy || !!s.asked,
+      krAsk: () => { if (askHref) location.href = askHref; else this.setState({ asked: true }); },
+      krLinkSet: !member && hasKey && linkWhenSet,
+      krAdding: krAdding,
+      krChecking: !!s.checking,
+      krErr: !!s.error && !s.checking,
+      krNoErr: !s.error || !!s.checking,
+      krInputCls: s.error && !s.checking ? 'bad' : (!s.checking ? 'focus' : ''),
+      krValue: s.checking || s.error || s.typed ? 'sk-ant-api03-Xk7…' : '',
+      krSaveLabel: s.checking ? 'Checking…' : 'Save and check',
+      krOpen: () => this.setState({ adding: true }),
+      krCancel: () => this.setState({ adding: false, checking: false, error: false, typed: false }),
+      krSave: () => { this.setState({ checking: true, error: false, typed: false }); setTimeout(() => this.setState({ checking: false, adding: false, nokey: '', key: 'set', keyJustSet: true }), 900); },
+      krBusy: !!busy
+      };
+
+      s.__kr = krVals; }
+      const krVals = s.__kr;
       const pick = (id) => () => this.setState({ pop: '', confirm: 'owner', who: id });
       const ids = ['r', 'k', 'h', 'a'];
       const stackVals = {};
       ids.forEach((id) => { stackVals['stf_' + id] = id === owner; stackVals['st_' + id] = id !== owner; });
+      [owner].concat(ids.filter((x) => x !== owner)).forEach((id, i) => { stackVals['sk' + i] = id; stackVals['si' + i] = id.toUpperCase(); });
+      stackVals.bgSrc = 'Main.dc.html' + (member && !keySet ? '#state=' + encodeURIComponent(JSON.stringify({ nokey: 'member' })) : '');
       stackVals.memLabel = '4 members: ' + [owner].concat(ids.filter((x) => x !== owner)).map((x) => names[x] + (x === owner ? ' (owner)' : '')).join(', ') + '. Manage members';
-      return Object.assign(stackVals, {
+      const saved = editing ? '' : s.saved;
+      const v = Object.assign({}, krVals, stackVals, repoVals2(repos, s.rq, (r) => this.setState({ repos: r, wsName: undefined, wsEdit: false })));
+      Object.assign(v, nwVals(nwNames, true));
+      return Object.assign(v, {
       isOwner: isOwner,
       notOwner: !isOwner,
       ownerName: names[owner],
       name: s.name === undefined ? 'Question creation' : s.name,
       onName: (e) => this.setState({ name: e.target.value, saved: 'name' }),
-      savedName: s.saved === 'name',
-      project: project,
-      projName: proj[0],
-      projRepos: proj[1],
-      onProject: (e) => this.setState({ project: e.target.value, saved: 'project' }),
-      savedProject: s.saved === 'project',
-      bill: bill,
-      billLabel: bill === 'team' ? 'Team Claude key' : 'My Claude account (Rutvik)',
-      onBill: (e) => this.setState({ bill: e.target.value, saved: 'bill' }),
-      savedBill: s.saved === 'bill',
+      savedName: saved === 'name',
+      memberLine: [owner].concat(ids.filter((x) => x !== owner)).map((x) => (x === me ? 'You' : names[x]) + (x === owner ? ' (owner)' : '')).join(', '),
+      rq: s.rq || '',
+      onRq: (e) => this.setState({ rq: e.target.value }),
+      outPre: outPre, outB: outB, outPost: outPost, outMid: outMid,
+      outCls: n > 8 ? 'bad' : '',
+      outIsBad: n > 8, outIsWs: n >= 2 && n <= 8, outIsOne: n === 1 || n === 0,
+      wsAuto: auto, wsLen: Math.max(4, auto.length),
+      wsEdOn: created && !s.wsEdit,
+      wsEdOpen: created && !!s.wsEdit,
+      outBOn: !created,
+      wsOpen: () => this.setState({ wsEdit: true }),
+      wsKey: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.setState({ wsName: e.target.value.trim() || auto, wsEdit: false }); } else if (e.key === 'Escape') { e.stopPropagation(); this.setState({ wsEdit: false }); } },
+      wsCommit: (e) => this.setState({ wsName: e.target.value.trim() || auto, wsEdit: false }),
+      outNote: n >= 1 && n <= 8 && !same,
+      keyHelpOn: !krVals.krAdding,
+      keyHelp: !keySet ? (admin ? 'Pays for @pair in every space on this server.' : '@pair stays off until a key is added. Everything else works.') : 'Pays for @pair in every space on this server.',
+      memberCta: isOwner ? 'Manage' : 'View',
+      editing: editing,
+      notEditing: !editing,
+      wsName: 'Question creation',
+      repoChips: 'pair-fe · pair-be',
+      countLabel: n > 8 ? n + ' of 8' : n + ' selected',
+      startEdit: () => this.setState({ edit: 'repos', saved: '' }),
+      cancelEdit: () => this.setState({ edit: '' }),
+      saveEdit: () => this.setState({ edit: '', saved: 'repos' }),
+      cantSave: n === 0 || n > 8 || same,
+      savedRepos: saved === 'repos',
       xferOpen: s.pop === 'xfer',
       toggleXfer: () => this.setState({ pop: s.pop === 'xfer' ? '' : 'xfer' }),
       to_k: pick('k'), to_h: pick('h'), to_a: pick('a'),
@@ -2891,12 +4493,20 @@
       confirmLeave: confirm === 'leave',
       confirmArchive: confirm === 'archive',
       askArchive: () => this.setState({ confirm: 'archive' }),
-      sys0: !isOwner, sys0Text: 'Rutvik made ' + names[owner] + ' the owner', sys1: false, sys1Text: '', sys2: false, sys2Text: '',
+      sys0: !isOwner && !member, sys0Text: 'Rutvik made ' + names[owner] + ' the owner', sys1: false, sys1Text: '', sys2: false, sys2Text: '',
       whoName: names[who],
       cancel: () => this.setState({ confirm: '' }),
       doTransfer: () => this.setState({ confirm: '', owner: who, toast: 'owner' }),
       askLeave: () => this.setState({ confirm: 'leave' }),
+      reassign: reassign,
+      toggleReassign: () => this.setState({ reassign: !reassign }),
+      owner: owner,
+      ownerIni: owner.toUpperCase(),
+      leaveHasOpen: true,
+      leaveNote: reassign ? 'They move to ' + names[owner] + "'s Assigned to me. Your threads stay on the tasks and keep running on your account." : 'They stay on you, shown as ' + names[me] + ' (left). Your threads keep running on your account.',
+      leaveHref: 'NotMember.dc.html#state=' + encodeURIComponent(JSON.stringify(reassign ? { left: true } : { left: true, keep: true })),
       toastOwner: s.toast === 'owner' && !isOwner,
+      toastKey: s.toast === 'key' || !!s.keyJustSet,
       dismiss: () => this.setState({ toast: '' })
       });
       }

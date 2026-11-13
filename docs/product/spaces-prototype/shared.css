@@ -851,3 +851,496 @@ textarea.input {
 .backdrop {
   background: var(--overlay);
 }
+
+/* v2 status icons: the svg draws in currentColor, the class picks the colour */
+.si {
+  flex: none;
+}
+.si.todo,
+.si.canceled,
+.si.stopped {
+  color: var(--muted-foreground);
+}
+.si.prog,
+.si.working {
+  color: var(--info-foreground);
+}
+.si.review,
+.si.done {
+  color: var(--success-foreground);
+}
+.si.answer {
+  color: var(--input-foreground);
+}
+.si.approval,
+.si.limited {
+  color: var(--warning-foreground);
+}
+.si.failed {
+  color: var(--error-foreground);
+}
+.si.pr {
+  color: var(--muted-foreground);
+}
+/* v2 task rows (Overview panel): line 1 status + title + time, line 2 owner + live activity */
+.tk {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.tk:hover,
+.tk.hover {
+  background: var(--accent);
+}
+.tk.sel {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.tk .tt {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tk .rt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+}
+.tk .when {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tk .l2 {
+  grid-column: 2 / 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.tk .l2 .who {
+  color: var(--foreground);
+}
+.tk .l2 .ell {
+  flex: 0 1 auto;
+}
+.tk .stc {
+  display: none;
+}
+.tk:hover .stc,
+.tk.hover .stc {
+  display: inline-flex;
+}
+.tk:hover .rt > .when,
+.tk:hover .rt > .dot,
+.tk.hover .rt > .when,
+.tk.hover .rt > .dot {
+  display: none;
+}
+/* v2 status control: compact on rows, full size in the task header */
+.stc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  margin: -2px 0;
+  padding: 0 6px;
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  background: var(--card);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.stc:hover {
+  background: var(--accent);
+}
+/* v2 menus: status menu, ⋯ menus, mention menu */
+.smenu {
+  position: absolute;
+  z-index: 20;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  box-shadow: 0 8px 24px rgba(9, 9, 11, 0.12);
+  font-size: 13px;
+  font-weight: 400;
+}
+.smenu .mh {
+  padding: 4px 8px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.smi {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.smi:hover,
+.smi.on {
+  background: var(--accent);
+}
+.smi .mk {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.smi .ck {
+  visibility: hidden;
+}
+.smi[aria-checked="true"] .ck {
+  visibility: visible;
+}
+.smi[aria-disabled="true"] {
+  cursor: default;
+}
+.smi[aria-disabled="true"]:hover {
+  background: none;
+}
+.smi.danger {
+  color: var(--error-foreground);
+}
+.smsep {
+  height: 1px;
+  margin: 4px -4px;
+  background: var(--border);
+}
+/* v2 task page */
+.tcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.tcrumb a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--muted-foreground);
+}
+.tcrumb a:hover {
+  color: var(--foreground);
+}
+.tcrumb .sep {
+  color: var(--input);
+}
+.tcrumb .cur {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tpage {
+  box-sizing: content-box;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+}
+.tpage-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+}
+.tprops {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 2px;
+  margin: 6px 0 0 -8px;
+}
+.tprop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+button.tprop:disabled {
+  cursor: default;
+}
+button.tprop:disabled:hover {
+  background: none;
+}
+.tprops.off .v {
+  color: var(--muted-foreground);
+}
+button.tprop,
+a.tprop {
+  cursor: pointer;
+}
+button.tprop:hover,
+button.tprop[aria-expanded="true"],
+.th .hov[aria-expanded="true"],
+a.tprop:hover {
+  background: var(--accent);
+}
+.tprop .v {
+  color: var(--foreground);
+}
+.tdesc {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--accent);
+}
+.tdesc p {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tdesc .linkbtn {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.sect {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin: 28px 0 4px;
+}
+.sect h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.sect .n {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+/* v2 thread rows on the task page: borderless like panel rows */
+.th {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+  min-height: 44px;
+  margin: 0 -8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.th:hover,
+.th.hover {
+  background: var(--accent);
+}
+.th .t1 {
+  display: block;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.th .t2 {
+  grid-column: 2 / 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.th .t2 .who {
+  color: var(--foreground);
+}
+.th .rt {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.th .hov {
+  display: none;
+}
+.th:hover .hov,
+.th.hover .hov {
+  display: inline-flex;
+}
+.th:hover .rt > .when,
+.th.hover .rt > .when {
+  display: none;
+}
+.th .ask {
+  grid-column: 2 / 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+}
+.code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.th:hover .code,
+.th.hover .code {
+  background: var(--background);
+}
+.prc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.ai {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.ai .ic {
+  display: inline-flex;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+}
+.ai .who,
+.ai .to {
+  color: var(--foreground);
+}
+/* v2 bands: banners and suggestions on the task page, borderless */
+.tbanner {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--accent);
+}
+.tbanner.row {
+  min-height: 40px;
+  padding: 6px 6px 6px 12px;
+}
+.tbanner + .tdesc,
+.suggest + .tdesc {
+  margin-top: 8px;
+}
+.tempty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 16px;
+  border: 1px dashed var(--input);
+  border-radius: 8px;
+  text-align: center;
+}
+.suggest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  margin-top: 16px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.suggest .btn {
+  color: var(--foreground);
+}
+/* v2 read-only task status chip (thread header, previews) */
+.stchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+a.stchip:hover {
+  background: var(--accent);
+}
+/* v2 canceled rows read as closed */
+.tk.off .tt {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+/* v2 narrow shells (opt in with .narrowpanel): below 1100 the panel becomes an overlay
+             under the header, opened by .panel-toggle */
+.panel-toggle {
+  display: none;
+}
+@media (max-width: 1100px) {
+  .shell.narrowpanel {
+    position: relative;
+  }
+  .shell.narrowpanel .panel {
+    display: none;
+  }
+  .shell.narrowpanel .panel-toggle {
+    display: inline-flex;
+  }
+  .shell.narrowpanel.panel-open .panel {
+    display: flex;
+    position: absolute;
+    top: 52px;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    width: 340px;
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(9, 9, 11, 0.16);
+  }
+  .shell.narrowpanel .panel .panel-ctl {
+    display: none;
+  }
+}
