@@ -1,4 +1,3 @@
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import type { EnvironmentId, GceSandboxDriver } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -42,7 +41,7 @@ import {
   operationError,
 } from "./GceApi.ts";
 import { makeGceMetadata } from "./GceMetadata.ts";
-import { cloudSafeName, teamImageName, vmBootstrapText } from "./vmHelpers.ts";
+import { cloudSafeName, nodeHttpClient, teamImageName, vmBootstrapText } from "./vmHelpers.ts";
 import {
   baseImagePairVersion,
   stepVmBaseImage,
@@ -1251,13 +1250,6 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
     health,
   });
 });
-
-// node:http, not undici: a single executable cannot import the undici the server keeps external.
-const nodeHttpClient = NodeHttpClient.makeAgent(undefined).pipe(
-  Effect.flatMap((agent) =>
-    NodeHttpClient.makeNodeHttp.pipe(Effect.provideService(NodeHttpClient.HttpAgent, agent)),
-  ),
-);
 
 /**
  * The registry factory for `kind: "gce"`. Its only credential is the server VM's service account,

@@ -1,4 +1,6 @@
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
 import type { SandboxBootstrap } from "./ComputeDriver.ts";
@@ -48,3 +50,10 @@ export const teamImageName = (
   const name = family === null || build === undefined ? null : cloudSafeName(`${family}-${build}`);
   return name === null || family === null || build === undefined ? null : { name, family, build };
 };
+
+// node:http, not undici: a single executable cannot import the undici the server keeps external.
+export const nodeHttpClient = NodeHttpClient.makeAgent(undefined).pipe(
+  Effect.flatMap((agent) =>
+    NodeHttpClient.makeNodeHttp.pipe(Effect.provideService(NodeHttpClient.HttpAgent, agent)),
+  ),
+);

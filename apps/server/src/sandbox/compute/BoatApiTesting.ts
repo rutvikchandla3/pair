@@ -23,7 +23,7 @@ export interface FakeBoatSandbox {
   /** By absolute path, as the driver and the guest write them. */
   readonly files: Map<string, string>;
   readonly disk: FakeBoatDisk;
-  /** While set, `get` leaves `state` as it is; otherwise each `get` moves it one step on. */
+  /** While set, `get` leaves `state` as it is; otherwise each `get` moves it on before answering. */
   held: boolean;
 }
 
@@ -117,6 +117,8 @@ export const make = Effect.fn("BoatApiTesting.make")(
   (
     options: {
       readonly onBoot?: (boot: FakeBoatBoot) => Effect.Effect<void>;
+      /** Runs as each request arrives, before it is answered: a test's sync point. */
+      readonly onRequest?: (request: FakeBoatRequest) => Effect.Effect<void>;
       readonly pageSize?: number;
       readonly unavailableTypes?: ReadonlyArray<string>;
     } = {},
@@ -303,9 +305,8 @@ export const make = Effect.fn("BoatApiTesting.make")(
           if (sandbox === undefined) return fail(404, "not_found");
           const action = parts[2];
           if (action === undefined && method === "GET") {
-            const shown = view(sandbox);
             if (!sandbox.held) sandbox.state = NEXT_STATE[sandbox.state] ?? sandbox.state;
-            return ok({ type: "sandbox.info", sandbox: shown });
+            return ok({ type: "sandbox.info", sandbox: view(sandbox) });
           }
           if (action === undefined && method === "DELETE") {
             if (headers["x-ascii-confirm-delete"] !== sandbox.id)
@@ -320,7 +321,6 @@ export const make = Effect.fn("BoatApiTesting.make")(
           }
           if (action === "resume" && method === "POST") {
             if (sandbox.dataExpiredAt !== null) return fail(409, "snapshot_data_expired");
-            if (sandbox.state === "archiving" && sandbox.held) return fail(409, "sandbox_stopping");
             sandbox.state = "provisioning";
             // A resumed machine boots from its disk: /tmp is not snapshotted.
             for (const file of Array.from(sandbox.files.keys())) {
@@ -384,9 +384,8 @@ export const make = Effect.fn("BoatApiTesting.make")(
           const snapshot = name === undefined ? undefined : savedSnapshots.get(name);
           if (snapshot === undefined) return fail(404, "not_found");
           if (method === "GET") {
-            const shown = snapshotView(snapshot);
             if (snapshot.status === "saving") snapshot.status = "ready";
-            return ok({ snapshot: shown });
+            return ok({ snapshot: snapshotView(snapshot) });
           }
           if (method === "DELETE") {
             savedSnapshots.delete(snapshot.name);
@@ -417,13 +416,15 @@ export const make = Effect.fn("BoatApiTesting.make")(
           const headers = Object.fromEntries(
             Object.entries(request.headers).map(([name, value]) => [name.toLowerCase(), value]),
           );
-          requests.push({
+          const recorded: FakeBoatRequest = {
             method: request.method,
             path,
             query: Array.from(url.searchParams.entries()),
             headers,
             body,
-          });
+          };
+          requests.push(recorded);
+          if (options.onRequest !== undefined) yield* options.onRequest(recorded);
           const queued = failures.get(routeOf(request.method, path));
           const injected = queued?.shift();
           const answer =
