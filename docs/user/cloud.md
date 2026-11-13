@@ -50,6 +50,9 @@ A Pair Cloud server that runs in your own Google Cloud project can use that proj
 Engine VMs as machines instead: add a **Google Cloud** driver. These machines have
 Docker and Docker Compose, so agents and setup scripts can run containers. Container machines do not.
 
+A Pair Cloud server at a public `https://` address can run machines on boat.dev instead, billed
+to your boat account: see [Run machines on boat.dev](./pair-cloud.md#run-machines-on-boatdev).
+
 With more than one driver, new machines start on the first one until you choose another:
 choose **Use for new machines** in its row's **⋯** menu. Machines already running stay where they are.
 

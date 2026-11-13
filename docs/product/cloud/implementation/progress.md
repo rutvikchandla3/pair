@@ -85,9 +85,11 @@ forwards). Workers are Opus at medium effort. All seven rows are landed: 7.1 (a6
 them. **The core of the M7 pass passed on `.15` on 2026-11-11; most of its steps are still owed**:
 see [M7 on real hardware](#m7-on-real-hardware-2026-11-11-vm-provider-dev-releases-v14-and-v15).
 
-**M8 boat.dev hosted machines, planned 2026-11-13:** [m8-boat.md](./m8-boat.md), approved by the
-maintainer with the decisions in its §20. One PR against `feat/pair`; the §5 spike on a paid boat
-account has not run, so the driver is built against boat's documented API and the fake.
+**M8 boat.dev hosted machines, built 2026-11-13:** [m8-boat.md](./m8-boat.md), approved by the
+maintainer with the decisions in its §20, built on `feat/boat-hosted-machines` as one PR against
+`feat/pair`. There is no boat account yet: the driver is built against boat's documented API and
+passes the contract suite against an in-process fake. Owed: the §5 spike, the `T3_TEST_BOAT` live
+run and the §15 integrated pass.
 
 **M7 cloud browser, specs written 2026-11-10:** [m7-cloud-browser.md](./m7-cloud-browser.md), rows
 7.1 to 7.7. The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the

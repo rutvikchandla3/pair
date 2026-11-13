@@ -1,7 +1,10 @@
 # M8 boat.dev hosted machines: implementation spec
 
 Status: approved plan, revision 4, 2026-11-13. Senior review: approved with changes, all applied.
-Maintainer decisions of 2026-11-13 are in [§20](#20-maintainer-decisions-of-2026-11-13). Nothing here is built. Written against `feat/pair` at
+Maintainer decisions of 2026-11-13 are in [§20](#20-maintainer-decisions-of-2026-11-13). Built on
+`feat/boat-hosted-machines` against boat's documented API and an in-process fake; the [§5](#5-phase-0-spike)
+spike and the [§15](#15-verify) live run are pending. Where the docs or the code disagreed with this
+plan, the sections below say what was built. Written against `feat/pair` at
 `ecce2d5c5`; re-read every symbol before editing. boat facts come from docs.boat.dev, read on
 2026-11-13; [§5](#5-phase-0-spike) verifies everything the docs leave open before code is written.
 Where this spec says **proposed**, it fills a gap the design docs left open, and a reviewer can
@@ -183,23 +186,23 @@ New `apps/server/src/sandbox/compute/BoatApi.ts`, shaped as `GceApi.ts`:
 - headers `Authorization: Bearer <key>`, plus `X-Boat-Org` when set;
 - schemas decode only the fields the driver reads.
 
-| Method                                       | Endpoint                                                                       | Notes                                                                                                                                |
-| -------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `sandboxes.create(body, idempotencyKey)`     | `POST /sandboxes`                                                              | Header `Idempotency-Key`                                                                                                             |
-| `sandboxes.get(id)`                          | `GET /sandboxes/{id}`                                                          | 404 → `null`; `state: "cancelled"` → `null`                                                                                          |
-| `sandboxes.list({ name?, labels, cursor? })` | `GET /sandboxes?state=<all non-terminal>&label=k=v…&name=…&limit=100&cursor=…` | `state` is always `init,provisioning,provisioned,cloning,ready,idle,running,archiving,archived,error`; follows `pageInfo.nextCursor` |
-| `sandboxes.stop(id)`                         | `POST /sandboxes/{id}/stop` `{}`                                               | Never `force`                                                                                                                        |
-| `sandboxes.resume(id)`                       | `POST /sandboxes/{id}/resume` `{}`                                             | No `type` (`start` carries no size; a new type forces a cold machine) and no `ttlSeconds` (kept)                                     |
-| `sandboxes.delete(id)`                       | `DELETE /sandboxes/{id}`                                                       | Header `X-Ascii-Confirm-Delete: <id>`; 404 → success                                                                                 |
-| `files.write(id, path, content)`             | `PUT /sandboxes/{id}/files`                                                    | utf8; ≤ 5 MiB                                                                                                                        |
-| `files.read(id, path)`                       | `GET /sandboxes/{id}/files?path=…`                                             | 404 → `null`                                                                                                                         |
-| `commands.run(id, command, timeoutSeconds)`  | `POST /sandboxes/{id}/commands`                                                | Synchronous. Never retried by the client: a 502 may have run, and every command it runs is idempotent                                |
-| `savedSnapshots.get(name)`                   | `GET /saved-snapshots/{name}`                                                  | 404 → `null`                                                                                                                         |
-| `savedSnapshots.list(cursor?)`               | `GET /saved-snapshots`                                                         | Paginates                                                                                                                            |
-| `savedSnapshots.save(sandboxId, name)`       | `POST /saved-snapshots`                                                        | 409 `save_in_progress` → success                                                                                                     |
-| `savedSnapshots.delete(name)`                | `DELETE /saved-snapshots/{name}`                                               | No confirm header. 404 → success                                                                                                     |
-| `snapshots.readFile(snapshotId, path)`       | `GET /snapshots/{snapshotId}/files?path=…`                                     | 404 and 409 `base_image_file` → `null`                                                                                               |
-| `limits()`                                   | `GET /limits`                                                                  | `machineTypes`, plan, trial                                                                                                          |
+| Method                                       | Endpoint                                                                       | Notes                                                                                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `sandboxes.create(body, idempotencyKey)`     | `POST /sandboxes`                                                              | Header `Idempotency-Key`                                                                                                               |
+| `sandboxes.get(id)`                          | `GET /sandboxes/{id}`                                                          | 404 → `null`; `state: "cancelled"` → `null`                                                                                            |
+| `sandboxes.list({ name?, labels, cursor? })` | `GET /sandboxes?state=<all non-terminal>&label=k=v…&name=…&limit=100&cursor=…` | `state` is always `init,provisioning,provisioned,cloning,ready,idle,running,archiving,archived,error`; follows `pageInfo.nextCursor`   |
+| `sandboxes.stop(id)`                         | `POST /sandboxes/{id}/stop` `{}`                                               | Never `force`                                                                                                                          |
+| `sandboxes.resume(id)`                       | `POST /sandboxes/{id}/resume` `{}`                                             | No `type` (`start` carries no size; a new type forces a cold machine) and no `ttlSeconds` (kept)                                       |
+| `sandboxes.delete(id)`                       | `DELETE /sandboxes/{id}`                                                       | Header `X-Ascii-Confirm-Delete: <id>`; 404 → success                                                                                   |
+| `files.write(id, path, content)`             | `PUT /sandboxes/{id}/files`                                                    | utf8; ≤ 5 MiB                                                                                                                          |
+| `files.read(id, path)`                       | `GET /sandboxes/{id}/files?path=…`                                             | 404 → `null`                                                                                                                           |
+| `commands.run(id, command, timeoutSeconds)`  | `POST /sandboxes/{id}/commands` `{ command, timeoutSeconds }`                  | Synchronous, as boat's `user` (hence `sudo`). Never retried by the client: a 502 may have run, and every command it runs is idempotent |
+| `savedSnapshots.get(name)`                   | `GET /saved-snapshots/{name}`                                                  | 404 → `null`                                                                                                                           |
+| `savedSnapshots.list(namePrefix)`            | `GET /saved-snapshots?namePrefix=…`                                            | boat documents no pagination here: one call answers every match                                                                        |
+| `savedSnapshots.save(sandboxId, name)`       | `POST /saved-snapshots`                                                        | 409 `save_in_progress` → success                                                                                                       |
+| `savedSnapshots.delete(name)`                | `DELETE /saved-snapshots/{name}`                                               | No confirm header. 404 → success                                                                                                       |
+| `snapshots.readFile(snapshotId, path)`       | `GET /snapshots/{snapshotId}/files?path=…`                                     | 404 and 409 `base_image_file` → `null`                                                                                                 |
+| `limits`                                     | `GET /limits`                                                                  | `machineTypes[]` of `{ type, available }`                                                                                              |
 
 `BoatApiError` keeps the endpoint template, the HTTP status, boat's `code`, `requestId` and
 `Retry-After`. It never keeps the body or message text, since request bodies hold the bootstrap
@@ -235,8 +238,9 @@ New `apps/server/src/sandbox/compute/BoatComputeDriver.ts`:
 
 - `make(config)` is the registry factory.
 - `makeWithApi(config, installId, api, server)` is what tests call. `server` is `{ cloudOnly,
-  provisionTree, guest? }`. `guest` is a test-only seam, as GCE's `server.guest`: it boots stock
-  boat with no `from` and replaces delivery's command (§14).
+  provisionTree, guest? }`. `guest` is a test-only seam, as GCE's `server.guest`: `{ command(generation) }`
+  replaces delivery's command, machines boot stock boat with no `from`, and no base image is built
+  (§14).
 - Off cloud-only, every operation fails `unsupported` with a setup hint, as `unsupportedDriver`
   (`GceComputeDriver.ts:282`).
 - `make` hands `BoatApi` the API key as an `Effect` over `requireSettingsSecret`, cached per driver
@@ -554,17 +558,17 @@ Credentials over the public internet:
 
 ## 13. Surfaces
 
-| Surface               | Change                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Web, Settings → Cloud | `DRIVER_KIND_LABELS.boat = "boat.dev"` (`CloudSettings.tsx:76`). A `BoatDriverForm` beside `GceDriverForm`: label, API key (password), organization, runner URL (https), size, machines at once. `boatDriverFormError` and `boatDriverFromForm` in `CloudSettings.logic.ts`; the latter keeps unshown keys such as `types` across an edit, as `unshownGceKeys` |
-| Desktop               | Wraps web; nothing else                                                                                                                                                                                                                                                                                                                                        |
-| Mobile                | Read-only driver list ("Manage drivers … on the web"); it decodes the new kind through contracts. Check that a boat row renders                                                                                                                                                                                                                                |
-| Entry points          | Drivers are added only in Settings → Cloud, as today. No palette or keybinding entry exists for drivers                                                                                                                                                                                                                                                        |
-| Providers             | None: Claude, Codex and the rest run in the machine, as on GCE                                                                                                                                                                                                                                                                                                 |
-| Agents and MCP        | None new. Machines run the same paths as GCE                                                                                                                                                                                                                                                                                                                   |
-| Reverse states        | Add driver ↔ remove driver (existing); stop ↔ start; save image ↔ delete image                                                                                                                                                                                                                                                                                 |
-| Connection modes      | Either listener topology (§11). T3 Connect hostnames are not offered (03 item 11)                                                                                                                                                                                                                                                                              |
-| Managed policy        | `limits.cloud` has no driver-kind allowlist today; nothing to add                                                                                                                                                                                                                                                                                              |
+| Surface               | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web, Settings → Cloud | `DRIVER_KIND_LABELS.boat = "boat.dev"` (`CloudSettings.tsx:76`). A `BoatDriverForm` beside `GceDriverForm`: label, API key (password), organization, runner URL (https), size, machines at once. `boatDriverFormError` and `boatDriverFromForm` in `CloudSettings.logic.ts`; the latter keeps unshown keys such as `types` across an edit, as `unshownGceKeys`. A blank key on edit keeps the saved one; the form offers no secret-provider picker, but keeps a saved reference |
+| Desktop               | Wraps web; nothing else                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Mobile                | Read-only driver list ("Manage drivers … on the web"); it decodes the new kind through contracts. Check that a boat row renders                                                                                                                                                                                                                                                                                                                                                 |
+| Entry points          | Drivers are added only in Settings → Cloud, as today. No palette or keybinding entry exists for drivers                                                                                                                                                                                                                                                                                                                                                                         |
+| Providers             | None: Claude, Codex and the rest run in the machine, as on GCE                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Agents and MCP        | None new. Machines run the same paths as GCE                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Reverse states        | Add driver ↔ remove driver (existing); stop ↔ start; save image ↔ delete image                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Connection modes      | Either listener topology (§11). T3 Connect hostnames are not offered (03 item 11)                                                                                                                                                                                                                                                                                                                                                                                               |
+| Managed policy        | `limits.cloud` has no driver-kind allowlist today; nothing to add                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ## 14. Tests
 
@@ -577,9 +581,10 @@ sleeps or polling in tests.
   `GceApiTesting.ts`.
   - It keeps sandboxes with states, labels, names, idempotency keys and files, and records command
     texts and request bodies.
-  - **States auto-advance by default,** with no clock: a create reads `ready` on the next `get`, a
-    stop reads `archiving` then `archived`, and a resume reads `ready`. Unit tests can hold a state
-    explicitly. The contract suite has no hooks into the fake, and `awaitReady` must never sit in
+  - **States auto-advance by default,** with no clock: each `get` moves a sandbox on before it
+    answers, so a create or resume reads `ready` on the first `get` and a stop reads `archived`.
+    Unit tests can hold a state explicitly, and an `onRequest` hook lets a test move the
+    `TestClock` in step with the driver. The contract suite has no hooks into the fake, and `awaitReady` must never sit in
     real one-second polls.
   - **It is seeded with a ready base saved snapshot** named
     `vmBaseImageNames(installId, stubSha).image`, and the driver gets a stub `provisionTree` with
@@ -620,7 +625,8 @@ sleeps or polling in tests.
 - **Settings.**
   - `settingsSecrets` tests: one row for a boat driver's `apiKey` (stored, redacted for clients,
     echoed reference kept).
-  - `settings.test.ts`: one decode row, a member-view decode row, and an http `runnerUrl` refused.
+  - `settings.test.ts`: one decode row, a member-view decode row, and an http `runnerUrl` that
+    decodes and is kept (§7: the schema must not drop it). The form, `health` and `create` refuse it.
 - **`CloudSettings.logic.test.ts`.** Rows for `boatDriverFormError` (http refused, empty key on add)
   and `boatDriverFromForm` (unshown `types` kept).
 - **Scripts.** The existing `SandboxProvisionTree` test keeps the tree under 200 KB. `pair-boat-boot`
