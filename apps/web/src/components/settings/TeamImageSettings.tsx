@@ -14,7 +14,6 @@ import {
   type EnvironmentId,
   type MemberId,
   type ProjectId,
-  type ServerSettingsPatch,
   type TeamImageBuild,
   type TeamImageBuildId,
   type TeamImageProposal,
@@ -33,7 +32,6 @@ import { usePrimarySettings } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
-import { serverEnvironment } from "~/state/server";
 import { teamImageEnvironment } from "~/state/teamImage";
 import { useTeamMembers } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -46,19 +44,12 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import {
-  NumberField,
-  NumberFieldDecrement,
-  NumberFieldGroup,
-  NumberFieldIncrement,
-  NumberFieldInput,
-} from "../ui/number-field";
 import { Spinner } from "../ui/spinner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Textarea } from "../ui/textarea";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsFooter, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   draftFromRecipe,
@@ -143,13 +134,13 @@ export function TeamImageSettings({
   });
   const setSecret = useAtomCommand(teamImageEnvironment.setSecret, { reportFailure: false });
   const removeSecret = useAtomCommand(teamImageEnvironment.removeSecret, { reportFailure: false });
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const handleNewThread = useNewThreadHandler();
   const [edit, setEdit] = useState<Edit | null>(null);
   const [conflict, setConflict] = useState(false);
   const [openLog, setOpenLog] = useState<TeamImageBuildId | null>(null);
   const [openProposal, setOpenProposal] = useState<TeamImageProposalId | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   const projects = allProjects.filter(
     (project) =>
@@ -266,6 +257,7 @@ export function TeamImageSettings({
     // Only new values: the saved recipe already names them, so there is no revision to add.
     if (savedRevision !== null && recipeChanges(savedRecipe, recipe, projectName).length === 0) {
       setEdit(null);
+      setEditorOpen(false);
       setConflict(false);
       if (andBuild) {
         const result = await startBuild({
@@ -290,6 +282,7 @@ export function TeamImageSettings({
       : await saveRecipe({ environmentId, input });
     if (result._tag === "Success") {
       setEdit(null);
+      setEditorOpen(false);
       setConflict(false);
       if (andBuild && "id" in result.value) setOpenLog(result.value.id);
       // A value the saved recipe no longer names has no use left on the server.
@@ -339,13 +332,6 @@ export function TeamImageSettings({
     );
   };
 
-  const saveKeepSucceeded = (keepSucceeded: number) => {
-    const patch: ServerSettingsPatch = { sandbox: { teamImage: { keepSucceeded } } };
-    void updateSettings({ environmentId, input: { patch } }).then((result) =>
-      toastCommandFailure("Setting not saved", result),
-    );
-  };
-
   const startAgentThread = (projectId: ProjectId, prompt: string) => {
     void handleNewThread(scopeProjectRef(environmentId, projectId), {
       envMode: "cloud",
@@ -353,19 +339,19 @@ export function TeamImageSettings({
     });
   };
 
+  // A build runs on a driver, so without one the section waits until there is something to show.
+  if (!driversConfigured && (snapshot === null || (saved === null && builds.length === 0)))
+    return null;
+
+  const showEditor = canEdit && (editorOpen || edit !== null);
+  const statusLines = [
+    active === null ? null : activeVersions(active),
+    canEdit && saved !== null ? buildBlocker : null,
+  ].filter((line): line is string => line !== null);
+
   return (
     <>
-      <SettingsSection
-        {...searchableSetting("cloud-team-image")}
-        title="Team image"
-        headerAction={
-          snapshot === null ? undefined : (
-            <Button size="xs" variant="ghost" onClick={snapshotView.refresh}>
-              Refresh
-            </Button>
-          )
-        }
-      >
+      <SettingsSection {...searchableSetting("cloud-team-image")} title="Team image">
         {snapshot === null ? (
           <SettingsRow
             title="Team image"
@@ -374,49 +360,60 @@ export function TeamImageSettings({
         ) : (
           <>
             <SettingsRow
-              title={active === null ? "No team image yet" : `Build ${active.number} is active`}
+              title={
+                active === null ? (
+                  "No team image yet"
+                ) : (
+                  <span className="flex items-center gap-2">
+                    {`Build ${active.number}`}
+                    <Badge variant="success">Active</Badge>
+                  </span>
+                )
+              }
               description={
                 active === null
                   ? "Every session starts from Pair's base image. A team image adds your projects, tools and caches, so sessions start ready."
                   : activeSummary(active, formatTime, memberName, projectName)
               }
+              status={
+                statusLines.length === 0 ? null : (
+                  <span className="grid gap-0.5">
+                    {statusLines.map((line) => (
+                      <span key={line}>{line}</span>
+                    ))}
+                  </span>
+                )
+              }
               control={
                 canEdit ? (
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy || buildBlocker !== null || saved === null}
-                      title={buildTitle}
-                      onClick={() => saved !== null && void build(saved.revision)}
-                    >
-                      Build
-                    </Button>
-                    <EditWithAgent
-                      label="Edit with an agent"
-                      projects={projects}
-                      onPick={(projectId) => startAgentThread(projectId, EDIT_WITH_AGENT_PROMPT)}
-                    />
-                  </div>
+                  <>
+                    {projects.length > 0 ? (
+                      <EditWithAgent
+                        label="Edit with an agent"
+                        projects={projects}
+                        onPick={(projectId) => startAgentThread(projectId, EDIT_WITH_AGENT_PROMPT)}
+                      />
+                    ) : null}
+                    {saved === null ? null : (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={busy || buildBlocker !== null}
+                        title={buildTitle}
+                        onClick={() => void build(saved.revision)}
+                      >
+                        {active === null ? "Build" : "Rebuild"}
+                      </Button>
+                    )}
+                  </>
                 ) : undefined
               }
             >
               {rebuildHint === null ? null : (
-                <div className="pb-2">
+                <div className="pt-3 pb-2">
                   <Alert variant="info">
                     <InfoIcon aria-hidden />
                     <AlertDescription>{rebuildHint}</AlertDescription>
-                    <AlertAction>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        disabled={busy || buildBlocker !== null || saved === null}
-                        title={buildTitle}
-                        onClick={() => saved !== null && void build(saved.revision)}
-                      >
-                        Build
-                      </Button>
-                    </AlertAction>
                   </Alert>
                 </div>
               )}
@@ -424,8 +421,13 @@ export function TeamImageSettings({
             {canEdit && proposals.length > 0 ? (
               <>
                 <SettingsRow
-                  title={`Proposals (${proposals.length})`}
-                  description="Agents suggested these install script changes. Nothing changes until you save one."
+                  title={
+                    <span className="flex items-center gap-2">
+                      Agent proposals
+                      <Badge variant="info">{proposals.length}</Badge>
+                    </span>
+                  }
+                  description="Agents suggested changes to the install script. Nothing changes until you accept one and save it."
                 />
                 {proposals.map((proposal) => (
                   <ProposalRow
@@ -450,7 +452,7 @@ export function TeamImageSettings({
                 ))}
               </>
             ) : null}
-            {canEdit ? (
+            {showEditor ? (
               <RecipeEditor
                 draft={draft}
                 revision={savedRevision}
@@ -466,40 +468,23 @@ export function TeamImageSettings({
                 secretSources={secretSources}
                 onChange={update}
                 onReload={reload}
+                onClose={() => setEditorOpen(false)}
                 onSave={() => void submit(false)}
                 onSaveAndBuild={() => void submit(true)}
                 canSave={dirty && parsed?.ok === true && !stale && !conflict}
               />
-            ) : null}
-            {canEdit ? (
+            ) : canEdit ? (
               <SettingsRow
-                title="Keep succeeded builds"
-                description="Besides the active build and any a running session uses. Older ones are removed to save disk."
+                title="Recipe"
+                description={
+                  saved === null
+                    ? "Not written yet. Pre-clone projects and add an install script on top of Pair's base image."
+                    : recipeSummary(saved.revision, savedRecipe)
+                }
                 control={
-                  <NumberField
-                    key={snapshot.keepSucceeded}
-                    defaultValue={snapshot.keepSucceeded}
-                    min={1}
-                    max={20}
-                    step={1}
-                    size="sm"
-                    className="w-auto"
-                    onValueCommitted={(next) => {
-                      if (next === null) return;
-                      const keep = Math.min(20, Math.max(1, Math.round(next)));
-                      if (keep !== snapshot.keepSucceeded) saveKeepSucceeded(keep);
-                    }}
-                  >
-                    <NumberFieldGroup>
-                      <NumberFieldDecrement aria-label="Decrease builds kept" />
-                      <NumberFieldInput
-                        aria-label="Succeeded builds kept"
-                        size={4}
-                        className="w-auto grow-0 text-right"
-                      />
-                      <NumberFieldIncrement aria-label="Increase builds kept" />
-                    </NumberFieldGroup>
-                  </NumberField>
+                  <Button size="xs" variant="outline" onClick={() => setEditorOpen(true)}>
+                    {saved === null ? "Write recipe" : "Edit recipe"}
+                  </Button>
                 }
               />
             ) : null}
@@ -654,10 +639,17 @@ function ProposalRow({
   const changed = diff.some((line) => line.kind !== "same");
   return (
     <SettingsRow
-      title={proposal.reason}
+      className="ps-6 sm:ps-8"
+      title={<span className="font-normal">{proposal.reason}</span>}
       description={`${whose} · ${formatTime(proposal.createdAt)}`}
       control={
-        <Button size="xs" variant="outline" aria-expanded={open} disabled={busy} onClick={onToggle}>
+        <Button
+          size="xs"
+          variant={open ? "ghost" : "outline"}
+          aria-expanded={open}
+          disabled={busy}
+          onClick={onToggle}
+        >
           {open ? "Hide" : "Review"}
         </Button>
       }
@@ -693,7 +685,7 @@ function ProposalRow({
           <div className="flex flex-wrap items-center justify-between gap-1.5">
             <Button
               size="xs"
-              variant="link"
+              variant="ghost"
               onClick={() =>
                 void navigate({
                   to: "/$environmentId/$threadId",
@@ -708,7 +700,7 @@ function ProposalRow({
                 Dismiss
               </Button>
               <Button size="xs" disabled={busy || !changed} onClick={onAccept}>
-                Accept
+                Accept into recipe
               </Button>
             </div>
           </div>
@@ -731,18 +723,39 @@ function activeSummary(
     requester,
     manifest === undefined ? null : `Pair base ${manifest.base.pairVersion}`,
     manifest?.sizeBytes == null ? null : formatBytes(manifest.sizeBytes),
-    ...(manifest?.providers.flatMap((provider) =>
+    manifest === undefined || manifest.repos.length === 0
+      ? null
+      : `${manifest.repos.map((repo) => projectName(repo.projectId)).join(", ")} pre-cloned`,
+  ];
+  return parts.filter((part): part is string => part !== null).join(" · ");
+}
+
+/** "Claude Code 2.0.14 · Codex 0.98.0", the agent versions baked into a build; null without any. */
+function activeVersions(build: TeamImageBuild): string | null {
+  const versions =
+    build.manifest?.providers.flatMap((provider) =>
       provider.version === null
         ? []
         : [`${getProviderClient(provider.driver)?.label ?? provider.driver} ${provider.version}`],
-    ) ?? []),
-    manifest === undefined || manifest.repos.length === 0
-      ? null
-      : `${manifest.repos.length} project${manifest.repos.length === 1 ? "" : "s"} pre-cloned (${manifest.repos
-          .map((repo) => projectName(repo.projectId))
-          .join(", ")})`,
-  ];
-  return parts.filter((part): part is string => part !== null).join(" · ");
+    ) ?? [];
+  return versions.length === 0 ? null : versions.join(" · ");
+}
+
+/** "Revision 4 · 2 projects pre-cloned · 14-line install script · 1 build variable". */
+function recipeSummary(revision: number, recipe: TeamImageRecipe): string {
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const lines = recipe.install.split("\n").filter((line) => line.trim() !== "").length;
+  const variables = Object.keys(recipe.buildEnv).length + Object.keys(recipe.buildSecrets).length;
+  return [
+    `Revision ${revision}`,
+    recipe.projectIds.length === 0
+      ? "no projects pre-cloned"
+      : `${plural(recipe.projectIds.length, "project")} pre-cloned`,
+    lines === 0 ? "no install script" : `${lines}-line install script`,
+    variables === 0 ? null : plural(variables, "build variable"),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function FailureDetail({
@@ -801,12 +814,6 @@ function BuildLogPanel({
       {view?.truncated === true ? (
         <p className="text-xs text-muted-foreground">Older lines are left out of this view.</p>
       ) : null}
-      {view !== null && !view.done ? (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Spinner size="xs" aria-hidden />
-          Streaming
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -825,11 +832,7 @@ function EditWithAgent({
   const only = projects.length === 1 ? projects[0] : undefined;
   if (only !== undefined) {
     return (
-      <Button
-        size={variant === "outline" ? "sm" : "xs"}
-        variant={variant}
-        onClick={() => onPick(only.id)}
-      >
+      <Button size="xs" variant={variant} onClick={() => onPick(only.id)}>
         {label}
       </Button>
     );
@@ -839,7 +842,7 @@ function EditWithAgent({
       <MenuTrigger
         render={
           <Button
-            size={variant === "outline" ? "sm" : "xs"}
+            size="xs"
             variant={variant}
             disabled={projects.length === 0}
             title={projects.length === 0 ? "Add a project to Pair Cloud first." : undefined}
@@ -875,6 +878,7 @@ function RecipeEditor({
   secretSources,
   onChange,
   onReload,
+  onClose,
   onSave,
   onSaveAndBuild,
 }: {
@@ -894,6 +898,7 @@ function RecipeEditor({
   readonly secretSources: ReturnType<typeof useSecretSources>;
   readonly onChange: (patch: Partial<TeamImageDraft>) => void;
   readonly onReload: () => void;
+  readonly onClose: () => void;
   readonly onSave: () => void;
   readonly onSaveAndBuild: () => void;
 }) {
@@ -910,20 +915,9 @@ function RecipeEditor({
     <>
       <SettingsRow
         title="Recipe"
-        description={
-          revision === null
-            ? "Not saved yet. Pre-clone projects and run an install script on top of Pair's base image."
-            : `Revision ${revision}${dirty ? ", unsaved changes" : ""}`
-        }
-        control={
-          dirty ? (
-            <Button size="xs" variant="ghost" onClick={onReload}>
-              Discard changes
-            </Button>
-          ) : undefined
-        }
+        description={`${revision === null ? "Not saved yet." : `Revision ${revision}.`} Projects are cloned on top of Pair's base image, then the install script runs.`}
       >
-        <div className="grid gap-4 pb-3">
+        <div className="grid gap-4 pt-3 pb-3">
           {accepting === null ? null : (
             <Alert variant="info">
               <InfoIcon aria-hidden />
@@ -950,7 +944,7 @@ function RecipeEditor({
                 Add a project to Pair Cloud to pre-clone it.
               </p>
             ) : (
-              <div className="grid gap-1.5 sm:grid-cols-2">
+              <div className="flex flex-wrap gap-x-6 gap-y-2">
                 {projects.map((project) => (
                   <label key={project.id} className="flex min-w-0 items-center gap-2 text-sm">
                     <Checkbox
@@ -1007,46 +1001,55 @@ function RecipeEditor({
         secretSources={secretSources}
         onChange={(environment) => onChange({ environment })}
       />
-      <SettingsRow title="Save" description={saveDescription(parseError, changes, buildBlocker)}>
-        <div className="flex flex-wrap items-center justify-end gap-1.5 pb-3">
-          <Button size="sm" variant="outline" disabled={busy || !canSave} onClick={onSave}>
-            Save
+      <SettingsFooter status={saveStatus(parseError, changes, buildBlocker)}>
+        {dirty ? (
+          <>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={onReload}>
+              Discard
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy || !canSave} onClick={onSave}>
+              Save
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || !canSave || buildBlocker !== null}
+              title={buildBlocker ?? undefined}
+              onClick={onSaveAndBuild}
+            >
+              Save and build
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            Close
           </Button>
-          <Button
-            size="sm"
-            disabled={busy || !canSave || buildBlocker !== null}
-            title={buildBlocker ?? undefined}
-            onClick={onSaveAndBuild}
-          >
-            Save and build
-          </Button>
-        </div>
-      </SettingsRow>
+        )}
+      </SettingsFooter>
     </>
   );
 }
 
-function saveDescription(
+function saveStatus(
   parseError: string | null,
   changes: ReadonlyArray<string> | null,
   buildBlocker: string | null,
 ) {
   if (parseError !== null) {
     return (
-      <span className="flex items-start gap-1.5 text-destructive">
+      <span className="flex items-start gap-1.5 text-destructive-foreground">
         <InfoIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         {parseError}
       </span>
     );
   }
-  if (changes === null || changes.length === 0) {
-    return buildBlocker === null ? "No unsaved changes." : `No unsaved changes. ${buildBlocker}`;
-  }
+  if (changes === null || changes.length === 0) return "No changes";
   return (
     <span className="grid gap-0.5">
-      {changes.map((line) => (
-        <span key={line}>{line}</span>
-      ))}
+      <span className="font-medium text-foreground">
+        {changes.length === 1 ? "1 change" : `${changes.length} changes`}
+      </span>
+      <span>{changes.join(" · ")}</span>
+      {buildBlocker === null ? null : <span>{buildBlocker}</span>}
     </span>
   );
 }

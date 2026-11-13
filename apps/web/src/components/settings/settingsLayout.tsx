@@ -254,6 +254,27 @@ export function SettingsSection({
   );
 }
 
+/** A group's closing bar: what the edit above it changes on the left, the actions that apply it on the right. */
+export function SettingsFooter({
+  status,
+  children,
+}: {
+  readonly status?: ReactNode;
+  readonly children?: ReactNode;
+}) {
+  return (
+    <div
+      data-slot="settings-footer"
+      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-b-xl bg-muted/40 px-3 py-2.5 sm:px-4"
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2.5 text-xs text-muted-foreground">
+        {status}
+      </div>
+      {children ? <div className="flex shrink-0 items-center gap-1.5">{children}</div> : null}
+    </div>
+  );
+}
+
 export function SettingsUnavailableGroup({
   children,
   message,

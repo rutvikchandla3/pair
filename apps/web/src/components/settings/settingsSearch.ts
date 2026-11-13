@@ -1328,9 +1328,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "cloud-caps",
-    title: "Machine limits",
+    title: "Start rate",
     to: "/settings/cloud",
-    searchTerms: ["cloud caps team cap starts per minute rate member cap vcpus"],
+    searchTerms: ["cloud machine limits caps team cap starts per minute rate member cap vcpus"],
     environmentOnly: true,
     sandboxOnly: true,
   },
@@ -1365,6 +1365,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "cloud machines build recipe install script pre-clone projects activate roll back rebuild keep succeeded builds log agent npm token",
     ],
+    environmentOnly: true,
+    teamImagesOnly: true,
+  },
+  {
+    id: "cloud-team-image-keep",
+    title: "Team image builds to keep",
+    to: "/settings/cloud",
+    searchTerms: ["cloud team image keep succeeded builds old remove disk storage"],
     environmentOnly: true,
     teamImagesOnly: true,
   },

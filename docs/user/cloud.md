@@ -20,7 +20,8 @@ remain, so an admin can remove them.
 Cloud machines are Docker containers. Once [Pair Cloud is installed](./pair-cloud.md), admins set
 them up in its **Settings → Cloud**:
 
-1. Choose **Add driver**, then **Docker**.
+1. Choose **Add** next to **Docker**. Once a driver exists, **Add driver** under **Compute** adds
+   another.
 2. Leave **Docker host** empty to use Docker on the server's own machine (or the server's
    `DOCKER_HOST`). For another Docker host, enter its `tcp://` address or a `unix://` socket;
    `ssh://` is not supported, so forward the socket instead. A remote host also needs a
@@ -31,13 +32,13 @@ them up in its **Settings → Cloud**:
    `sudo` works and reaches github.com, removes it, and shows how long each step took.
 
 Plain Docker is not a security boundary: an agent in a machine can reach the host's Docker network
-and kernel. Use rootless Docker or gVisor. The driver's row shows which one is in use, and the
-page warns while any driver runs on plain Docker.
+and kernel. Use rootless Docker or gVisor. The driver's row shows which one is in use, and warns
+while it runs on plain Docker.
 
 Machines start from Pair's published base image for your server version, which the server
 downloads by itself. To use a registry mirror or your own build, enter its name under
-**Base image**. The page also shows the limits: how many machines may run at once and how many may
-start each minute. A driver runs a quarter of its Docker host's CPUs at once unless you set
+**Base image**. Each driver's row shows how many of its machines may run at once, and **Start rate**
+how many may start each minute. A driver runs a quarter of its Docker host's CPUs at once unless you set
 **Machines at once** in its form; a change applies to the next start without restarting anything.
 A machine started past a limit waits for a free slot. Lowering the limit stops nothing that already
 runs.
@@ -46,11 +47,11 @@ runs.
 agents. Projects can add their own.
 
 A Pair Cloud server that runs in your own Google Cloud project can use that project's Compute
-Engine VMs as machines instead: choose **Add driver**, then **Google Cloud**. These machines have
+Engine VMs as machines instead: add a **Google Cloud** driver. These machines have
 Docker and Docker Compose, so agents and setup scripts can run containers. Container machines do not.
 
 With more than one driver, new machines start on the first one until you choose another:
-press **Use for new machines** on its row. Machines already running stay where they are.
+choose **Use for new machines** in its row's **⋯** menu. Machines already running stay where they are.
 
 Removing a driver stops the cloud threads on its machines.
 
@@ -337,9 +338,9 @@ What private does not cover:
 - **Whoever runs the server.** Someone with a shell on the server's host can read its files. Pair
   keeps members apart in the app, not from the person who operates the server.
 
-An admin cannot open a private thread either, not even in search. **Settings → Cloud** gives admins
-an **All machines** list, because machines cost money. A machine the admin cannot open shows
-**Private** and its owner's name, with its state, size, driver and age, and no title, branch or link. **Sleep**
+An admin cannot open a private thread either, not even in search. **Settings → Cloud** lists every
+machine under **Overview** for admins, because machines cost money. A machine the admin cannot open
+shows **Private thread** and its owner's name, with its state, size, driver and age, and no title, branch or link. **Sleep**
 and **Discard machine** work on it as usual. Members who are not admins get no list. If an owner
 leaves the team, an admin gives their cloud threads to a member or deletes them; see
 [Offboard a member](./pair-cloud.md#offboard-a-member).

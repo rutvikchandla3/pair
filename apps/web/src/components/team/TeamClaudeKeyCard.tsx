@@ -6,8 +6,8 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   teamAdmins,
+  teamClaudeKeyDetailsText,
   teamClaudeKeyIsSet,
-  teamClaudeKeyStatusText,
 } from "@t3tools/client-runtime/team-claude-key";
 import { memberDisplayName } from "@t3tools/client-runtime/state/team";
 import {
@@ -17,7 +17,6 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Redacted from "effect/Redacted";
-import { KeyRoundIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useNowMinute } from "~/hooks/useNowMinute";
@@ -33,6 +32,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
 import { searchableSetting } from "../settings/settingsSearch";
 import { useSpaceComposerDraftStore } from "../spaces/spaceComposerDraftStore";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -250,55 +250,65 @@ export function TeamClaudeKeyCard(props: { readonly environmentId: EnvironmentId
     });
   };
 
+  const askAdmin = canManage || isSet ? null : spaceAskAdmin(null, members.values(), status);
+  const details = status === null ? null : teamClaudeKeyDetailsText(status, nameOf, now);
+
   return (
-    <SettingsSection
-      {...searchableSetting(TEAM_CLAUDE_KEY_SETTINGS_ANCHOR)}
-      icon={<KeyRoundIcon className="size-4 text-muted-foreground" aria-hidden />}
-      headerAction={
-        canManage && status !== null ? (
-          <div className="flex items-center gap-1.5">
-            {isSet ? (
-              <Button size="xs" variant="ghost-destructive" onClick={() => setDialog("remove")}>
-                Remove
-              </Button>
-            ) : null}
-            <Button size="xs" variant="outline" onClick={() => setDialog("set")}>
-              {isSet ? "Replace" : "Add key"}
-            </Button>
-          </div>
-        ) : null
-      }
-    >
-      <p className="px-3 pt-3 text-muted-foreground text-xs sm:px-4">
-        Anthropic API key · Pays for @pair in every space on this server. Members' own threads keep
-        using their own accounts.
-      </p>
+    <SettingsSection title="Spaces">
       <SettingsRow
-        title={status === null ? "Checking…" : teamClaudeKeyStatusText(status, nameOf, now)}
-        role="status"
-      />
-      {canManage || isSet || status === null ? null : (
-        <SettingsRow
-          title="Ask an admin to add one"
-          description={
-            <span className="flex flex-wrap items-center gap-1.5">
-              {admins.map((admin) => (
-                <span key={admin.id} className="inline-flex items-center gap-1">
-                  <MemberAvatar size="sm" member={admin} />
-                  {admin.name}
-                </span>
-              ))}
+        {...searchableSetting(TEAM_CLAUDE_KEY_SETTINGS_ANCHOR)}
+        title={
+          <span className="flex items-center gap-2">
+            {searchableSetting(TEAM_CLAUDE_KEY_SETTINGS_ANCHOR).title}
+            {status === null ? null : (
+              <Badge variant={isSet ? "success" : "warning"}>{isSet ? "Set" : "Not set"}</Badge>
+            )}
+          </span>
+        }
+        description={
+          canManage || isSet
+            ? "Pays for @pair in every space on this server. Members' own threads keep using their own accounts."
+            : "Pays for @pair in every space on this server. Until an admin adds one, @pair doesn't reply in spaces."
+        }
+        status={
+          status === null ? (
+            <span role="status">Checking…</span>
+          ) : details !== null ? (
+            <span role="status">{details}</span>
+          ) : askAdmin !== null ? (
+            <span className="grid gap-1">
+              <span className="flex flex-wrap items-center gap-2.5">
+                Admins:
+                {admins.map((admin) => (
+                  <span key={admin.id} className="inline-flex items-center gap-1 text-foreground">
+                    <MemberAvatar size="sm" member={admin} />
+                    {admin.name}
+                  </span>
+                ))}
+              </span>
+              <span>Sends {askAdmin.admin.name} a request in a space you share.</span>
             </span>
-          }
-          control={
-            admins.length === 0 ? null : (
-              <Button size="xs" variant="outline" onClick={ask}>
-                {spaceAskAdmin(null, members.values(), status)?.label ?? "Ask"}
+          ) : null
+        }
+        control={
+          canManage && status !== null ? (
+            <>
+              <Button size="xs" variant="outline" onClick={() => setDialog("set")}>
+                {isSet ? "Replace" : "Add key"}
               </Button>
-            )
-          }
-        />
-      )}
+              {isSet ? (
+                <Button size="xs" variant="ghost-destructive" onClick={() => setDialog("remove")}>
+                  Remove
+                </Button>
+              ) : null}
+            </>
+          ) : askAdmin !== null ? (
+            <Button size="xs" variant="outline" onClick={ask}>
+              {askAdmin.label}
+            </Button>
+          ) : null
+        }
+      />
       {dialog === "set" ? (
         <TeamClaudeKeyDialog
           environmentId={environmentId}

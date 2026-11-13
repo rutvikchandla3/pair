@@ -448,15 +448,16 @@ describe("cloudMachineRow", () => {
   it("names the owner and keeps a private machine's title, branch and link off the row", () => {
     expect(row({})).toMatchObject({
       threadId: null,
-      title: "Private · Ada",
-      details: "Running · Default · Docker · 3h ago",
+      title: "Private thread",
+      details: "Ada · Default · Docker · 3h ago",
+      stateLabel: "Running",
       discardConfirmation:
         "This deletes Ada's machine and its uncommitted work. You can't see what is on it.",
       actions: ["sleep", "discard"],
     });
     // A member the roster never listed reads as a former member, never as nobody.
-    expect(row({ ownerMemberId: MemberId.make("member-unknown") }).title).toBe(
-      "Private · Former member",
+    expect(row({ ownerMemberId: MemberId.make("member-unknown") }).details).toBe(
+      "Former member · Default · Docker · 3h ago",
     );
   });
 
@@ -466,7 +467,7 @@ describe("cloudMachineRow", () => {
     ).toMatchObject({
       threadId: ownerThreadId,
       title: "Fix checkout",
-      details: "fix/checkout · Ada · Running · Default · Docker · 3h ago",
+      details: "fix/checkout · Ada · Default · Docker · 3h ago",
       discardConfirmation: "Discard this machine? Its disk is deleted; transcript and diffs stay.",
     });
   });

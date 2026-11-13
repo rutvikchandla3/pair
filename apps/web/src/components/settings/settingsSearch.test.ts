@@ -220,11 +220,12 @@ describe("searchSettings", () => {
       ["Cloud overview", "cloud-overview"],
       ["Docker driver", "cloud-docker-driver"],
       ["Base image", "cloud-base-image"],
-      ["Machine limits", "cloud-caps"],
+      ["Start rate", "cloud-caps"],
       ["Delete archived machines' disks", "cloud-disk-archived"],
       ["Delete unused machines' disks", "cloud-disk-inactive"],
       ["Environment variables", "cloud-env"],
       ["Team image", "cloud-team-image"],
+      ["Team image builds to keep", "cloud-team-image-keep"],
       ["Allow cloud threads", "project-cloud-allowed"],
       ["Cloud variables", "project-cloud-env"],
       ["Team Claude key", "team-claude-key"],
@@ -280,6 +281,7 @@ describe("settings search targets", () => {
       "cloud-disk-inactive",
       "cloud-env",
       "cloud-team-image",
+      "cloud-team-image-keep",
       "cloud-test",
     ]) {
       for (const scopeKind of ["all", "environment", "project"] as const) {

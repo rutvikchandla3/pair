@@ -30,41 +30,68 @@ export function LinkAccessPicker({
       <span id={labelId} className="block text-xs font-medium">
         {label}
       </span>
-      <Select
+      <AccessSelect
         value={value}
+        onChange={onChange}
         disabled={disabled}
-        onValueChange={(next) => {
-          if (next !== null) onChange(next as AuthMcpClientAccess);
-        }}
-      >
-        <SelectTrigger aria-labelledby={labelId}>
-          <SelectValue>
-            <span className="flex items-center gap-2">
-              <selected.icon aria-hidden className="size-4" />
-              {selected.label}
-            </span>
-          </SelectValue>
-        </SelectTrigger>
-        <SelectPopup alignItemWithTrigger={false}>
-          {options.map((option) => {
-            const { label, description, icon: Icon } = accessConfig[option];
-            return (
-              <SelectItem key={option} value={option} hideIndicator>
-                <span className="grid min-w-0 gap-0.5 py-0.5">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                    <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                    {label}
-                  </span>
-                  <span className="text-xs leading-4 text-muted-foreground">{description}</span>
-                </span>
-              </SelectItem>
-            );
-          })}
-        </SelectPopup>
-      </Select>
+        options={options}
+        aria-labelledby={labelId}
+      />
       <p className="text-xs text-muted-foreground">
         {selected.description} {note}
       </p>
     </div>
+  );
+}
+
+/** The access choice alone, for a settings row that explains the choice in its description. */
+export function AccessSelect({
+  value,
+  onChange,
+  disabled = false,
+  options = AuthMcpClientAccess.literals,
+  className,
+  ...labelProps
+}: {
+  readonly value: AuthMcpClientAccess;
+  readonly onChange: (access: AuthMcpClientAccess) => void;
+  readonly disabled?: boolean;
+  readonly options?: ReadonlyArray<AuthMcpClientAccess>;
+  readonly className?: string;
+} & ({ readonly "aria-labelledby": string } | { readonly "aria-label": string })) {
+  const selected = accessConfig[value];
+  return (
+    <Select
+      value={value}
+      disabled={disabled}
+      onValueChange={(next) => {
+        if (next !== null) onChange(next as AuthMcpClientAccess);
+      }}
+    >
+      <SelectTrigger {...labelProps} className={className}>
+        <SelectValue>
+          <span className="flex items-center gap-2">
+            <selected.icon aria-hidden className="size-4" />
+            {selected.label}
+          </span>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectPopup alignItemWithTrigger={false}>
+        {options.map((option) => {
+          const { label, description, icon: Icon } = accessConfig[option];
+          return (
+            <SelectItem key={option} value={option} hideIndicator>
+              <span className="grid min-w-0 gap-0.5 py-0.5">
+                <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                  <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                  {label}
+                </span>
+                <span className="text-xs leading-4 text-muted-foreground">{description}</span>
+              </span>
+            </SelectItem>
+          );
+        })}
+      </SelectPopup>
+    </Select>
   );
 }

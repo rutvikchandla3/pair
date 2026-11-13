@@ -6,31 +6,39 @@ import {
   EnvironmentId,
   type GceSandboxDriver,
   isReservedSandboxEnvName,
-  SANDBOX_VM_DRIVER_KINDS,
   type SandboxDiskRetention,
   type SandboxDriverCheckResult,
   type SandboxDriverCheckStep,
+  type SandboxDriverHealth,
   type SandboxDriverInstance,
+  type SandboxOverview,
   type SandboxSize,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  drainNoticeLabel,
-  sandboxIsolationLabel,
-  sandboxMachineCountsLabel,
-} from "@t3tools/client-runtime/state/sandbox";
-import { teamImageImageLine } from "@t3tools/client-runtime/team-image-presentation";
+import { drainNoticeLabel, sandboxIsolationLabel } from "@t3tools/client-runtime/state/sandbox";
 import * as DateTime from "effect/DateTime";
-import { CheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import {
+  BoxIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  CloudIcon,
+  InfoIcon,
+  MoreHorizontalIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from "lucide-react";
+import { type ReactNode, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { DEFAULT_DISK_RETENTION, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 
 import { usePrimarySettings } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
+import { cn } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { sandboxEnvironment } from "~/state/sandbox";
@@ -39,11 +47,29 @@ import { teamImageEnvironment } from "~/state/teamImage";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
   cloudSettingsVisible,
@@ -149,16 +175,18 @@ type DriverForm =
   | { readonly mode: "add"; readonly kind: ComputeDriverKind }
   | { readonly mode: "edit"; readonly id: ComputeDriverId };
 
-function AddDriverMenu({
-  size,
-  onAdd,
-}: {
-  readonly size: "xs" | "sm";
-  readonly onAdd: (kind: ComputeDriverKind) => void;
-}) {
+type DriverCheck = SandboxDriverCheckResult | "running" | { readonly error: string };
+
+const PLAIN_DOCKER_WARNING =
+  "Plain Docker isn't a security boundary. Agents here can reach the host's Docker network and kernel, and private threads aren't isolated from other members. Use rootless Docker or gVisor on this host.";
+
+function AddDriverMenu({ onAdd }: { readonly onAdd: (kind: ComputeDriverKind) => void }) {
   return (
     <Menu>
-      <MenuTrigger render={<Button size={size} variant="outline" />}>Add driver</MenuTrigger>
+      <MenuTrigger render={<Button size="xs" variant="outline" />}>
+        <PlusIcon className="size-3" aria-hidden />
+        Add driver
+      </MenuTrigger>
       <MenuPopup align="end">
         {ComputeDriverKind.literals.map((kind) => (
           <MenuItem key={kind} onClick={() => onAdd(kind)}>
@@ -170,30 +198,34 @@ function AddDriverMenu({
   );
 }
 
-function driverDescription(driver: SandboxDriverInstance): string {
-  const size = `${SIZE_LABELS[driver.size ?? "default"]} machines`;
-  switch (driver.kind) {
-    case "docker":
-      return [
-        driver.dockerHost ? `Docker at ${driver.dockerHost}` : "Docker on this machine",
-        isRemoteDockerHost(driver.dockerHost ?? "") && driver.runnerUrl
-          ? `runner URL ${driver.runnerUrl}`
-          : null,
-        size,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-    case "gce":
-      return [
-        DRIVER_KIND_LABELS.gce,
-        driver.project,
-        driver.zones?.join(", "),
-        driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
-        size,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-  }
+/** "Docker on this server · gVisor · Default size · up to 4 machines at once". */
+function driverSummary(
+  driver: SandboxDriverInstance,
+  health: SandboxDriverHealth | undefined,
+): string {
+  const where =
+    driver.kind === "docker"
+      ? [
+          driver.dockerHost ? `Docker at ${driver.dockerHost}` : "Docker on this server",
+          isRemoteDockerHost(driver.dockerHost ?? "") && driver.runnerUrl
+            ? `runner URL ${driver.runnerUrl}`
+            : null,
+        ]
+      : [
+          DRIVER_KIND_LABELS.gce,
+          driver.project ?? null,
+          driver.zones?.join(", ") ?? null,
+          driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
+        ];
+  const cap = health?.runningCap;
+  return [
+    ...where,
+    health?.reachable ? sandboxIsolationLabel(health) : null,
+    `${SIZE_LABELS[driver.size ?? "default"]} size`,
+    cap === undefined ? null : `up to ${cap} machine${cap === 1 ? "" : "s"} at once`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function CloudEnvironmentSettings({
@@ -218,8 +250,9 @@ function CloudEnvironmentSettings({
   const teamImageSnapshot = useEnvironmentQuery(
     teamImages && configured ? teamImageEnvironment.snapshot({ environmentId, input: {} }) : null,
   ).data;
-  const activeBuild =
-    teamImageSnapshot?.builds.find((build) => build.id === teamImageSnapshot.activeBuildId) ?? null;
+  const canEditTeamImage = useAtomValue(
+    teamImageEnvironment.saveRecipe.permissionAtom(environmentId),
+  );
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const checkDriver = useAtomCommand(sandboxEnvironment.checkDriver, { reportFailure: false });
   const cancelDrain = useAtomCommand(sandboxEnvironment.cancelDrain, { reportFailure: false });
@@ -227,9 +260,7 @@ function CloudEnvironmentSettings({
   const drainNotice = drainNoticeLabel(serverConfig.drainingSince);
   const secretSources = useSecretSources(environmentId);
   const [form, setForm] = useState<DriverForm | null>(null);
-  const [checks, setChecks] = useState<
-    Readonly<Record<string, SandboxDriverCheckResult | "running" | { readonly error: string }>>
-  >({});
+  const [checks, setChecks] = useState<Readonly<Record<string, DriverCheck>>>({});
 
   const save = async (patch: ServerSettingsPatch, failure: string) => {
     const result = await updateSettings({ environmentId, input: { patch } });
@@ -283,8 +314,12 @@ function CloudEnvironmentSettings({
     overview.refresh();
   };
 
+  const hideCheck = (driverId: ComputeDriverId) =>
+    setChecks((previous) =>
+      Object.fromEntries(Object.entries(previous).filter(([id]) => id !== driverId)),
+    );
+
   const healths = new Map(overview.data?.drivers.map((health) => [health.driverId, health]) ?? []);
-  const plainDocker = drivers.filter((driver) => healths.get(driver.id)?.isolation === "runc");
   const defaultDriverId =
     drivers.length > 1 && sandbox !== undefined ? defaultDriverIdOf(sandbox) : undefined;
   const editing = form?.mode === "edit" ? drivers.find((driver) => driver.id === form.id) : null;
@@ -292,19 +327,29 @@ function CloudEnvironmentSettings({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const formatTime = (time: DateTime.Utc) =>
     formatDayAwareTimestamp(DateTime.formatIso(time), timestampFormat);
+  const keepSucceeded = teamImageSnapshot?.keepSucceeded;
+
+  const healthLine = (health: SandboxDriverHealth | undefined) => {
+    if (health === undefined)
+      return overview.isPending ? "Checking…" : (overview.error ?? "Status unknown.");
+    if (!health.reachable)
+      return (
+        <span className="text-destructive-foreground">
+          {["Unreachable.", health.message].filter(Boolean).join(" ")}
+        </span>
+      );
+    return health.isolation === "runc" ? (
+      <span className="flex items-start gap-1.5 text-warning-foreground">
+        <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+        {PLAIN_DOCKER_WARNING}
+      </span>
+    ) : (
+      (health.message ?? null)
+    );
+  };
 
   return (
     <>
-      {plainDocker.length > 0 ? (
-        <Alert variant="warning">
-          <TriangleAlertIcon aria-hidden />
-          <AlertDescription>
-            Plain Docker is not a security boundary: agents in a machine can reach this host's
-            Docker network and kernel. Private threads are not isolated from other members on this
-            driver. Use rootless Docker or gVisor.
-          </AlertDescription>
-        </Alert>
-      ) : null}
       {drainNotice !== null ? (
         <Alert variant="info">
           <InfoIcon aria-hidden />
@@ -368,158 +413,169 @@ function CloudEnvironmentSettings({
         </SettingsSection>
       ) : null}
 
-      <SettingsSection
-        {...searchableSetting("cloud-overview")}
-        title="Overview"
-        headerAction={
-          configured ? (
+      {!configured ? (
+        <SettingsSection {...searchableSetting("cloud-overview")} title="Cloud machines">
+          {!cloudLaunch ? (
+            <SettingsRow title="Cloud threads" description={NOT_CLOUD_ONLY_MESSAGE} />
+          ) : canEdit ? (
+            <>
+              <p
+                id={searchableSetting("cloud-docker-driver").id}
+                className="px-3 py-3 text-xs text-muted-foreground sm:px-4"
+              >
+                Each cloud thread runs on its own machine. Add a driver to choose where those
+                machines run.
+              </p>
+              <SettingsRow
+                title={
+                  <span className="flex items-center gap-2">
+                    <BoxIcon className="size-4 text-muted-foreground" aria-hidden />
+                    {DRIVER_KIND_LABELS.docker}
+                  </span>
+                }
+                description={
+                  <>
+                    Containers on this server, or on another host through <code>DOCKER_HOST</code>.
+                    Good for one team server.
+                  </>
+                }
+                control={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setForm({ mode: "add", kind: "docker" })}
+                  >
+                    Add
+                  </Button>
+                }
+              />
+              <SettingsRow
+                title={
+                  <span className="flex items-center gap-2">
+                    <CloudIcon className="size-4 text-muted-foreground" aria-hidden />
+                    {DRIVER_KIND_LABELS.gce}
+                  </span>
+                }
+                description="Compute Engine VMs in this server's Google Cloud project, created with its service account."
+                control={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setForm({ mode: "add", kind: "gce" })}
+                  >
+                    Add
+                  </Button>
+                }
+              />
+            </>
+          ) : (
+            <SettingsRow
+              title="Cloud threads"
+              description="Every cloud thread runs on its own machine. An admin can add a driver to set it up."
+            />
+          )}
+        </SettingsSection>
+      ) : (
+        <SettingsSection
+          {...searchableSetting("cloud-overview")}
+          title="Overview"
+          headerAction={
             <Button size="xs" variant="ghost" onClick={overview.refresh}>
+              <RefreshCwIcon className="size-3" aria-hidden />
               Refresh
             </Button>
-          ) : undefined
-        }
-      >
-        {!configured && !cloudLaunch ? (
-          <SettingsRow title="Cloud threads" description={NOT_CLOUD_ONLY_MESSAGE} />
-        ) : !configured ? (
-          <SettingsRow
-            title="Cloud threads"
-            description="Cloud runs each cloud thread on its own machine. Nothing changes until you add a driver."
-            control={
-              canEdit ? (
-                <AddDriverMenu size="sm" onAdd={(kind) => setForm({ mode: "add", kind })} />
-              ) : (
-                <span className="text-xs text-muted-foreground">An admin can set it up.</span>
-              )
-            }
-          />
-        ) : (
-          <>
-            {drivers.map((driver) => {
-              const health = healths.get(driver.id);
-              return (
-                <SettingsRow
-                  key={driver.id}
-                  title={driver.label}
-                  description={
-                    health === undefined
-                      ? overview.isPending
-                        ? "Checking…"
-                        : (overview.error ?? "Status unknown.")
-                      : [
-                          health.reachable ? sandboxIsolationLabel(health) : "Unreachable",
-                          health.message,
-                        ]
-                          .filter(Boolean)
-                          .join(". ")
-                  }
-                />
-              );
-            })}
-            <SettingsRow
-              title="Machines"
-              description={
-                overview.data ? sandboxMachineCountsLabel(overview.data.machines) : "Checking…"
-              }
+          }
+        >
+          {overview.data ? (
+            <MachineCounts machines={overview.data.machines} />
+          ) : (
+            <SettingsRow title="Machines" description={overview.error ?? "Checking…"} />
+          )}
+          {overview.data?.machineList !== undefined && overview.data.machineList.length > 0 ? (
+            <CloudMachines
+              environmentId={environmentId}
+              machines={overview.data.machineList}
+              drivers={drivers}
+              onChanged={overview.refresh}
             />
-            <SettingsRow
-              title={activeBuild === null ? "Base image" : "Image"}
-              description={
-                activeBuild === null
-                  ? (overview.data?.baseImage.label ?? sandbox?.baseImage ?? "Pair base")
-                  : teamImageImageLine(activeBuild)
-              }
-            />
-            <SettingsRow
-              title="Checkpoint mirror"
-              description={
-                overview.data
-                  ? `${formatBytes(overview.data.mirrorBytes)} of checkpoints kept on this server for stopped machines.`
-                  : "Checking…"
-              }
-            />
-          </>
-        )}
-      </SettingsSection>
-
-      {overview.data?.machineList !== undefined && overview.data.machineList.length > 0 ? (
-        <SettingsSection title="All machines">
-          <CloudMachines
-            environmentId={environmentId}
-            machines={overview.data.machineList}
-            drivers={drivers}
-            onChanged={overview.refresh}
-          />
+          ) : null}
         </SettingsSection>
-      ) : null}
+      )}
 
-      {canAdmin && (configured || form !== null) ? (
+      {canAdmin && configured ? (
         <SettingsSection
           {...searchableSetting("cloud-docker-driver")}
           title="Compute"
           headerAction={
-            canEdit && configured && form === null ? (
-              <AddDriverMenu size="xs" onAdd={(kind) => setForm({ mode: "add", kind })} />
-            ) : undefined
+            canEdit ? <AddDriverMenu onAdd={(kind) => setForm({ mode: "add", kind })} /> : undefined
           }
         >
-          {formKind === "docker" ? (
-            <DockerDriverFormRow
-              key={form?.mode === "edit" ? form.id : "add"}
-              initial={editing?.kind === "docker" ? editing : null}
-              id={editing?.id ?? nextDriverId(drivers, "docker")}
-              onCancel={() => setForm(null)}
-              onSave={saveDriver}
-            />
-          ) : formKind === "gce" ? (
-            <GceDriverFormRow
-              key={form?.mode === "edit" ? form.id : "add"}
-              initial={editing?.kind === "gce" ? editing : null}
-              id={editing?.id ?? nextDriverId(drivers, "gce")}
-              onCancel={() => setForm(null)}
-              onSave={saveDriver}
-            />
-          ) : null}
           {drivers.map((driver) => {
             const check = checks[driver.id];
+            const health = healths.get(driver.id);
+            const isDefault = defaultDriverId === driver.id;
             return (
               <SettingsRow
                 key={driver.id}
-                title={driver.label}
-                description={driverDescription(driver)}
+                title={
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "size-2 shrink-0 rounded-full",
+                        health === undefined
+                          ? "bg-muted-foreground/40"
+                          : health.reachable
+                            ? "bg-success"
+                            : "bg-destructive",
+                      )}
+                    />
+                    <span className="truncate">{driver.label}</span>
+                    {isDefault ? <Badge variant="outline">Default</Badge> : null}
+                  </span>
+                }
+                description={driverSummary(driver, health)}
+                status={healthLine(health)}
                 control={
-                  <div className="flex items-center gap-1.5">
-                    {defaultDriverId === driver.id ? (
-                      <span className="text-xs text-muted-foreground">New machines start here</span>
-                    ) : null}
-                    {canEdit ? (
-                      <>
-                        {defaultDriverId !== undefined && defaultDriverId !== driver.id ? (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            onClick={() => startNewMachinesOn(driver)}
-                          >
-                            Use for new machines
-                          </Button>
-                        ) : null}
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          disabled={check === "running"}
-                          onClick={() => void runCheck(driver.id)}
+                  canEdit ? (
+                    <>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={check === "running"}
+                        onClick={() => void runCheck(driver.id)}
+                      >
+                        {check === "running" ? "Testing…" : "Test"}
+                      </Button>
+                      <Menu>
+                        <MenuTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label={`Actions for ${driver.label}`}
+                            />
+                          }
                         >
-                          {check === "running" ? "Testing…" : "Test"}
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => setForm({ mode: "edit", id: driver.id })}
-                        >
-                          Edit
-                        </Button>
-                      </>
-                    ) : null}
+                          <MoreHorizontalIcon className="size-4" />
+                        </MenuTrigger>
+                        <MenuPopup align="end">
+                          <MenuItem onClick={() => setForm({ mode: "edit", id: driver.id })}>
+                            Edit
+                          </MenuItem>
+                          {defaultDriverId !== undefined && !isDefault ? (
+                            <MenuItem onClick={() => startNewMachinesOn(driver)}>
+                              Use for new machines
+                            </MenuItem>
+                          ) : null}
+                          <MenuSeparator />
+                          <MenuItem variant="destructive" onClick={() => void removeDriver(driver)}>
+                            Remove
+                          </MenuItem>
+                        </MenuPopup>
+                      </Menu>
+                    </>
+                  ) : (
                     <Button
                       size="xs"
                       variant="ghost-destructive"
@@ -527,18 +583,20 @@ function CloudEnvironmentSettings({
                     >
                       Remove
                     </Button>
-                  </div>
+                  )
                 }
               >
-                {check !== undefined && check !== "running" ? <CheckResult check={check} /> : null}
+                {check !== undefined && check !== "running" ? (
+                  <CheckResult check={check} onHide={() => hideCheck(driver.id)} />
+                ) : null}
               </SettingsRow>
             );
           })}
-          {canEdit && configured ? (
+          {canEdit ? (
             <>
               <SettingsRow
                 {...searchableSetting("cloud-base-image")}
-                description={`The image machines boot from. Empty uses ${overview.data && sandbox?.baseImage === undefined ? overview.data.baseImage.label : "Pair base"}, matched to this server's version.`}
+                description={`Machines boot from this image. Empty uses ${overview.data && sandbox?.baseImage === undefined ? overview.data.baseImage.label : "Pair base"}, matched to this server's version.`}
                 control={
                   <div className="w-56">
                     <DraftInput
@@ -559,51 +617,11 @@ function CloudEnvironmentSettings({
               />
               <SettingsRow
                 {...searchableSetting("cloud-caps")}
-                description={
-                  <span className="grid gap-0.5">
-                    {drivers.map((driver) => {
-                      const cap = healths.get(driver.id)?.runningCap;
-                      return (
-                        <span key={driver.id}>
-                          {drivers.length > 1 ? `${driver.label}: ` : "Team: "}
-                          {cap === undefined ? "…" : `${cap} machine${cap === 1 ? "" : "s"}`} at
-                          once{" "}
-                          {driver.runningCap !== undefined
-                            ? "(set by an admin)"
-                            : SANDBOX_VM_DRIVER_KINDS.has(driver.kind)
-                              ? "(the driver's default)"
-                              : "(a quarter of the host's vCPUs)"}
-                        </span>
-                      );
-                    })}
-                    <span>
-                      {overview.data?.startsPerMinute ?? 10} starts a minute · No member cap
-                    </span>
+                description="Machines that may start each minute, across the team. There is no per-member cap."
+                control={
+                  <span className="text-sm tabular-nums">
+                    {overview.data ? `${overview.data.startsPerMinute} per minute` : "…"}
                   </span>
-                }
-              />
-              <SettingsRow
-                {...searchableSetting("cloud-disk-archived")}
-                description="Days a machine sleeps with every thread archived before its disk is deleted. Its threads stay readable, and waking one rebuilds the machine from this server's copy."
-                control={
-                  <RetentionControl
-                    label="Delete archived machines' disks"
-                    value={diskRetention.archivedAfterDays}
-                    enabledDays={DEFAULT_DISK_RETENTION.archivedAfterDays}
-                    onChange={(archivedAfterDays) => saveDiskRetention({ archivedAfterDays })}
-                  />
-                }
-              />
-              <SettingsRow
-                {...searchableSetting("cloud-disk-inactive")}
-                description="Days a stopped machine goes without activity on any of its threads before its disk is deleted."
-                control={
-                  <RetentionControl
-                    label="Delete unused machines' disks"
-                    value={diskRetention.asleepAfterDays}
-                    enabledDays={DEFAULT_DISK_RETENTION.asleepAfterDays}
-                    onChange={(asleepAfterDays) => saveDiskRetention({ asleepAfterDays })}
-                  />
                 }
               />
             </>
@@ -615,52 +633,342 @@ function CloudEnvironmentSettings({
         <TeamImageSettings environmentId={environmentId} driversConfigured={configured} />
       ) : null}
 
+      {configured ? (
+        <SettingsSection title="Storage">
+          {canEdit ? (
+            <>
+              <SettingsRow
+                {...searchableSetting("cloud-disk-archived")}
+                description="After a machine sleeps this long with every thread archived. Its threads stay readable, and waking one rebuilds the machine from this server's copy."
+                control={
+                  <RetentionControl
+                    label="Delete archived machines' disks"
+                    value={diskRetention.archivedAfterDays}
+                    enabledDays={DEFAULT_DISK_RETENTION.archivedAfterDays}
+                    onChange={(archivedAfterDays) => saveDiskRetention({ archivedAfterDays })}
+                  />
+                }
+              />
+              <SettingsRow
+                {...searchableSetting("cloud-disk-inactive")}
+                description="After a stopped machine goes this long without activity on any of its threads."
+                control={
+                  <RetentionControl
+                    label="Delete unused machines' disks"
+                    value={diskRetention.asleepAfterDays}
+                    enabledDays={DEFAULT_DISK_RETENTION.asleepAfterDays}
+                    onChange={(asleepAfterDays) => saveDiskRetention({ asleepAfterDays })}
+                  />
+                }
+              />
+            </>
+          ) : null}
+          {canEditTeamImage && keepSucceeded !== undefined ? (
+            <SettingsRow
+              {...searchableSetting("cloud-team-image-keep")}
+              description="Besides the active build and any a running session uses. Older builds are removed."
+              control={
+                <NumberField
+                  key={keepSucceeded}
+                  defaultValue={keepSucceeded}
+                  min={1}
+                  max={20}
+                  step={1}
+                  size="sm"
+                  className="w-auto"
+                  onValueCommitted={(next) => {
+                    if (next === null) return;
+                    const keep = Math.min(20, Math.max(1, Math.round(next)));
+                    if (keep !== keepSucceeded)
+                      void save(
+                        { sandbox: { teamImage: { keepSucceeded: keep } } },
+                        "Setting not saved",
+                      );
+                  }}
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease builds kept" />
+                    <NumberFieldInput
+                      aria-label="Team image builds to keep"
+                      size={4}
+                      className="w-auto grow-0 text-right"
+                    />
+                    <NumberFieldIncrement aria-label="Increase builds kept" />
+                  </NumberFieldGroup>
+                </NumberField>
+              }
+            />
+          ) : null}
+          <SettingsRow
+            title="Checkpoint mirror"
+            description="Copies of stopped machines' work kept on this server, so a deleted disk can be rebuilt."
+            control={
+              <span className="text-sm tabular-nums">
+                {overview.data ? formatBytes(overview.data.mirrorBytes) : "…"}
+              </span>
+            }
+          />
+        </SettingsSection>
+      ) : null}
+
       {canEdit && configured ? (
         <SettingsSection {...searchableSetting("cloud-env")} title="Environment variables">
           <ProviderEnvironmentSection
             environment={sandbox?.env ?? []}
-            description="Set in every cloud machine's terminals, scripts and agents. Projects can add their own."
+            title="Every cloud machine"
+            description="Set in each machine's terminals, scripts and agents. Projects can add their own in project settings."
             invalidName={reservedName}
             secretSources={secretSources}
             onChange={(env) => void save({ sandbox: { env } }, "Environment variables not saved")}
           />
         </SettingsSection>
       ) : null}
+
+      {formKind === "docker" ? (
+        <DockerDriverDialog
+          key={form?.mode === "edit" ? form.id : "add"}
+          initial={editing?.kind === "docker" ? editing : null}
+          id={editing?.id ?? nextDriverId(drivers, "docker")}
+          onCancel={() => setForm(null)}
+          onSave={saveDriver}
+        />
+      ) : formKind === "gce" ? (
+        <GceDriverDialog
+          key={form?.mode === "edit" ? form.id : "add"}
+          initial={editing?.kind === "gce" ? editing : null}
+          id={editing?.id ?? nextDriverId(drivers, "gce")}
+          onCancel={() => setForm(null)}
+          onSave={saveDriver}
+        />
+      ) : null}
     </>
+  );
+}
+
+const MACHINE_COUNTS: ReadonlyArray<{
+  readonly key: keyof SandboxOverview["machines"];
+  readonly label: string;
+  readonly dot: string;
+}> = [
+  { key: "ready", label: "Running", dot: "bg-success" },
+  { key: "sleeping", label: "Asleep", dot: "bg-muted-foreground/40" },
+  { key: "waiting", label: "Waiting", dot: "bg-warning" },
+  { key: "failed", label: "Failed", dot: "bg-destructive" },
+];
+
+function MachineCounts({ machines }: { readonly machines: SandboxOverview["machines"] }) {
+  return (
+    <dl className="grid grid-cols-4 divide-x divide-border/50">
+      {MACHINE_COUNTS.map(({ key, label, dot }) => (
+        <div key={key} className="min-w-0 px-3 py-3 sm:px-4">
+          <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dot)} />
+            {label}
+          </dt>
+          <dd className="mt-0.5 text-xl font-semibold tabular-nums">{machines[key]}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
 function CheckResult({
   check,
+  onHide,
 }: {
   readonly check: SandboxDriverCheckResult | { readonly error: string };
+  readonly onHide: () => void;
 }) {
-  if ("error" in check) {
-    return <p className="pb-2 text-xs text-destructive">{check.error}</p>;
-  }
+  const failed = "error" in check || check.steps.some((step) => !step.ok);
+  const summary =
+    "error" in check
+      ? check.error
+      : failed
+        ? `Failed at ${STEP_LABELS[check.steps.find((step) => !step.ok)!.step].toLowerCase()}`
+        : `Passed in ${formatDuration(check.steps.reduce((total, step) => total + step.durationMs, 0))}`;
   return (
-    <ul className="grid gap-1 pb-2 text-xs" aria-label="Test results">
-      {check.steps.map((step) => (
-        <li key={step.step} className="flex min-w-0 items-start gap-1.5">
-          {step.ok ? (
-            <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-success" aria-label="Passed" />
-          ) : (
-            <XIcon className="mt-0.5 size-3.5 shrink-0 text-destructive" aria-label="Failed" />
+    <div className="mb-2 mt-3 rounded-lg border bg-muted/40">
+      <div className="flex items-center justify-between gap-3 py-1 ps-3 pe-1">
+        <span
+          className={cn(
+            "text-xs font-medium",
+            failed ? "text-destructive-foreground" : "text-success-foreground",
           )}
-          <span className="shrink-0 font-medium">{STEP_LABELS[step.step]}</span>
-          <span className="shrink-0 text-muted-foreground tabular-nums">
-            {formatDuration(step.durationMs)}
-          </span>
-          {step.message ? (
-            <span className="min-w-0 break-words text-muted-foreground">{step.message}</span>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+        >
+          {summary}
+        </span>
+        <Button size="xs" variant="ghost" onClick={onHide}>
+          Hide
+        </Button>
+      </div>
+      {"error" in check ? null : (
+        <ul className="grid gap-1 px-3 pb-2.5 text-xs" aria-label="Test results">
+          {check.steps.map((step) => (
+            <li key={step.step} className="flex min-w-0 items-start gap-1.5">
+              {step.ok ? (
+                <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-success" aria-label="Passed" />
+              ) : (
+                <XIcon className="mt-0.5 size-3.5 shrink-0 text-destructive" aria-label="Failed" />
+              )}
+              <span className="shrink-0 font-medium">{STEP_LABELS[step.step]}</span>
+              <span className="shrink-0 text-muted-foreground tabular-nums">
+                {formatDuration(step.durationMs)}
+              </span>
+              {step.message ? (
+                <span className="min-w-0 break-words text-muted-foreground">{step.message}</span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
-function DockerDriverFormRow({
+function SizeSelect({
+  id,
+  value,
+  onChange,
+}: {
+  readonly id: string;
+  readonly value: SandboxSize;
+  readonly onChange: (size: SandboxSize) => void;
+}) {
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        if (next === "small" || next === "default" || next === "large") onChange(next);
+      }}
+    >
+      <SelectTrigger id={id} size="sm" aria-label="Machine size">
+        <SelectValue>
+          {(selected: string | null) =>
+            selected === "small" || selected === "default" || selected === "large"
+              ? SIZE_LABELS[selected]
+              : ""
+          }
+        </SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="start" alignItemWithTrigger={false}>
+        {(["small", "default", "large"] as const).map((option) => (
+          <SelectItem key={option} value={option}>
+            {SIZE_LABELS[option]}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
+
+/** A count where empty means the driver's own default. */
+function MachinesAtOnceField({
+  id,
+  value,
+  onChange,
+}: {
+  readonly id: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  return (
+    <NumberField
+      id={id}
+      value={value === "" || Number.isNaN(Number(value)) ? null : Number(value)}
+      min={1}
+      step={1}
+      size="sm"
+      onValueChange={(next) => onChange(next === null ? "" : String(next))}
+    >
+      <NumberFieldGroup>
+        <NumberFieldDecrement aria-label="Fewer machines at once" />
+        <NumberFieldInput aria-label="Machines at once" placeholder="Automatic" />
+        <NumberFieldIncrement aria-label="More machines at once" />
+      </NumberFieldGroup>
+    </NumberField>
+  );
+}
+
+function DriverDialog({
+  title,
+  description,
+  error,
+  saving,
+  onCancel,
+  onSubmit,
+  children,
+}: {
+  readonly title: string;
+  readonly description: string;
+  readonly error: string | null;
+  readonly saving: boolean;
+  readonly onCancel: () => void;
+  readonly onSubmit: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !saving) onCancel();
+      }}
+    >
+      <DialogPopup showCloseButton={!saving}>
+        <form
+          className="flex min-h-0 flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (error === null && !saving) onSubmit();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{description}</DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            {children}
+            {error !== null ? (
+              <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                <InfoIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                {error}
+              </p>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter>
+            <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={error !== null || saving}>
+              {saving ? "Saving…" : "Save driver"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+function DialogField({
+  id,
+  label,
+  hint,
+  children,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly hint?: ReactNode;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div className="grid content-start gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {children}
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+function DockerDriverDialog({
   initial,
   id,
   onSave,
@@ -671,7 +979,7 @@ function DockerDriverFormRow({
   readonly onSave: (driver: DockerSandboxDriver) => Promise<void>;
   readonly onCancel: () => void;
 }) {
-  const [label, setLabel] = useState(initial?.label ?? "This machine");
+  const [label, setLabel] = useState(initial?.label ?? "This server");
   const [dockerHost, setDockerHost] = useState(initial?.dockerHost ?? "");
   const [runnerUrl, setRunnerUrl] = useState(initial?.runnerUrl ?? "");
   const [size, setSize] = useState<SandboxSize>(initial?.size ?? "default");
@@ -682,119 +990,83 @@ function DockerDriverFormRow({
   const field = (name: string) => `cloud-driver-${id}-${name}`;
 
   return (
-    <SettingsRow
+    <DriverDialog
       title={initial ? `Edit ${initial.label}` : "Add Docker driver"}
-      description="Docker on this machine, or another host through DOCKER_HOST."
+      description="Machines run as containers on this server, or on another Docker host."
+      error={error}
+      saving={saving}
+      onCancel={onCancel}
+      onSubmit={async () => {
+        setSaving(true);
+        await onSave({
+          kind: "docker",
+          id,
+          label: label.trim(),
+          ...(dockerHost.trim() === "" ? {} : { dockerHost: dockerHost.trim() }),
+          ...(runnerUrl.trim() === "" ? {} : { runnerUrl: runnerUrl.trim() }),
+          ...(size === "default" ? {} : { size }),
+          ...(runningCap.trim() === "" ? {} : { runningCap: Number(runningCap.trim()) }),
+        });
+        setSaving(false);
+      }}
     >
-      <form
-        className="grid gap-3 pb-3"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (error !== null || saving) return;
-          setSaving(true);
-          await onSave({
-            kind: "docker",
-            id,
-            label: label.trim(),
-            ...(dockerHost.trim() === "" ? {} : { dockerHost: dockerHost.trim() }),
-            ...(runnerUrl.trim() === "" ? {} : { runnerUrl: runnerUrl.trim() }),
-            ...(size === "default" ? {} : { size }),
-            ...(runningCap.trim() === "" ? {} : { runningCap: Number(runningCap.trim()) }),
-          });
-          setSaving(false);
-        }}
+      <DialogField id={field("label")} label="Name">
+        <Input
+          id={field("label")}
+          size="sm"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+        />
+      </DialogField>
+      <DialogField
+        id={field("host")}
+        label="Docker host"
+        hint={
+          <>
+            Empty uses this server's Docker, or <code>DOCKER_HOST</code>. Isolation (gVisor,
+            rootless or plain Docker) is detected from the host; Test shows it.
+          </>
+        }
       >
-        <div className="grid gap-1.5">
-          <Label htmlFor={field("label")}>Name</Label>
+        <Input
+          id={field("host")}
+          size="sm"
+          font="mono"
+          placeholder="unix:///var/run/docker.sock"
+          spellCheck={false}
+          value={dockerHost}
+          onChange={(event) => setDockerHost(event.target.value)}
+        />
+      </DialogField>
+      {remote ? (
+        <DialogField id={field("runner")} label="Runner URL">
           <Input
-            id={field("label")}
+            id={field("runner")}
             size="sm"
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={field("host")}>Docker host</Label>
-          <Input
-            id={field("host")}
-            size="sm"
-            placeholder="This machine (or DOCKER_HOST)"
+            placeholder="https://team-server.example:3773"
             spellCheck={false}
-            value={dockerHost}
-            onChange={(event) => setDockerHost(event.target.value)}
+            value={runnerUrl}
+            onChange={(event) => setRunnerUrl(event.target.value)}
           />
-        </div>
-        {remote ? (
-          <div className="grid gap-1.5">
-            <Label htmlFor={field("runner")}>Runner URL</Label>
-            <Input
-              id={field("runner")}
-              size="sm"
-              placeholder="https://team-server.example:3773"
-              spellCheck={false}
-              aria-invalid={runnerUrl.trim() === "" || undefined}
-              value={runnerUrl}
-              onChange={(event) => setRunnerUrl(event.target.value)}
-            />
-          </div>
-        ) : null}
-        <div className="grid gap-1.5">
-          <Label htmlFor={field("size")}>Machine size</Label>
-          <Select
-            value={size}
-            onValueChange={(value) => {
-              if (value === "small" || value === "default" || value === "large") setSize(value);
-            }}
-          >
-            <SelectTrigger id={field("size")} size="sm" aria-label="Machine size">
-              <SelectValue>
-                {(value: string | null) =>
-                  value === "small" || value === "default" || value === "large"
-                    ? SIZE_LABELS[value]
-                    : ""
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="start" alignItemWithTrigger={false}>
-              {(["small", "default", "large"] as const).map((option) => (
-                <SelectItem key={option} value={option}>
-                  {SIZE_LABELS[option]}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={field("cap")}>Machines at once</Label>
-          <Input
-            id={field("cap")}
-            size="sm"
-            inputMode="numeric"
-            placeholder="Default: a quarter of the host's vCPUs"
-            value={runningCap}
-            onChange={(event) => setRunningCap(event.target.value)}
-          />
-        </div>
-        {error !== null ? (
-          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-            <InfoIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            {error}
-          </p>
-        ) : null}
-        <div className="flex justify-end gap-1.5">
-          <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button type="submit" size="sm" disabled={error !== null || saving}>
-            {saving ? "Saving…" : "Save driver"}
-          </Button>
-        </div>
-      </form>
-    </SettingsRow>
+        </DialogField>
+      ) : null}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DialogField id={field("size")} label="Machine size">
+          <SizeSelect id={field("size")} value={size} onChange={setSize} />
+        </DialogField>
+        <DialogField
+          id={field("cap")}
+          label="Machines at once"
+          hint="Automatic allows a quarter of the host's vCPUs."
+        >
+          <MachinesAtOnceField id={field("cap")} value={runningCap} onChange={setRunningCap} />
+        </DialogField>
+      </div>
+    </DriverDialog>
   );
 }
 
-function GceDriverFormRow({
+function GceDriverDialog({
   initial,
   id,
   onSave,
@@ -817,9 +1089,13 @@ function GceDriverFormRow({
   const [saving, setSaving] = useState(false);
   const error = gceDriverFormError(draft);
   const field = (name: string) => `cloud-driver-${id}-${name}`;
-  const text = (name: Exclude<keyof GceDriverForm, "size">, label: string, placeholder: string) => (
-    <div className="grid gap-1.5">
-      <Label htmlFor={field(name)}>{label}</Label>
+  const text = (
+    name: Exclude<keyof GceDriverForm, "size" | "runningCap">,
+    label: string,
+    placeholder: string,
+    hint?: string,
+  ) => (
+    <DialogField id={field(name)} label={label} hint={hint}>
       <Input
         id={field(name)}
         size="sm"
@@ -828,87 +1104,68 @@ function GceDriverFormRow({
         value={draft[name]}
         onChange={(event) => setDraft({ ...draft, [name]: event.target.value })}
       />
-    </div>
+    </DialogField>
   );
 
   return (
-    <SettingsRow
+    <DriverDialog
       title={initial ? `Edit ${initial.label}` : "Add Google Cloud driver"}
       description="Compute Engine VMs in this server's Google Cloud project, created as the server's own service account."
+      error={error}
+      saving={saving}
+      onCancel={onCancel}
+      onSubmit={async () => {
+        setSaving(true);
+        await onSave(gceDriverFromForm(initial, id, draft));
+        setSaving(false);
+      }}
     >
-      <form
-        className="grid gap-3 pb-3"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (error !== null || saving) return;
-          setSaving(true);
-          await onSave(gceDriverFromForm(initial, id, draft));
-          setSaving(false);
-        }}
-      >
-        {text("label", "Name", "")}
-        {text("project", "Project", "This server's project")}
-        {text("zones", "Zones", "This server's zone, or zones separated by commas")}
-        {text("subnetwork", "Subnetwork", "regions/<region>/subnetworks/<name>")}
-        <div className="grid gap-1.5">
-          <Label htmlFor={field("size")}>Machine size</Label>
-          <Select
+      {text("label", "Name", "")}
+      {text("project", "Project", "This server's project")}
+      {text(
+        "zones",
+        "Zones",
+        "us-central1-a, us-central1-b",
+        "Tried in order, separated by commas. Empty uses this server's zone.",
+      )}
+      {text("subnetwork", "Subnetwork", "regions/<region>/subnetworks/<name>")}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DialogField id={field("size")} label="Machine size">
+          <SizeSelect
+            id={field("size")}
             value={draft.size}
-            onValueChange={(value) => {
-              if (value === "small" || value === "default" || value === "large")
-                setDraft({ ...draft, size: value });
-            }}
-          >
-            <SelectTrigger id={field("size")} size="sm" aria-label="Machine size">
-              <SelectValue>
-                {(value: string | null) =>
-                  value === "small" || value === "default" || value === "large"
-                    ? SIZE_LABELS[value]
-                    : ""
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="start" alignItemWithTrigger={false}>
-              {(["small", "default", "large"] as const).map((option) => (
-                <SelectItem key={option} value={option}>
-                  {SIZE_LABELS[option]}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={field("runningCap")}>Machines at once</Label>
-          <Input
-            id={field("runningCap")}
-            size="sm"
-            inputMode="numeric"
-            placeholder="The driver's default"
-            value={draft.runningCap}
-            onChange={(event) => setDraft({ ...draft, runningCap: event.target.value })}
+            onChange={(size) => setDraft({ ...draft, size })}
           />
-        </div>
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Advanced</summary>
-          <div className="mt-3">
+        </DialogField>
+        <DialogField
+          id={field("runningCap")}
+          label="Machines at once"
+          hint="Automatic uses the driver's default."
+        >
+          <MachinesAtOnceField
+            id={field("runningCap")}
+            value={draft.runningCap}
+            onChange={(runningCap) => setDraft({ ...draft, runningCap })}
+          />
+        </DialogField>
+      </div>
+      <Collapsible defaultOpen={draft.runnerUrl !== ""}>
+        <CollapsibleTrigger className="group flex items-center gap-1.5 rounded-md text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
+          />
+          Advanced
+          <span className="font-normal group-data-panel-open:hidden">
+            {draft.runnerUrl === "" ? "Runner URL" : `Runner URL: ${draft.runnerUrl}`}
+          </span>
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div className="pt-3">
             {text("runnerUrl", "Runner URL", "Uses this server's runner listener")}
           </div>
-        </details>
-        {error !== null ? (
-          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-            <InfoIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            {error}
-          </p>
-        ) : null}
-        <div className="flex justify-end gap-1.5">
-          <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button type="submit" size="sm" disabled={error !== null || saving}>
-            {saving ? "Saving…" : "Save driver"}
-          </Button>
-        </div>
-      </form>
-    </SettingsRow>
+        </CollapsiblePanel>
+      </Collapsible>
+    </DriverDialog>
   );
 }

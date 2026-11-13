@@ -17,13 +17,23 @@ export function teamClaudeKeyStatusText(
   nameOf: (memberId: MemberId) => string,
   now: number,
 ): string {
-  if (status.state === "unset") return "Not set";
+  const details = teamClaudeKeyDetailsText(status, nameOf, now);
+  return details === null ? "Not set" : `Set · ${details}`;
+}
+
+/** "sk-ant-…4f2a · added by Rutvik, Nov 13 · last used 2m ago", for a row that badges Set itself. */
+export function teamClaudeKeyDetailsText(
+  status: TeamClaudeKeyStatus,
+  nameOf: (memberId: MemberId) => string,
+  now: number,
+): string | null {
+  if (status.state === "unset") return null;
   // @effect-diagnostics-next-line globalDate:off - a calendar day, for display
   const added = new Date(status.addedAt).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
-  const parts = [`Set · sk-ant-…${status.last4}`, `added by ${nameOf(status.addedBy)}, ${added}`];
+  const parts = [`sk-ant-…${status.last4}`, `added by ${nameOf(status.addedBy)}, ${added}`];
   if (status.lastUsedAt !== null)
     parts.push(`last used ${ago(Date.parse(status.lastUsedAt), now)}`);
   return parts.join(" · ");

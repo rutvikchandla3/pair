@@ -109,10 +109,10 @@ app. It works once.
 
 ## Turn on Cloud
 
-In **Settings → Cloud**, choose **Add driver**, then **Docker**, leave **Docker host** empty, and choose
-**Test**. The test starts a machine, checks that it connects back, runs git, checks that `sudo`
-works, reaches github.com, then removes it. The driver's row under **Overview** then says
-**gVisor**; on plain Docker it says **Plain Docker (runc)** and the page warns.
+In **Settings → Cloud**, choose **Add** next to **Docker**, leave **Docker host** empty, save, and
+choose **Test**. The test starts a machine, checks that it connects back, runs git, checks that `sudo`
+works, reaches github.com, then removes it. The driver's row under **Compute** then says
+**gVisor**; on plain Docker it says **Plain Docker (runc)** and warns.
 [Turn on Cloud](./cloud.md#turn-on-cloud) covers other Docker hosts, machine sizes, the base image
 and variables.
 
@@ -203,7 +203,8 @@ builds an image with the team's projects already cloned and its tools installed,
 start from it. Sessions that are already running keep the build they started on, and a cloud thread
 says when its machine runs an older build than new sessions get.
 
-Admins edit the image in **Settings → Cloud → Team image** on the web or desktop app. Members see
+Admins edit the image in **Settings → Cloud → Team image** on the web or desktop app: **Edit recipe**
+opens the recipe. Members see
 the active build and the history, read-only.
 
 ### The recipe
@@ -245,8 +246,8 @@ Machines** where the active build and the last build's status are shown.
 A build you start on the page becomes active as soon as it succeeds. To go back, choose **Activate**
 on an older succeeded build; new sessions use it from then on. **Restore recipe** loads a build's
 recipe into the editor without saving it. Pair removes the image of old builds to save disk, keeping
-the active one, any a running machine uses, and the newest few others (**Keep succeeded builds**,
-5 by default). A build whose image was removed reads **Image removed** and can't be activated.
+the active one, any a running machine uses, and the newest few others (**Team image builds to keep**
+under **Storage**, 5 by default). A build whose image was removed reads **Image removed** and can't be activated.
 
 A failed build never changes the active build, so nobody else notices. Its row shows the phase that
 failed and the last lines of its log. **Retry** builds the same recipe again, and **Fix with an
@@ -274,19 +275,19 @@ has the same reach.
 An agent that can't change the image can propose a new install script instead, with a short reason.
 It does this when it was refused or when someone asks it to suggest a change, and it changes
 nothing by itself. Each thread has one open proposal at a time, and a server holds 20. Admins see
-open proposals under **Proposals** at the top of Team image. **Review** shows the script against
-the saved one, the reason and a link to the thread. **Accept** puts the script in the editor
+open proposals under **Agent proposals** in Team image. **Review** shows the script against
+the saved one, the reason and a link to the thread. **Accept into recipe** puts the script in the editor
 without saving it, and saving closes the proposal. **Dismiss** closes it, and the thread can
 propose again.
 
 ## Set the team cap and disk retention
 
-In **Settings → Cloud → Compute** on the web or desktop app:
+In **Settings → Cloud** on the web or desktop app:
 
-- **Machines at once**, in the driver's **Edit** form, caps how many machines run together. Empty
+- **Machines at once**, in the driver's **Edit** form (its row's **⋯** menu under **Compute**), caps how many machines run together. Empty
   means a quarter of the Docker host's vCPUs. More starts wait for a free slot.
 - **Delete archived machines' disks** (7 days by default) and **Delete unused machines' disks**
-  (30 days) free the disks of machines nobody uses. Their threads stay readable, and waking one
+  (30 days), under **Storage**, free the disks of machines nobody uses. Their threads stay readable, and waking one
   rebuilds the machine from the server's copy of its work.
 
 ## Back up hourly

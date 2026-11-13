@@ -106,6 +106,8 @@ export interface CloudMachineRow {
   readonly threadId: ThreadId | null;
   readonly title: string;
   readonly details: string;
+  readonly state: SandboxState;
+  readonly stateLabel: string;
   readonly ownerId: MemberId | null;
   readonly ownerName: string;
   readonly discardConfirmation: string;
@@ -130,21 +132,20 @@ export function cloudMachineRow(
     machine.ownerMemberId === null
       ? "the server's owner"
       : memberDisplayName(input.members, machine.ownerMemberId);
-  const common = [
-    SANDBOX_MACHINE_STATE_LABELS[machine.state],
-    input.sizeLabel,
-    input.driverLabel,
-    input.age,
-  ];
   const { thread } = machine;
   return {
     sandboxId: machine.sandboxId,
     threadId: thread?.threadId ?? null,
-    title: thread === undefined ? `Private · ${ownerName}` : thread.title,
-    details: (thread === undefined
-      ? common
-      : [...(thread.branch == null ? [] : [thread.branch]), ownerName, ...common]
-    ).join(" · "),
+    title: thread?.title ?? "Private thread",
+    details: [
+      ...(thread?.branch == null ? [] : [thread.branch]),
+      ownerName,
+      input.sizeLabel,
+      input.driverLabel,
+      input.age,
+    ].join(" · "),
+    state: machine.state,
+    stateLabel: SANDBOX_MACHINE_STATE_LABELS[machine.state],
     ownerId: machine.ownerMemberId,
     ownerName,
     discardConfirmation:

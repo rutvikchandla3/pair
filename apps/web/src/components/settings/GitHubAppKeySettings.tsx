@@ -6,9 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { useState } from "react";
 
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -62,7 +64,7 @@ export function GitHubAppKeySettings({ environmentId }: { readonly environmentId
 
   return (
     <form
-      className="grid gap-3"
+      className="grid gap-3 border-t border-border/50 pt-4"
       onSubmit={(event) => {
         event.preventDefault();
         if (!changed) return;
@@ -75,7 +77,14 @@ export function GitHubAppKeySettings({ environmentId }: { readonly environmentId
     >
       <fieldset disabled={saving} className="contents">
         <div className="grid gap-1">
-          <p className="text-xs font-medium text-foreground">GitHub App for cloud threads</p>
+          <p className="flex items-center gap-2 text-xs font-medium text-foreground">
+            GitHub App for cloud threads
+            {isConfigured ? (
+              <Badge variant="success">Configured</Badge>
+            ) : (
+              <Badge variant="outline">Not set</Badge>
+            )}
+          </p>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
             Cloud threads push with one-hour tokens for each repository the App is installed on.
             Without it, members push with their own GitHub. Give the App read and write access to
@@ -109,20 +118,35 @@ export function GitHubAppKeySettings({ environmentId }: { readonly environmentId
             />
           </div>
         </div>
-        <div className="flex justify-end gap-2">
-          {isConfigured || savedAppId !== "" ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={saving}
-              onClick={() => void save({ appId: "", appPrivateKey: "" })}
-            >
-              Remove
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            {!isConfigured
+              ? "Not set up. Members push with their own GitHub."
+              : keyIsReference
+                ? "Key read from a secret provider."
+                : "Key stored on this server."}
+          </p>
+          <div className="flex shrink-0 gap-2">
+            {isConfigured || savedAppId !== "" ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={saving}
+                onClick={async () => {
+                  const confirmed = await requestConfirmDialog(
+                    "Remove the GitHub App? Cloud threads then push with each member's own GitHub.",
+                    { variant: "destructive" },
+                  );
+                  if (confirmed === true) void save({ appId: "", appPrivateKey: "" });
+                }}
+              >
+                Remove
+              </Button>
+            ) : null}
+            <Button type="submit" size="xs" disabled={!changed || saving}>
+              Save
             </Button>
-          ) : null}
-          <Button type="submit" size="xs" disabled={!changed || saving}>
-            Save
-          </Button>
+          </div>
         </div>
       </fieldset>
     </form>

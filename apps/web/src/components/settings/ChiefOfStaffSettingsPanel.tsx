@@ -22,7 +22,9 @@ import {
 import { useChiefOfStaffAvatarSettings } from "../chiefOfStaff/ChiefOfStaffButton";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { LinkAccessPicker } from "./LinkAccessPicker";
+import { accessConfig } from "../auth/ConnectAgentSurface";
+import { AdvancedSettings } from "./AdvancedSettings";
+import { AccessSelect } from "./LinkAccessPicker";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { ScopedSwitch } from "./ScopedSwitch";
 import {
@@ -45,9 +47,13 @@ const SIZE_LABELS: Readonly<Record<ChiefOfStaffAvatarSize, string>> = {
 
 export function ChiefOfStaffSettingsPanel() {
   const { environment, scope } = useSettingsScope();
+  const supported = environment?.serverConfig?.environment.capabilities.chiefOfStaffVoice === true;
+  const enabled = useScopedSettings((value) => value.chiefOfStaff.enabled);
+  // Off, the rest configures nothing, so the page is just the switch.
+  const showDetails = environment !== null && supported && enabled;
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Voice">
+      <SettingsSection title="Voice assistant">
         {environment === null ? (
           <p className="px-4 py-3 text-muted-foreground text-sm">
             {scope.kind === "environment"
@@ -57,17 +63,18 @@ export function ChiefOfStaffSettingsPanel() {
         ) : (
           <VoiceRows
             environmentId={environment.environmentId}
-            supported={
-              environment.serverConfig?.environment.capabilities.chiefOfStaffVoice === true
-            }
+            supported={supported}
+            showDetails={showDetails}
           />
         )}
       </SettingsSection>
-      <SettingsSection title="Avatar on this device">
-        <AvatarStyleRow />
-        <AvatarAccentRow />
-        <AvatarSizeRow />
-      </SettingsSection>
+      {showDetails ? (
+        <SettingsSection title="Avatar on this device">
+          <AvatarStyleRow />
+          <AvatarAccentRow />
+          <AvatarSizeRow />
+        </SettingsSection>
+      ) : null}
     </SettingsPageContainer>
   );
 }
@@ -75,16 +82,23 @@ export function ChiefOfStaffSettingsPanel() {
 function VoiceRows({
   environmentId,
   supported,
+  showDetails,
 }: {
   environmentId: EnvironmentId;
   supported: boolean;
+  showDetails: boolean;
 }) {
   const settings = useScopedSettings((value) => value.chiefOfStaff);
   const updateSettings = useUpdateScopedSettings();
   const update = (patch: Partial<typeof settings>) => updateSettings({ chiefOfStaff: patch });
   const providers = useEnvironmentProviders().get(environmentId) ?? [];
   const voiceProviders = providers.filter((provider) => supportsChiefOfStaffVoice(provider.driver));
-  const disabled = !supported;
+  const advancedSummary = [
+    settings.model === "" ? null : `Model: ${settings.model}`,
+    settings.realtimeBaseUrl === "" ? null : "Custom realtime base URL",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <>
@@ -93,130 +107,134 @@ function VoiceRows({
         {...searchableSetting("chief-of-staff-enabled")}
         settingKeys={["chiefOfStaff"]}
         description={
-          supported
-            ? "Talk to an assistant that can look across your threads and projects here. Start it from the sidebar or the command palette."
-            : "This environment's server does not support voice yet. Update it to use Chief of staff."
+          !supported
+            ? "This environment's server does not support voice yet. Update it to use Chief of staff."
+            : showDetails
+              ? "Talk to an assistant that can look across your threads and projects here. Start it from the sidebar or the command palette."
+              : "Talk to an assistant that can look across your threads and projects here. Turn it on to choose its voice, tools and look."
         }
         control={
           <ScopedSwitch
             settingKeys={["chiefOfStaff"]}
             checked={settings.enabled}
-            disabled={disabled}
+            disabled={!supported}
             onCheckedChange={(checked) => update({ enabled: Boolean(checked) })}
             aria-label="Chief of staff"
           />
         }
       />
-      <SettingsRow
-        serverScoped
-        {...searchableSetting("chief-of-staff-provider")}
-        settingKeys={["chiefOfStaff"]}
-        description="The Codex instance that runs voice sessions. Only Codex supports realtime voice."
-        control={
-          <Select
-            value={
-              settings.providerInstanceId === "" ? DEFAULT_OPTION : settings.providerInstanceId
-            }
-            onValueChange={(next) => {
-              if (next !== null)
-                update({ providerInstanceId: next === DEFAULT_OPTION ? "" : next });
-            }}
-          >
-            <SelectTrigger
-              size="sm"
-              className="w-full sm:w-48"
-              aria-label="Codex instance"
-              disabled={disabled}
-            >
-              <SelectValue>
-                {(value: string) =>
-                  value === DEFAULT_OPTION
-                    ? "Default Codex"
-                    : (voiceProviders.find((provider) => provider.instanceId === value)
-                        ?.displayName ?? value)
+      {showDetails ? (
+        <>
+          <SettingsRow
+            serverScoped
+            {...searchableSetting("chief-of-staff-provider")}
+            title="Codex instance"
+            settingKeys={["chiefOfStaff"]}
+            description="Runs the voice sessions. Only Codex supports realtime voice."
+            control={
+              <Select
+                value={
+                  settings.providerInstanceId === "" ? DEFAULT_OPTION : settings.providerInstanceId
                 }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem hideIndicator value={DEFAULT_OPTION}>
-                Default Codex
-              </SelectItem>
-              {voiceProviders.map((provider) => (
-                <SelectItem hideIndicator key={provider.instanceId} value={provider.instanceId}>
-                  {provider.displayName ?? provider.instanceId}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        }
-      />
-      <SettingsRow
-        serverScoped
-        {...searchableSetting("chief-of-staff-voice")}
-        settingKeys={["chiefOfStaff"]}
-        description="The voice it answers in."
-        control={
-          <VoicePicker
-            environmentId={environmentId}
-            value={settings.voice}
-            disabled={disabled}
-            onCommit={(voice) => update({ voice })}
+                onValueChange={(next) => {
+                  if (next !== null)
+                    update({ providerInstanceId: next === DEFAULT_OPTION ? "" : next });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full sm:w-48" aria-label="Codex instance">
+                  <SelectValue>
+                    {(value: string) =>
+                      value === DEFAULT_OPTION
+                        ? "Default Codex"
+                        : (voiceProviders.find((provider) => provider.instanceId === value)
+                            ?.displayName ?? value)
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value={DEFAULT_OPTION}>
+                    Default Codex
+                  </SelectItem>
+                  {voiceProviders.map((provider) => (
+                    <SelectItem hideIndicator key={provider.instanceId} value={provider.instanceId}>
+                      {provider.displayName ?? provider.instanceId}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
           />
-        }
-      />
-      <SettingsRow
-        serverScoped
-        {...searchableSetting("chief-of-staff-model")}
-        settingKeys={["chiefOfStaff"]}
-        description="The Codex model that carries out what you ask. Leave empty for the fast default."
-        control={
-          <TextSetting
-            value={settings.model}
-            placeholder="Default"
-            disabled={disabled}
-            onCommit={(model) => update({ model })}
-            aria-label="Model"
+          <SettingsRow
+            serverScoped
+            {...searchableSetting("chief-of-staff-voice")}
+            settingKeys={["chiefOfStaff"]}
+            description="The voice it answers in."
+            control={
+              <VoicePicker
+                environmentId={environmentId}
+                value={settings.voice}
+                onCommit={(voice) => update({ voice })}
+              />
+            }
           />
-        }
-      />
-      <SettingsRow
-        serverScoped
-        {...searchableSetting("chief-of-staff-tool-access")}
-        settingKeys={["chiefOfStaff"]}
-        description="What the assistant may do to your threads and projects when you ask."
-      >
-        <div className="max-w-md pt-3 pb-2">
-          <LinkAccessPicker
-            value={settings.toolAccess}
-            onChange={(toolAccess) => update({ toolAccess })}
-            disabled={disabled}
-            label="Tool access"
-            note="It never gets more access than you have."
+          <SettingsRow
+            serverScoped
+            {...searchableSetting("chief-of-staff-tool-access")}
+            title="Tool access"
+            settingKeys={["chiefOfStaff"]}
+            description={`${accessConfig[settings.toolAccess].description} It never gets more access than you have.`}
+            control={
+              <AccessSelect
+                value={settings.toolAccess}
+                onChange={(toolAccess) => update({ toolAccess })}
+                className="w-full sm:w-48"
+                aria-label="Tool access"
+              />
+            }
           />
-        </div>
-      </SettingsRow>
-      <SettingsRow
-        serverScoped
-        {...searchableSetting("chief-of-staff-base-url")}
-        settingKeys={["chiefOfStaff"]}
-        description={
-          <>
-            Overrides Codex's base URL for voice only. Leave empty to use Codex's own.
-            <br />
-            If Codex goes through a proxy without voice support, use{" "}
-            <code>https://chatgpt.com/backend-api/codex</code>.
-          </>
-        }
-        control={
-          <TextSetting
-            value={settings.realtimeBaseUrl}
-            placeholder="https://…"
-            disabled={disabled}
-            onCommit={(realtimeBaseUrl) => update({ realtimeBaseUrl })}
-            aria-label="Realtime base URL"
-          />
-        }
-      />
+          <AdvancedSettings
+            targetIds={[
+              searchableSetting("chief-of-staff-model").id,
+              searchableSetting("chief-of-staff-base-url").id,
+            ]}
+            summary={advancedSummary}
+          >
+            <SettingsRow
+              serverScoped
+              {...searchableSetting("chief-of-staff-model")}
+              settingKeys={["chiefOfStaff"]}
+              description="The Codex model that carries out what you ask. Empty uses the fast default."
+              control={
+                <TextSetting
+                  value={settings.model}
+                  placeholder="Default"
+                  onCommit={(model) => update({ model })}
+                  aria-label="Model"
+                />
+              }
+            />
+            <SettingsRow
+              serverScoped
+              {...searchableSetting("chief-of-staff-base-url")}
+              settingKeys={["chiefOfStaff"]}
+              description={
+                <>
+                  Overrides Codex's base URL for voice only. If your proxy has no voice support, use{" "}
+                  <code>https://chatgpt.com/backend-api/codex</code>.
+                </>
+              }
+              control={
+                <TextSetting
+                  value={settings.realtimeBaseUrl}
+                  placeholder="https://…"
+                  onCommit={(realtimeBaseUrl) => update({ realtimeBaseUrl })}
+                  aria-label="Realtime base URL"
+                />
+              }
+            />
+          </AdvancedSettings>
+        </>
+      ) : null}
     </>
   );
 }
@@ -234,12 +252,10 @@ type VoiceList =
 function VoicePicker({
   environmentId,
   value,
-  disabled,
   onCommit,
 }: {
   environmentId: EnvironmentId;
   value: string;
-  disabled: boolean;
   onCommit: (voice: string) => void;
 }) {
   const [list, setList] = useState<VoiceList>({ status: "idle" });
@@ -251,13 +267,7 @@ function VoicePicker({
     (list.status === "ready" && list.voices.length === 0)
   ) {
     return (
-      <TextSetting
-        value={value}
-        placeholder="Default"
-        disabled={disabled}
-        onCommit={onCommit}
-        aria-label="Voice"
-      />
+      <TextSetting value={value} placeholder="Default" onCommit={onCommit} aria-label="Voice" />
     );
   }
 
@@ -295,7 +305,7 @@ function VoicePicker({
         if (next !== null) onCommit(next === DEFAULT_OPTION ? "" : next);
       }}
     >
-      <SelectTrigger size="sm" className="w-full sm:w-48" aria-label="Voice" disabled={disabled}>
+      <SelectTrigger size="sm" className="w-full sm:w-48" aria-label="Voice">
         <SelectValue>
           {(selected: string) => (selected === DEFAULT_OPTION ? defaultLabel : selected)}
         </SelectValue>
@@ -328,7 +338,6 @@ function TextSetting({
   value: string;
   onCommit: (value: string) => void;
   placeholder: string;
-  disabled: boolean;
   "aria-label": string;
 }) {
   const [draft, setDraft] = useState(value);
@@ -362,6 +371,7 @@ function AvatarStyleRow() {
   return (
     <SettingsRow
       {...searchableSetting("chief-of-staff-avatar-style")}
+      title="Style"
       description="How Chief of staff looks in the sidebar. It moves with the voice only during a session."
       resetAction={
         avatar.look === "pet" ? null : (
@@ -409,6 +419,7 @@ function AvatarAccentRow() {
   return (
     <SettingsRow
       {...searchableSetting("chief-of-staff-avatar-color")}
+      title="Accent color"
       description="Empty follows the theme."
       control={
         <ProviderAccentColorPicker
@@ -427,6 +438,7 @@ function AvatarSizeRow() {
   return (
     <SettingsRow
       {...searchableSetting("chief-of-staff-avatar-size")}
+      title="Size"
       description="The avatar's size in the sidebar."
       control={
         <Select

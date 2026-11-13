@@ -10,9 +10,12 @@ import { useSettingsSearchTargetId } from "./settingsLayout";
  */
 export function AdvancedSettings({
   targetIds,
+  summary,
   children,
 }: {
   readonly targetIds: ReadonlyArray<string>;
+  /** What the folded rows change from their defaults, so an override shows while folded. */
+  readonly summary?: string | null;
   readonly children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -31,9 +34,14 @@ export function AdvancedSettings({
           className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
         />
         Advanced
+        {summary ? (
+          <span className="min-w-0 truncate font-normal group-data-panel-open:hidden">
+            {summary}
+          </span>
+        ) : null}
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+        <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
           {children}
         </div>
       </CollapsiblePanel>

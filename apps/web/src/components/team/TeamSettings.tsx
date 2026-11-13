@@ -15,7 +15,7 @@ import {
   Trash2Icon,
   UserIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { cn } from "~/lib/utils";
@@ -119,13 +119,12 @@ export function TeamSettings() {
           <SettingsRow title="Connect to an environment to see its team." />
         </SettingsSection>
       ) : (
-        <TeamMembersSection key={environmentId} environmentId={environmentId} />
-      )}
-      {environmentId === null ? null : (
-        <TeamClaudeKeyCard key={environmentId} environmentId={environmentId} />
-      )}
-      {environmentId === null ? null : (
-        <ProviderAccountsSection key={environmentId} environmentId={environmentId} />
+        // Keyed together so nothing typed for one environment carries over to another.
+        <Fragment key={environmentId}>
+          <TeamMembersSection environmentId={environmentId} />
+          <TeamClaudeKeyCard environmentId={environmentId} />
+          <ProviderAccountsSection environmentId={environmentId} />
+        </Fragment>
       )}
     </SettingsPageContainer>
   );
@@ -155,7 +154,7 @@ function TeamMembersSection({ environmentId }: { readonly environmentId: Environ
     >
       {canInvite ? <TeamGitHubSetupNote environmentId={environmentId} /> : null}
       {canInvite ? (
-        <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">{trustWarning}</p>
+        <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">{trustWarning}</p>
       ) : null}
       {selfId === null ? (
         <SettingsRow

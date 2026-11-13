@@ -12,6 +12,7 @@ import type {
   SandboxDriverInstance,
   SandboxOverviewMachine,
   SandboxSize,
+  SandboxState,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +25,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { toastCommandFailure } from "../team/toastCommandFailure";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SettingsRow } from "./settingsLayout";
@@ -34,9 +36,18 @@ const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
   large: "Large",
 };
 
+const STATE_BADGES = {
+  provisioning: "info",
+  ready: "success",
+  sleeping: "secondary",
+  waking: "info",
+  failed: "error",
+  destroyed: "secondary",
+} as const satisfies Record<SandboxState, string>;
+
 /**
  * Every live machine, for an admin: cost control does not need the threads. A machine they cannot
- * open reads "Private · <owner>", with no link, and Sleep and Discard still work on it by id.
+ * open reads "Private thread", with no link, and Sleep and Discard still work on it by id.
  */
 export function CloudMachines({
   environmentId,
@@ -95,30 +106,37 @@ export function CloudMachines({
         }
         description={row.details}
         control={
-          hasMenu ? (
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button size="icon-sm" variant="ghost" aria-label={`Actions for ${row.title}`} />
-                }
-              >
-                <MoreHorizontalIcon className="size-4" />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                {row.actions.map((action) => (
-                  <MenuItem
-                    key={action}
-                    variant={action === "discard" ? "destructive" : "default"}
-                    disabled={!row.allowed}
-                    title={row.allowed ? undefined : SANDBOX_OWNER_ONLY_REASON}
-                    onClick={() => void stop(row, action)}
-                  >
-                    {SANDBOX_ACTION_MENU_LABELS[action]}
-                  </MenuItem>
-                ))}
-              </MenuPopup>
-            </Menu>
-          ) : undefined
+          <>
+            <Badge variant={STATE_BADGES[row.state]}>{row.stateLabel}</Badge>
+            {hasMenu ? (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label={`Actions for ${row.title}`}
+                    />
+                  }
+                >
+                  <MoreHorizontalIcon className="size-4" />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  {row.actions.map((action) => (
+                    <MenuItem
+                      key={action}
+                      variant={action === "discard" ? "destructive" : "default"}
+                      disabled={!row.allowed}
+                      title={row.allowed ? undefined : SANDBOX_OWNER_ONLY_REASON}
+                      onClick={() => void stop(row, action)}
+                    >
+                      {SANDBOX_ACTION_MENU_LABELS[action]}
+                    </MenuItem>
+                  ))}
+                </MenuPopup>
+              </Menu>
+            ) : null}
+          </>
         }
       />
     );

@@ -189,9 +189,9 @@ side chats on the same machine, and **Continue locally**, which gives them a cop
 An admin does not see other members' private threads: not in the sidebar, the Team shelf, search
 or the archive. Settings → Cloud still lists every machine, because machines cost money:
 
-- A machine the admin cannot open shows "Private · `<owner>`", its state, size, driver and age, and
-  no title, branch or link. Settings → Cloud had no machine list before this: the overview now
-  carries `machineList` for admins (the web's **All machines**), and mobile's read-only Cloud
+- A machine the admin cannot open shows "Private thread", its owner, state, size, driver and age,
+  and no title, branch or link. Settings → Cloud had no machine list before this: the overview now
+  carries `machineList` for admins (the rows under the web's **Overview**), and mobile's read-only Cloud
   screen does not list machines.
 - **Sleep** and **Discard machine** work on it as today ("Only the owner or an admin"). The admin
   has no thread to name, so they go by machine id (`sandbox.stopById`, `stopSandboxById` in

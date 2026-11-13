@@ -140,7 +140,7 @@ function ProviderAccountsList({
         ) : null
       }
     >
-      <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">{SECTION_TRUST_COPY}</p>
+      <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">{SECTION_TRUST_COPY}</p>
       {accounts.length === 0 ? (
         <SettingsRow
           title="No accounts yet"

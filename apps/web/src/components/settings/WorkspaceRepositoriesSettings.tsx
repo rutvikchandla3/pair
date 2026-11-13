@@ -8,6 +8,7 @@ import {
   workspaceRepositoryCandidates,
 } from "@t3tools/client-runtime/state/workspaces";
 import type { ProjectId, ProjectRoot } from "@t3tools/contracts";
+import { InfoIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useProjects } from "../../state/entities";
@@ -16,9 +17,9 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { SidebarProjectGroupMember } from "../../sidebarProjectGrouping";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsFooter, SettingsRow, SettingsSection } from "./settingsLayout";
 
 /** Edits which repositories a workspace's new threads get, and their folder names. */
 export function WorkspaceRepositoriesSettings({
@@ -37,10 +38,16 @@ export function WorkspaceRepositoriesSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const titleOf = (projectId: ProjectId) =>
+  const projectOf = (projectId: ProjectId) =>
     projects.find(
       (project) => project.environmentId === workspace.environmentId && project.id === projectId,
-    )?.title ?? "Missing project";
+    );
+  const titleOf = (projectId: ProjectId) => projectOf(projectId)?.title ?? "Missing project";
+  const folderCounts = new Map<string, number>();
+  for (const root of roots) {
+    const key = root.name.trim().toLowerCase();
+    folderCounts.set(key, (folderCounts.get(key) ?? 0) + 1);
+  }
   const problem = workspaceRepositoriesProblem(
     roots.map((root) => ({ name: root.name, title: titleOf(root.projectId) })),
   );
@@ -82,22 +89,34 @@ export function WorkspaceRepositoriesSettings({
     toastManager.add({ type: "success", title: "Saved repositories" });
   };
 
+  const message = error ?? (changed ? problem : null);
   return (
     <SettingsSection id="workspace-repositories" title="Repositories">
-      <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+      <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">
         Each new thread gets a worktree of every repository, in a folder of the name below. Existing
         threads keep their repositories.
       </p>
+      {roots.length > 0 ? (
+        <div className="hidden items-center justify-between px-3 py-1.5 text-xs font-medium text-muted-foreground sm:flex sm:px-4">
+          <span>Repository</span>
+          <span className="mr-8 w-48">Folder name</span>
+        </div>
+      ) : null}
       {roots.map((root) => (
         <SettingsRow
           key={root.projectId}
           title={titleOf(root.projectId)}
+          description={projectOf(root.projectId)?.workspaceRoot}
           control={
-            <div className="flex items-center gap-2">
+            <div className="flex w-full items-center gap-2 sm:w-auto">
               <Input
                 size="sm"
+                font="mono"
                 className="w-full sm:w-48"
                 aria-label={`Folder name for ${titleOf(root.projectId)}`}
+                aria-invalid={
+                  (folderCounts.get(root.name.trim().toLowerCase()) ?? 0) > 1 || undefined
+                }
                 disabled={!canEdit || saving}
                 value={root.name}
                 spellCheck={false}
@@ -113,66 +132,79 @@ export function WorkspaceRepositoriesSettings({
                 }
               />
               <Button
-                size="sm"
-                variant="outline"
+                size="icon-xs"
+                variant="ghost-destructive"
+                aria-label={`Remove ${titleOf(root.projectId)}`}
                 disabled={!canEdit || saving}
                 onClick={() =>
                   edit(roots.filter((candidate) => candidate.projectId !== root.projectId))
                 }
               >
-                Remove
+                <XIcon />
               </Button>
             </div>
           }
         />
       ))}
-      <SettingsRow
-        title="Add repository"
-        description={addable.length === 0 ? "Every project on this machine is already here." : null}
-        status={error ?? (changed ? problem : null)}
-        control={
-          <div className="flex items-center gap-2">
+      <SettingsFooter
+        status={
+          <>
             {addable.length > 0 ? (
-              <Select
-                value={null}
-                onValueChange={(value) => {
-                  const project = addable.find((candidate) => candidate.id === value);
-                  if (!project) return;
-                  edit([
-                    ...roots,
-                    {
-                      projectId: project.id,
-                      name: defaultWorkspaceRepositoryName(project),
-                    },
-                  ]);
-                }}
-              >
-                <SelectTrigger
-                  size="sm"
-                  aria-label="Add a repository"
-                  disabled={!canEdit || saving}
+              <Menu>
+                <MenuTrigger
+                  render={<Button size="sm" variant="outline" disabled={!canEdit || saving} />}
                 >
-                  <SelectValue>{() => "Choose a project"}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <PlusIcon className="size-3.5" aria-hidden />
+                  Add repository
+                </MenuTrigger>
+                <MenuPopup align="start">
                   {addable.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
+                    <MenuItem
+                      key={project.id}
+                      onClick={() =>
+                        edit([
+                          ...roots,
+                          { projectId: project.id, name: defaultWorkspaceRepositoryName(project) },
+                        ])
+                      }
+                    >
                       {project.title}
-                    </SelectItem>
+                    </MenuItem>
                   ))}
-                </SelectPopup>
-              </Select>
-            ) : null}
+                </MenuPopup>
+              </Menu>
+            ) : (
+              <span>Every project on this machine is already here.</span>
+            )}
+            {message === null ? null : (
+              <span role="alert" className="flex items-start gap-1.5 text-destructive-foreground">
+                <InfoIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                {message}
+              </span>
+            )}
+          </>
+        }
+      >
+        {changed ? (
+          <>
             <Button
               size="sm"
-              disabled={!canEdit || saving || !changed || problem !== null}
+              variant="ghost"
+              disabled={saving}
+              onClick={() => edit(workspace.roots)}
+            >
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              disabled={!canEdit || saving || problem !== null}
               onClick={() => void save()}
             >
               {saving ? "Saving…" : "Save"}
             </Button>
-          </div>
-        }
-      />
+          </>
+        ) : null}
+      </SettingsFooter>
     </SettingsSection>
   );
 }

@@ -46,7 +46,7 @@ export function TeamGitHubSetupNote({ environmentId }: { readonly environmentId:
   const isTeamMode = useIsTeamMode(environmentId);
   if (enabled || !isTeamMode) return null;
   return (
-    <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">
+    <p className="px-3 py-3 text-xs text-muted-foreground sm:px-4">
       Let members sign in with GitHub and open PRs as themselves.{" "}
       <InlineButton
         render={<a href={TEAM_GITHUB_DOCS_URL} target="_blank" rel="noreferrer noopener" />}
