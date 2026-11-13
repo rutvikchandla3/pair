@@ -487,8 +487,8 @@ exec 9>/run/pair-boat-boot.lock
 flock 9
 DIR=/etc/pair-runner SRC=/tmp/pair-boot/bootstrap.env
 case "${1:-}" in '' | *[!0-9]*) echo "pair-boat-boot: generation is not a number" >&2; exit 1 ;; esac
-# Skip only a runner of this generation that already enrolled. One still enrolling holds a secret
-# a replayed mint has replaced (RunnerGrants.ts:124), so it is restarted with the new one.
+# Skip only a runner of this generation that already enrolled. One still enrolling is restarted
+# with the newest secret; the one it holds stays valid too, so either enrolls.
 if [ "$1" = "$(cat "$DIR/generation" 2>/dev/null || true)" ] &&
   systemctl is-active --quiet pair-runner.service && [ -s /run/pair-runner/token ]; then
   rm -f "$SRC"; exit 0
@@ -502,8 +502,10 @@ systemctl restart --no-block pair-runner.service
 
 - `pair-bootstrap` reads and deletes `bootstrap.env` as on GCE.
 - `restart` also replaces a runner of an older generation, such as one left after a forced stop.
-- GCE's `boot` replay (`GceComputeDriver.ts:970`) has the same unenrolled-runner hole, but the fix
-  there is not in scope; open question 8.
+- A replayed mint leaves the generation's earlier unspent secrets valid until they expire, and the
+  first to enroll spends the generation (`RunnerGrants.mint`, table
+  `sandbox_runner_superseded_enrollments`). That closes the unenrolled-runner hole for every driver,
+  including GCE's `boot` replay, which skips a running instance of the same generation.
 
 ## 11. Runner route, TLS and the token
 
@@ -722,6 +724,9 @@ The commit list above is indicative. Commits 4–9 can merge or split where that
      and config errors fail fast with their hint, and every hint is capped at 60 s;
    - the replay that strands an unenrolled runner (`GceComputeDriver.ts:970`, `RunnerGrants.ts:124`).
      Each fix starts from a failing test (§14).
+   - As built: B11 is `wakeFailure` in `ComputeDriver.ts`, applied by both VM drivers' `bounded`.
+     The replay is closed in `RunnerGrants`, not in the guest: a replayed mint keeps the earlier
+     unspent secrets valid until they expire (§10.4), so it holds for every driver.
 8. The size question (former open question 3) is closed by 2. The listener question (former open
    question 2) was closed in revision 2.
 

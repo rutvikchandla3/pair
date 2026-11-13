@@ -75,6 +75,32 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
   }
 }
 
+const WAKE_REPLAY_MS = 5_000;
+const WAKE_RETRY_CAP_MS = 60_000;
+
+/**
+ * A `start` or `stop` failure as a VM driver answers it: only `not-found` is final. A failed
+ * record whose failure is not retryable has its disk destroyed by the reconciler, so an account
+ * or config error must stay retryable, and fail fast: a long delay parks the thread's effects.
+ */
+export const wakeFailure = (error: ComputeDriverError): ComputeDriverError => {
+  if (error.reason === "not-found") return error;
+  const retryAfterMs = error.retryable ? error.retryAfterMs : WAKE_REPLAY_MS;
+  return new ComputeDriverError({
+    driverId: error.driverId,
+    operation: error.operation,
+    reason: error.reason,
+    retryable: true,
+    ...(retryAfterMs === undefined
+      ? {}
+      : { retryAfterMs: Math.min(retryAfterMs, WAKE_RETRY_CAP_MS) }),
+    ...(error.backendStatus === undefined ? {} : { backendStatus: error.backendStatus }),
+    ...(error.image === undefined ? {} : { image: error.image }),
+    ...(error.setupHint === undefined ? {} : { setupHint: error.setupHint }),
+    ...(error.cause === undefined ? {} : { cause: error.cause }),
+  });
+};
+
 /** Static per driver kind; `health` reports what a configured backend actually offers. */
 export interface ComputeCapabilities {
   readonly persistentDisk: boolean;

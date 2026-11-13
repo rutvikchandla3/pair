@@ -47,6 +47,8 @@ export class RunnerGrants extends Context.Service<
     /**
      * Revokes every older generation of the sandbox and stores a fresh one-use secret for this
      * one. A generation that already enrolled keeps its token, so a replayed mint is harmless.
+     * Until it enrolls, a replayed mint leaves the earlier secrets valid until they expire, since
+     * the replay may not reach the machine; the first secret to enroll spends the generation.
      */
     readonly mint: (
       sandboxId: SandboxId,
@@ -108,6 +110,33 @@ const make = Effect.gen(function* () {
     `,
   });
 
+  const pruneSuperseded = SqlSchema.void({
+    Request: Schema.String,
+    execute: (now) => sql`
+      DELETE FROM sandbox_runner_superseded_enrollments WHERE expires_at <= ${now}
+    `,
+  });
+
+  const keepSuperseded = SqlSchema.void({
+    Request: Schema.Struct({
+      sandboxId: SandboxId,
+      generation: NonNegativeInt,
+      now: Schema.String,
+    }),
+    execute: ({ sandboxId, generation, now }) => sql`
+      INSERT OR IGNORE INTO sandbox_runner_superseded_enrollments (
+        enrollment_hash, sandbox_id, boot_generation, expires_at
+      )
+      SELECT enrollment_hash, sandbox_id, boot_generation, enrollment_expires_at
+      FROM sandbox_runner_grants
+      WHERE sandbox_id = ${sandboxId}
+        AND boot_generation = ${generation}
+        AND enrollment_consumed_at IS NULL
+        AND revoked_at IS NULL
+        AND enrollment_expires_at > ${now}
+    `,
+  });
+
   const upsertEnrollment = SqlSchema.void({
     Request: Schema.Struct({
       sandboxId: SandboxId,
@@ -138,10 +167,18 @@ const make = Effect.gen(function* () {
     execute: ({ enrollmentHash, tokenHash, now }) => sql`
       UPDATE sandbox_runner_grants
       SET enrollment_consumed_at = ${now}, token_hash = ${tokenHash}
-      WHERE enrollment_hash = ${enrollmentHash}
-        AND enrollment_consumed_at IS NULL
+      WHERE enrollment_consumed_at IS NULL
         AND revoked_at IS NULL
-        AND enrollment_expires_at > ${now}
+        AND (
+          (enrollment_hash = ${enrollmentHash} AND enrollment_expires_at > ${now})
+          OR EXISTS (
+            SELECT 1 FROM sandbox_runner_superseded_enrollments AS superseded
+            WHERE superseded.enrollment_hash = ${enrollmentHash}
+              AND superseded.sandbox_id = sandbox_runner_grants.sandbox_id
+              AND superseded.boot_generation = sandbox_runner_grants.boot_generation
+              AND superseded.expires_at > ${now}
+          )
+        )
       RETURNING sandbox_id AS "sandboxId", boot_generation AS "generation"
     `,
   });
@@ -152,10 +189,16 @@ const make = Effect.gen(function* () {
     Result: RefusalRow,
     execute: (enrollmentHash) => sql`
       SELECT
-        enrollment_consumed_at IS NOT NULL AS "consumed",
-        revoked_at IS NOT NULL AS "revoked"
-      FROM sandbox_runner_grants
-      WHERE enrollment_hash = ${enrollmentHash}
+        grants.enrollment_consumed_at IS NOT NULL AS "consumed",
+        grants.revoked_at IS NOT NULL AS "revoked"
+      FROM sandbox_runner_grants AS grants
+      LEFT JOIN sandbox_runner_superseded_enrollments AS superseded
+        ON superseded.sandbox_id = grants.sandbox_id
+        AND superseded.boot_generation = grants.boot_generation
+        AND superseded.enrollment_hash = ${enrollmentHash}
+      WHERE grants.enrollment_hash = ${enrollmentHash}
+        OR superseded.enrollment_hash IS NOT NULL
+      LIMIT 1
     `,
   });
 
@@ -182,9 +225,17 @@ const make = Effect.gen(function* () {
         AND (
           token_hash = ${credentialHash}
           OR (
-            enrollment_hash = ${credentialHash}
-            AND enrollment_consumed_at IS NULL
-            AND enrollment_expires_at > ${now}
+            enrollment_consumed_at IS NULL
+            AND (
+              (enrollment_hash = ${credentialHash} AND enrollment_expires_at > ${now})
+              OR EXISTS (
+                SELECT 1 FROM sandbox_runner_superseded_enrollments AS superseded
+                WHERE superseded.enrollment_hash = ${credentialHash}
+                  AND superseded.sandbox_id = sandbox_runner_grants.sandbox_id
+                  AND superseded.boot_generation = sandbox_runner_grants.boot_generation
+                  AND superseded.expires_at > ${now}
+              )
+            )
           )
         )
       LIMIT 1
@@ -213,7 +264,13 @@ const make = Effect.gen(function* () {
         now: DateTime.formatIso(now),
       };
       yield* sql
-        .withTransaction(revokeOlder(request).pipe(Effect.andThen(upsertEnrollment(request))))
+        .withTransaction(
+          revokeOlder(request).pipe(
+            Effect.andThen(pruneSuperseded(request.now)),
+            Effect.andThen(keepSuperseded(request)),
+            Effect.andThen(upsertEnrollment(request)),
+          ),
+        )
         .pipe(Effect.mapError(toRepositoryError("RunnerGrants.mint")));
       return secret;
     },

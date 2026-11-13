@@ -89,13 +89,24 @@ it.layer(layer)("RunnerGrants", (it) => {
       }),
     },
     {
-      name: "re-minting an unconsumed generation invalidates the old secret",
+      name: "a replayed mint keeps the earlier unspent secret until the generation enrolls",
       run: Effect.gen(function* () {
         const grants = yield* RunnerGrants.RunnerGrants;
+        // A replayed create or start may skip delivery, so the machine still holds the first one.
+        const expiring = yield* grants.mint(sandboxB, 1);
+        yield* grants.mint(sandboxB, 1);
+        yield* TestClock.adjust("5 minutes");
         const old = yield* grants.mint(sandboxA, 1);
+        yield* TestClock.adjust("5 minutes");
         const fresh = yield* grants.mint(sandboxA, 1);
-        assert.equal(yield* refusal(grants.enroll(old)), "unknown");
-        const enrolled = yield* grants.enroll(fresh);
+        yield* TestClock.adjust("5 minutes");
+        assert.equal(yield* refusal(grants.enroll(expiring)), "expired");
+        assert.deepStrictEqual(yield* grants.authorizeDownload(old), {
+          sandboxId: sandboxA,
+          generation: 1,
+        });
+        const enrolled = yield* grants.enroll(old);
+        assert.equal(yield* refusal(grants.enroll(fresh)), "consumed");
         // A replayed mint after enrollment keeps the boot's token.
         const replayed = yield* grants.mint(sandboxA, 1);
         assert.equal(yield* refusal(grants.enroll(replayed)), "unknown");

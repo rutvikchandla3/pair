@@ -28,6 +28,7 @@ import {
   type ComputeDriverHealth,
   parseSandboxTags,
   type SandboxBootstrap,
+  wakeFailure,
 } from "./ComputeDriver.ts";
 import {
   type GceApi,
@@ -362,6 +363,9 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
           duration: CALL_DEADLINE,
           orElse: () => Effect.fail(notYet(operation)),
         }),
+        Effect.mapError((error) =>
+          operation === "start" || operation === "stop" ? wakeFailure(error) : error,
+        ),
       );
 
   const ours = (labels: Readonly<Record<string, string>> | undefined) =>

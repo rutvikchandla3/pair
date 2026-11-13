@@ -529,6 +529,65 @@ describe("GceComputeDriver", () => {
       }
       assert.strictEqual(mapped.backendStatus, error.status);
     });
+
+    // A non-retryable wake or sleep fails the record, and the reconciler then deletes its disk.
+    const wakeRows: ReadonlyArray<
+      readonly [
+        string,
+        GceApiError,
+        Pick<ComputeDriverError, "reason" | "retryable" | "retryAfterMs">,
+      ]
+    > = [
+      [
+        "403 forbidden",
+        status(403, "forbidden"),
+        { reason: "auth", retryable: true, retryAfterMs: 5_000 },
+      ],
+      [
+        "QUOTA_EXCEEDED",
+        operation("QUOTA_EXCEEDED", 403),
+        { reason: "quota", retryable: true, retryAfterMs: 5_000 },
+      ],
+      ["400", status(400), { reason: "invalid-request", retryable: true, retryAfterMs: 5_000 }],
+      [
+        "429 for an hour",
+        status(429, undefined, 3_600_000),
+        { reason: "rate-limited", retryable: true, retryAfterMs: 60_000 },
+      ],
+      ["500", status(500), { reason: "unavailable", retryable: true }],
+    ];
+    for (const method of ["start", "stop"] as const) {
+      it.effect.each(wakeRows)(`on ${method}, %s stays retryable`, ([_name, error, expected]) =>
+        Effect.gen(function* () {
+          const { fake, driver } = yield* setup();
+          yield* driver.create(createInput());
+          fake.failNext("instances.get", error);
+          const failed = yield* Effect.flip(
+            method === "start" ? driver.start(NAME, bootstrap(2)) : driver.stop(NAME),
+          );
+          assert.deepStrictEqual(
+            {
+              reason: failed.reason,
+              retryable: failed.retryable,
+              retryAfterMs: failed.retryAfterMs,
+            },
+            { retryAfterMs: undefined, ...expected },
+          );
+          if (expected.reason === "quota" || expected.reason === "auth") {
+            assert.isDefined(failed.setupHint);
+          }
+        }),
+      );
+    }
+
+    it.effect("on start, a machine that is gone stays not-found", () =>
+      Effect.gen(function* () {
+        const { driver } = yield* setup();
+        const error = yield* Effect.flip(driver.start(NAME, bootstrap(2)));
+        assert.strictEqual(error.reason, "not-found");
+        assert.strictEqual(error.retryable, false);
+      }),
+    );
   });
 
   describe("replays", () => {
