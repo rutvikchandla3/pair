@@ -199,7 +199,7 @@ While it sleeps, its files, search and Changes are read-only and show as of the 
 (or its last turn, when nothing was saved at sleep). Its terminals stop and keep their output;
 after a wake, typing in one starts a new shell.
 
-A machine that sleeps for 7 days with every thread archived, or goes 30 days with no activity on any
+A machine that sleeps for 7 days with every thread archived, or goes 14 days with no activity on any
 of its threads, has its disk deleted and shows as **Machine discarded**. Its threads stay readable,
 and waking one rebuilds the machine from the server's copy of its work. The agent starts a new
 session there with the conversation so far ([handoffs](./portable-handoffs.md)). Admins change both

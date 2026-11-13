@@ -287,7 +287,7 @@ In **Settings → Cloud** on the web or desktop app:
 - **Machines at once**, in the driver's **Edit** form (its row's **⋯** menu under **Compute**), caps how many machines run together. Empty
   means a quarter of the Docker host's vCPUs. More starts wait for a free slot.
 - **Delete archived machines' disks** (7 days by default) and **Delete unused machines' disks**
-  (30 days), under **Storage**, free the disks of machines nobody uses. Their threads stay readable, and waking one
+  (14 days), under **Storage**, free the disks of machines nobody uses. Their threads stay readable, and waking one
   rebuilds the machine from the server's copy of its work.
 
 ## Back up hourly

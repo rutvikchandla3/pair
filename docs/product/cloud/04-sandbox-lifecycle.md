@@ -296,8 +296,8 @@ Defaults: sleep after 60 idle minutes on Docker, where idle costs only memory on
 already pays for, and after 20 on drivers billed per hour (EC2 in M5, any hosted vendor later;
 Conductor's number). It is a per-driver setting. Settled threads sleep at once on Docker; M2 makes
 that rule a driver capability, so a per-hour driver can choose. Archived sandboxes are destroyed after
-7 days, any sandbox asleep 30 days is destroyed (sooner if the driver's `diskRetentionDays` is
-shorter), and the mirror keeps history usable afterwards. Both are an admin's
+7 days, any sandbox asleep 14 days is destroyed (boat keeps a stopped disk only that long, so the
+default matches it for every driver), and the mirror keeps history usable afterwards. Both are an admin's
 `sandbox.diskRetention` setting, not the worktree cleanup rules: their keep-when checks guard local
 files, which the mirror makes moot. The sweep destroys a disk only once the mirror holds every
 attached thread's branch, so a wake can rebuild it, and only on a cloud-only server, the only kind

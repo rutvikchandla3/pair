@@ -5,10 +5,13 @@ type CloudSettings = Pick<ServerSettings, "sandbox" | "projectSettingsOverrides"
 export const NOT_CLOUD_ONLY_MESSAGE =
   "New cloud threads run on your team's Pair Cloud. Connect to it to start one.";
 
-/** Decision #2: archived machines' disks go after 7 days asleep, any idle machine's after 30. */
+/**
+ * Decision #2: archived machines' disks go after 7 days asleep, any idle machine's after 14,
+ * which is as long as boat.dev promises to keep a stopped disk.
+ */
 export const DEFAULT_DISK_RETENTION = {
   archivedAfterDays: 7,
-  asleepAfterDays: 30,
+  asleepAfterDays: 14,
 } as const satisfies SandboxDiskRetention;
 
 export type CloudAvailability =
