@@ -44,7 +44,8 @@ export interface EnvironmentOption {
 
 /**
  * The machines a draft of `activeProject` can run on, for auto balance and the machine picker.
- * Pair Cloud runs only cloud threads: a draft there stays there, and other drafts leave it out.
+ * Pair Cloud runs only cloud threads, so other drafts leave it out (they reach it through Cloud);
+ * a draft on it also lists the machines with a local copy, its way back to a checkout.
  */
 export function resolveLogicalProjectEnvironments(input: {
   readonly activeProject: EnvironmentProject;
@@ -79,11 +80,10 @@ export function resolveLogicalProjectEnvironments(input: {
       machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
     });
   };
-  if (pairClouds.has(activeProject.environmentId)) {
-    pushEnvironment(activeProject.environmentId, activeProject.id);
-    return envs;
-  }
+  const onPairCloud = pairClouds.has(activeProject.environmentId);
+  if (onPairCloud) pushEnvironment(activeProject.environmentId, activeProject.id);
   if (input.scratchDraft) {
+    if (onPairCloud) return envs;
     for (const environment of input.environments) {
       if (pairClouds.has(environment.environmentId)) continue;
       const scratchRoot = availableScratchWorkspaceRoot(

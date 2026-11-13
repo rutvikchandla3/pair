@@ -114,13 +114,15 @@ import { MachineNotice } from "./ThreadMachineNotices";
 const WORKSPACE_MODE_MENU_ID = "workspace-mode:";
 
 /**
- * Cloud is a Pair Cloud project's only mode. A local project keeps its two modes and adds one
- * Cloud entry per Pair Cloud with the repo, each disabled with its reason when it can't launch.
- * A workspace has no current checkout, and a Pair Cloud without it offers to create it.
+ * A local project keeps its two modes and adds one Cloud entry per Pair Cloud with the repo, each
+ * disabled with its reason when it can't launch. A Pair Cloud project offers Cloud, plus the two
+ * modes on `checkoutMachine` when a machine has a local copy. A workspace has no current checkout,
+ * and a Pair Cloud without it offers to create it.
  */
 function workspaceModeMenuActions(input: {
   readonly cloud: NewTaskCloud;
   readonly cloudLaunch: boolean;
+  readonly checkoutMachine: string | null;
   readonly workspace: boolean;
   readonly workspaceMode: NewTaskWorkspaceMode;
 }): MenuAction[] {
@@ -149,11 +151,12 @@ function workspaceModeMenuActions(input: {
               (cloud.options.length === 1 || cloud.target?.environmentId === option.environmentId),
           ),
         );
-  if (input.cloudLaunch) return cloudEntries;
+  if (input.cloudLaunch && input.checkoutMachine === null) return cloudEntries;
   const localEntry = (mode: "local" | "worktree"): MenuAction => ({
     id: `${WORKSPACE_MODE_MENU_ID}${mode}`,
     title: resolveNewTaskWorkspaceLabel({ workspaceMode: mode, worktreePath: null }),
     image: mode === "local" ? "folder" : "arrow.triangle.branch",
+    ...(input.cloudLaunch && input.checkoutMachine ? { subtitle: input.checkoutMachine } : {}),
     ...(input.workspaceMode === mode ? { state: "on" as const } : {}),
   });
   if (input.workspace) return [localEntry("worktree"), ...cloudEntries];
@@ -987,6 +990,7 @@ export function NewTaskDraftScreen(props: {
         actions={workspaceModeMenuActions({
           cloud: flow.cloud,
           cloudLaunch: flow.cloudLaunch,
+          checkoutMachine: flow.checkoutEnvironment?.environmentLabel ?? null,
           workspace: flow.isWorkspace,
           workspaceMode: flow.workspaceMode,
         })}

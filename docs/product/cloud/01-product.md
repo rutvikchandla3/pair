@@ -742,7 +742,9 @@ timeout.
 
 Settled during the rewrite: a cloud-only server is never an Auto balance or machine-picker candidate
 for local modes and is reached only through **Cloud**
-([08](./08-clients-and-contracts.md)); `defaultsToCloud` has no reader once only cloud-only servers
+([08](./08-clients-and-contracts.md)). The way back is symmetric: a draft on a Pair Cloud project
+lists the machines with a local copy of its repository, and **Current checkout** or **New worktree**
+moves the draft to that copy. Auto balance never moves a Pair Cloud draft. `defaultsToCloud` has no reader once only cloud-only servers
 offer Cloud, so M2 stops offering it, and defaulting a local project to Cloud is Later; the phone
 shows **Cloud** from the `cloudLaunch` flag instead of prompting.
 

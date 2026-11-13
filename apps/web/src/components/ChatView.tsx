@@ -1275,7 +1275,11 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectIsScratch && draftId !== null,
   );
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
+  // Leaving Pair Cloud is a choice; auto balance would move a cloud draft onto a local machine.
+  const canAutoBalanceEnvironments =
+    hasMultipleEnvironments &&
+    !activeProjectIsScratch &&
+    environmentById.get(environmentId)?.serverConfig?.environment.capabilities.cloudLaunch !== true;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,

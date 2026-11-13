@@ -589,10 +589,10 @@ describe("resolveLogicalProjectEnvironments", () => {
       },
     }).map((option) => option.environmentId);
 
-  it("keeps a cloud-launch server out of a local draft's machines, and a draft on it on it alone", () => {
+  it("keeps a cloud-launch server out of a local draft's machines, and lists local copies on a draft there", () => {
     expect(resolve(local)).toEqual([mac]);
     expect(resolve(local, true)).toEqual([mac]);
-    expect(resolve(onCloud)).toEqual([cloud]);
+    expect(resolve(onCloud)).toEqual([mac, cloud]);
     expect(resolve(onCloud, true)).toEqual([cloud]);
   });
 });

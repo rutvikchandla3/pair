@@ -224,6 +224,11 @@ type NewTaskFlowContextValue = {
     mode: NewTaskWorkspaceMode,
     cloudEnvironmentId?: EnvironmentId,
   ) => void;
+  /** On Pair Cloud, the machine a checkout mode moves the task to, or null. */
+  readonly checkoutEnvironment: {
+    readonly environmentId: EnvironmentId;
+    readonly environmentLabel: string;
+  } | null;
   readonly selectBranch: (branch: VcsRef) => void;
   readonly setStartFromOrigin: (value: boolean) => void;
   readonly buildPendingTaskMessage: (
@@ -932,15 +937,17 @@ export function NewTaskFlowProvider(
     };
   };
 
-  // Pair Cloud runs only cloud threads: a task there stays there, and other tasks leave it out.
+  // Pair Cloud runs only cloud threads, so other tasks leave it out (they reach it through Cloud);
+  // a task on it also lists the machines with a local copy, its way back to a checkout.
   const selectedOnPairCloud =
     selectedProject !== null &&
     isCloudLaunchEnvironment(serverConfigs.get(selectedProject.environmentId) ?? null);
   const offersLocalModes = (environmentId: EnvironmentId) =>
     environmentId === selectedProject?.environmentId ||
-    (!selectedOnPairCloud && !isCloudLaunchEnvironment(serverConfigs.get(environmentId) ?? null));
+    !isCloudLaunchEnvironment(serverConfigs.get(environmentId) ?? null);
   const scratchEnvironments = connectedEnvironments.filter(
     (environment) =>
+      (!selectedOnPairCloud || environment.environmentId === selectedProject?.environmentId) &&
       offersLocalModes(environment.environmentId) &&
       availableScratchWorkspaceRoot(
         environment.connectionState,
@@ -1003,6 +1010,41 @@ export function NewTaskFlowProvider(
     return result;
   })();
 
+  const checkoutEnvironment =
+    selectedOnPairCloud && !isScratchDraft
+      ? (environments.find(
+          (environment) => environment.environmentId !== selectedProject?.environmentId,
+        ) ?? null)
+      : null;
+  // From Pair Cloud, a checkout mode moves the task to the local copy on `checkoutEnvironment`.
+  const setWorkspaceModeOrLeaveCloud = (
+    mode: NewTaskWorkspaceMode,
+    cloudEnvironmentId?: EnvironmentId,
+  ) => {
+    const match =
+      mode !== "cloud" && checkoutEnvironment !== null
+        ? resolveEnvironmentProjectMatch(
+            projects.filter(
+              (project) => project.environmentId === checkoutEnvironment.environmentId,
+            ),
+            selectedProject,
+          )
+        : null;
+    if (match === null) {
+      setWorkspaceMode(mode, cloudEnvironmentId);
+      return;
+    }
+    const draftKey = carryDraftContentTo(match);
+    updateComposerDraftSettings(draftKey, {
+      workspaceSelection: { mode, branch: null, worktreePath: null },
+    });
+    updateFlow({
+      draftKey,
+      environmentId: match.environmentId,
+      projectKey: scopedProjectKey(match.environmentId, match.id),
+    });
+  };
+
   const value = {
     activeNewTask,
     projectScopes,
@@ -1051,7 +1093,8 @@ export function NewTaskFlowProvider(
     switchEnvironment,
     switchingToEnvironmentId,
     setSelectedModelKey,
-    setWorkspaceMode,
+    setWorkspaceMode: setWorkspaceModeOrLeaveCloud,
+    checkoutEnvironment,
     selectBranch,
     setStartFromOrigin,
     buildPendingTaskMessage,

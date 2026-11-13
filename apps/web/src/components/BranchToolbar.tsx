@@ -703,7 +703,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const cloudEnvironmentId = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId)?.cloudEnvironmentId : undefined,
   );
-  const cloudItem = resolveCloudEnvModeItem({
+  const resolvedCloudItem = resolveCloudEnvModeItem({
     cloud: useCloudTarget(isServerThread ? null : activeProjectRef),
     project: activeProject,
     cloudEnvironmentId,
@@ -711,6 +711,17 @@ export const BranchToolbar = memo(function BranchToolbar({
     isServerThread,
     forcedWorktreeReason: multiModelReason,
   });
+  // On Pair Cloud, the checkout modes move the draft to a machine with a local copy.
+  const localMachine =
+    resolvedCloudItem?.only && onEnvironmentChange
+      ? (availableEnvironments?.find((env) => env.environmentId !== environmentId) ?? null)
+      : null;
+  const cloudItem =
+    localMachine && resolvedCloudItem ? { ...resolvedCloudItem, only: false } : resolvedCloudItem;
+  const changeEnvMode = (mode: EnvMode) => {
+    onEnvModeChange(mode);
+    if (localMachine && mode !== "cloud") onEnvironmentChange?.(localMachine.environmentId);
+  };
   // With Cloud offered, a new workspace thread picks it or a new worktree; otherwise only the latter.
   const forcedWorktreeReason =
     multiModelReason ?? (workspaceDraft && cloudItem === null ? WORKSPACE_WORKTREE_REASON : null);
@@ -885,7 +896,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             cloudItem={cloudItem}
-            onEnvModeChange={onEnvModeChange}
+            onEnvModeChange={changeEnvMode}
             onCloudRow={onCloudRow}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
@@ -940,7 +951,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             cloudItem={cloudItem}
-            onEnvModeChange={onEnvModeChange}
+            onEnvModeChange={changeEnvMode}
             onCloudRow={onCloudRow}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
@@ -986,7 +997,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               effectiveEnvMode={effectiveEnvMode}
               activeWorktreePath={activeWorktreePath}
               cloudItem={cloudItem}
-              onEnvModeChange={onEnvModeChange}
+              onEnvModeChange={changeEnvMode}
               onCloudRow={onCloudRow}
               previousWorktreeLabel={previousWorktreeLabel}
               previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
