@@ -176,6 +176,8 @@ import { MemberAvatar } from "./team/MemberAvatar";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { readSpaceThreadActions, removeThreadFromTask } from "./spaces/SpaceThreadContext";
+import { openSpaceThreadDialog } from "./spaces/spaceThreadDialogStore";
 import { openShareThreadDialog } from "./team/shareThreadDialogTarget";
 import {
   buildThreadRouteParams,
@@ -2745,6 +2747,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const share = readThreadShare(threadRef);
         const cloudOffer = readContinueInCloudOffer(threadRef);
         const moveOffer = continueLocally.offerFor(threadRef);
+        const spaceActions = readSpaceThreadActions(threadRef.environmentId, threadRef.threadId);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2774,6 +2777,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               ...(teamMenu ? { team: teamMenu } : {}),
               ...(share ? { share: { allowed: share.allowed } } : {}),
+              ...(spaceActions
+                ? {
+                    spaceTask: {
+                      canMove: spaceActions.canMove,
+                      canRemove: spaceActions.canRemove,
+                    },
+                  }
+                : {}),
               ...(machine ? { machine } : {}),
               ...(cloudOffer.kind === "hidden"
                 ? {}
@@ -2932,6 +2943,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "share":
             openShareThreadDialog(threadRef);
+            return;
+          case "space-move-task":
+            if (spaceActions === null) return;
+            openSpaceThreadDialog({
+              type: "attach",
+              environmentId: threadRef.environmentId,
+              threadId: threadRef.threadId,
+              target: null,
+              fromTaskId: spaceActions.context.placement.taskId,
+            });
+            return;
+          case "space-remove-task":
+            if (spaceActions !== null) await removeThreadFromTask(spaceActions.context);
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);

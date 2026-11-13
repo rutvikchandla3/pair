@@ -69,6 +69,7 @@ import {
   TeamGitHubSetupNote,
 } from "./MemberGitHub";
 import { MemberUsage } from "./MemberUsage";
+import { TeamClaudeKeyCard } from "./TeamClaudeKeyCard";
 import { ProviderAccountsSection } from "./ProviderAccountsSection";
 import { RemoveMemberDialog } from "./RemoveMemberDialog";
 import { toastCommandFailure } from "./toastCommandFailure";
@@ -119,6 +120,9 @@ export function TeamSettings() {
         </SettingsSection>
       ) : (
         <TeamMembersSection key={environmentId} environmentId={environmentId} />
+      )}
+      {environmentId === null ? null : (
+        <TeamClaudeKeyCard key={environmentId} environmentId={environmentId} />
       )}
       {environmentId === null ? null : (
         <ProviderAccountsSection key={environmentId} environmentId={environmentId} />

@@ -169,6 +169,8 @@ describe("command permissions", () => {
     [WS_METHODS.teamImageDismissProposal, AuthSettingsWriteScope],
     [WS_METHODS.teamImageSetSecret, AuthSettingsWriteScope],
     [WS_METHODS.teamImageRemoveSecret, AuthSettingsWriteScope],
+    [WS_METHODS.teamClaudeKeySet, AuthSettingsWriteScope],
+    [WS_METHODS.teamClaudeKeyRemove, AuthSettingsWriteScope],
     [WS_METHODS.serverCancelDrain, AuthEnvironmentMaintainScope],
   ] as const)("requires the destination grant for %s", ([method, scope]) =>
     Effect.scoped(

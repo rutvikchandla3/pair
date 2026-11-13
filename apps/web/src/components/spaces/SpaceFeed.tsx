@@ -3,13 +3,13 @@ import type { SpacePairFeedItem } from "@t3tools/client-runtime/spaceAgent";
 import {
   type SpaceFeedRow,
   type SpaceViewer,
+  isSpaceTaskLineEntry,
   spaceFeedRows,
   spaceSystemLineText,
-  spaceTaskStatus,
+  spaceUndoneEntryIds,
   splitSpacePostText,
 } from "@t3tools/client-runtime/spaces";
-import type { EnvironmentId, Space, SpaceRoomEntry, ThreadId } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import type { EnvironmentId, Space, SpaceRoomEntry } from "@t3tools/contracts";
 import { QuoteIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
@@ -18,9 +18,10 @@ import { MemberAvatar } from "../team/MemberAvatar";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { type SpacePairFeedContext, SpacePairFeedRow, SpacePairStatus } from "./SpacePairFeed";
-import { SpaceStatusIcon } from "./SpaceStatusIcon";
+import { SpaceRecordLine, SpaceSystemLine, formatSpaceTime } from "./SpaceRecord";
 
-const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const isRecordRow = (row: SpaceFeedRow<SpacePairFeedItem>) =>
+  row.type === "entry" && row.entry.type === "system";
 
 export interface SpaceFeedProps {
   readonly environmentId: EnvironmentId;
@@ -40,45 +41,49 @@ export interface SpaceFeedProps {
 export function SpaceFeed(props: SpaceFeedProps) {
   const members = useTeamMembers(props.environmentId);
   const rows = spaceFeedRows(props.entries, props.pairItems, props.newIndex);
-  const tasksById = props.pairContext.tasksById;
-
-  const renderTaskChip = (threadId: ThreadId) => {
-    const task = tasksById.get(threadId);
-    const status = task === undefined ? null : spaceTaskStatus(task, props.viewer);
-    return (
-      <Link
-        to="/$environmentId/$threadId"
-        params={{ environmentId: props.environmentId, threadId }}
-        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-card px-2 py-0.5 align-middle text-foreground text-xs hover:bg-accent"
-      >
-        {status === null ? null : (
-          <SpaceStatusIcon icon={status.icon} tone={status.tone} label={status.label} />
-        )}
-        <span className="truncate font-medium">{task?.title ?? "Task"}</span>
-        {status === null ? null : (
-          <span className="shrink-0 text-muted-foreground">{status.label}</span>
-        )}
-      </Link>
-    );
+  const context = props.pairContext;
+  const recordContext = {
+    viewer: props.viewer,
+    inThread: null,
+    onTask: null,
+    threadTitle: context.threadTitle,
+    undone: spaceUndoneEntryIds(props.entries),
   };
 
+  // Board `.sys`: indented to the message text, 4px apart, 12px after anything else.
+  const firstRecords = new Set<string>();
+  rows.forEach((row, index) => {
+    const previous = rows[index - 1];
+    if (isRecordRow(row) && (previous === undefined || !isRecordRow(previous))) {
+      firstRecords.add(row.key);
+    }
+  });
+  const recordClass = (key: string) =>
+    firstRecords.has(key) ? "ps-14.5 pe-4 pt-3" : "ps-14.5 pe-4 pt-1";
+
   const renderEntry = (entry: SpaceRoomEntry, continued: boolean) => {
-    if (entry.type === "system") {
-      const line = entry.line;
+    if (isSpaceTaskLineEntry(entry)) {
       return (
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-4 py-1 text-muted-foreground text-xs">
-          <span className="font-medium text-foreground/80">
-            {entry.actorId === props.viewer.memberId ? "You" : props.viewer.nameOf(entry.actorId)}
-          </span>
-          <span>{spaceSystemLineText(line, props.viewer)}</span>
-          {line.type === "task-created" || line.type === "task-handed-back"
-            ? renderTaskChip(line.threadId)
-            : null}
-          {line.type === "task-handed-back" ? <span>“{line.reason}”</span> : null}
-          <span className="tabular-nums">{timeFormat.format(new Date(entry.createdAt))}</span>
-        </div>
+        <SpaceRecordLine
+          className={recordClass(entry.id)}
+          environmentId={props.environmentId}
+          space={props.space}
+          entry={entry}
+          entries={props.entries}
+          taskOf={context.taskOf}
+          context={recordContext}
+        />
       );
     }
+    if (entry.type === "system" && !("taskId" in entry.line)) {
+      return (
+        <SpaceSystemLine createdAt={entry.createdAt} className={recordClass(entry.id)}>
+          {entry.actorId === props.viewer.memberId ? "You" : props.viewer.nameOf(entry.actorId)}{" "}
+          {spaceSystemLineText(entry.line, props.viewer)}
+        </SpaceSystemLine>
+      );
+    }
+    if (entry.type !== "post") return null;
     const author = members.get(entry.authorId);
     const name = props.viewer.nameOf(entry.authorId);
     const segments = splitSpacePostText(entry.text, entry.mentions, props.viewer.nameOf);
@@ -102,7 +107,7 @@ export function SpaceFeed(props: SpaceFeedProps) {
                 <span className="text-muted-foreground text-xs">agent</span>
               ) : null}
               <span className="text-muted-foreground text-xs tabular-nums">
-                {timeFormat.format(new Date(entry.createdAt))}
+                {formatSpaceTime(entry.createdAt)}
               </span>
             </div>
           )}

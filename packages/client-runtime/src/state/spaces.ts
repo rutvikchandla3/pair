@@ -6,6 +6,7 @@ import {
   type ServerConfig,
   type SpaceId,
   type SpaceRoomEntry,
+  type SpaceTaskAction,
   type SpaceView,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -18,22 +19,23 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { request, subscribe } from "../rpc/client.ts";
+import { request, requestGuarded, subscribe } from "../rpc/client.ts";
 import {
   type SpaceOlderEntries,
-  type SpaceRoomEvent,
   type SpaceRoomState,
   applySpaceRoomEvent,
+  isSpaceRoomEvent,
   mergeSpaceRoomView,
   prependSpaceEntries,
   spaceSidebarShells,
-  spaceTasksIn,
+  spaceTaskThreadsIn,
 } from "../spaces.ts";
 import {
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
+  refreshOnSignalWhileRead,
 } from "./runtime.ts";
 
 function roomStateOf(view: SpaceView): SpaceRoomState {
@@ -44,19 +46,11 @@ function roomStateOf(view: SpaceView): SpaceRoomState {
         entries: view.entries,
         hasMoreEntries: view.hasMoreEntries,
         tasks: view.tasks,
+        threads: view.threads,
         notes: view.notes,
         actions: view.actions,
       }
     : view;
-}
-
-function isRoomEvent(event: { readonly type: string }): event is SpaceRoomEvent {
-  return (
-    event.type === "space.updated" ||
-    event.type === "space.room-entry" ||
-    event.type === "space.action.updated" ||
-    event.type === "space.notes.changed"
-  );
 }
 
 /**
@@ -81,7 +75,7 @@ function spaceRoomStream(spaceId: SpaceId) {
       }).pipe(
         Stream.mapEffect((item) => {
           if (item.kind === "synchronized") return resync;
-          if (item.kind !== "event" || !isRoomEvent(item.event)) return Effect.succeed(null);
+          if (item.kind !== "event" || !isSpaceRoomEvent(item.event)) return Effect.succeed(null);
           const event = item.event;
           return Ref.modify(state, (current) => {
             if (current.type !== "member") return [null, current] as const;
@@ -102,22 +96,64 @@ function spaceRoomStream(spaceId: SpaceId) {
   );
 }
 
+type SpaceTaskInput<T extends SpaceTaskAction["type"]> = Omit<
+  Extract<SpaceTaskAction, { readonly type: T }>,
+  "type"
+>;
+
+/**
+ * `shells` comes from `createSpaceShellAtoms`: the list and task pages refetch while read
+ * whenever a room's revision moves, which every space and task write does.
+ */
 export function createSpaceEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  shells: Pick<ReturnType<typeof createSpaceShellAtoms>, "roomsKeyAtom" | "roomRevisionAtom">,
 ) {
   const list = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:spaces:list",
     tag: WS_METHODS.spacesList,
+    refreshTrigger: ({ environmentId }) => shells.roomsKeyAtom(environmentId),
+  });
+
+  /** `spaces.taskGet`; keyed `{ spaceId, taskId }`. */
+  const taskView = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:spaces:task-get",
+    tag: WS_METHODS.spacesTaskGet,
+    refreshTrigger: ({ environmentId, input }) =>
+      shells.roomRevisionAtom(`${environmentId}\u0000${input.spaceId}`),
+  });
+
+  /** Where a space with these repositories would run its threads, for New space and settings. */
+  const workspacePreview = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:spaces:workspace-preview",
+    tag: WS_METHODS.spacesWorkspacePreview,
   });
   const refreshList = (
     environmentId: EnvironmentId,
     registry: { refresh: (atom: Atom.Atom<unknown>) => void },
   ) => Effect.sync(() => registry.refresh(list({ environmentId, input: undefined })));
 
-  const room = createEnvironmentSubscriptionAtomFamily(runtime, {
+  const roomStream = createEnvironmentSubscriptionAtomFamily(runtime, {
     label: "environment-data:spaces:room",
     subscribe: (input: { readonly spaceId: SpaceId }) => spaceRoomStream(input.spaceId),
   });
+  // A non-member gets one answer and no stream, so a space write here (being added back) asks again.
+  const roomFamily = Atom.family((key: string) => {
+    const separator = key.indexOf("\u0000");
+    const environmentId = key.slice(0, separator) as EnvironmentId;
+    const spaceId = key.slice(separator + 1) as SpaceId;
+    return roomStream({ environmentId, input: { spaceId } }).pipe(
+      refreshOnSignalWhileRead(
+        shells.roomsKeyAtom(environmentId),
+        (result: AsyncResult.AsyncResult<SpaceRoomState, unknown>) =>
+          Option.exists(AsyncResult.value(result), (state) => state.type === "member"),
+      ),
+    );
+  });
+  const room = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: { readonly spaceId: SpaceId };
+  }) => roomFamily(`${target.environmentId}\u0000${target.input.spaceId}`);
 
   /** Older room pages, prepended to the live page by readers; keyed `env:spaceId`. */
   const olderEntries = Atom.family((_key: string) =>
@@ -156,6 +192,8 @@ export function createSpaceEnvironmentAtoms<R, E>(
 
   return {
     list,
+    taskView,
+    workspacePreview,
     room,
     olderEntries,
     loadOlder,
@@ -173,9 +211,40 @@ export function createSpaceEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => `${environmentId}:${input.spaceId}`,
       },
     }),
+    /** Every `spaces.task` action; the commands below are the typed shortcuts the boards use. */
     task: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:spaces:task",
       tag: WS_METHODS.spacesTask,
+    }),
+    startThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:spaces:start-thread",
+      tag: WS_METHODS.spacesTask,
+      execute: (input: SpaceTaskInput<"start">) =>
+        requestGuarded(WS_METHODS.spacesTask, { ...input, type: "start" }),
+    }),
+    setTaskStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:spaces:set-task-status",
+      tag: WS_METHODS.spacesTask,
+      // Quick status keys in a row land in order.
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.taskId}`,
+      },
+      execute: (input: SpaceTaskInput<"status">) =>
+        requestGuarded(WS_METHODS.spacesTask, { ...input, type: "status" }),
+    }),
+    undoTaskStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:spaces:undo-task-status",
+      tag: WS_METHODS.spacesTask,
+      execute: (input: SpaceTaskInput<"status.undo">) =>
+        requestGuarded(WS_METHODS.spacesTask, { ...input, type: "status.undo" }),
+    }),
+    /** Attach (`target` a task), move (another task) or remove (`target: null`) a thread. */
+    linkThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:spaces:link-thread",
+      tag: WS_METHODS.spacesTask,
+      execute: (input: SpaceTaskInput<"thread.link">) =>
+        requestGuarded(WS_METHODS.spacesTask, { ...input, type: "thread.link" }),
     }),
   };
 }
@@ -204,8 +273,8 @@ export function spaceRoomResultOf(
 }
 
 export interface SpaceSidebarShells {
-  /** Every unarchived task in any space here. */
-  readonly tasks: ReadonlyArray<OrchestrationV2ThreadShell>;
+  /** Every unarchived thread on a task in any space here. */
+  readonly taskThreads: ReadonlyArray<OrchestrationV2ThreadShell>;
   /** Rooms with others' activity since the viewer last opened them. */
   readonly unreadRoomIds: ReadonlySet<string>;
   readonly roomsKey: string;
@@ -213,7 +282,7 @@ export interface SpaceSidebarShells {
 
 const EMPTY_TASKS: ReadonlyArray<OrchestrationV2ThreadShell> = [];
 const EMPTY_SIDEBAR_SHELLS: SpaceSidebarShells = {
-  tasks: EMPTY_TASKS,
+  taskThreads: EMPTY_TASKS,
   unreadRoomIds: new Set(),
   roomsKey: "",
 };
@@ -242,14 +311,14 @@ export function createSpaceShellAtoms(input: {
     return previous !== undefined && sameItems(previous, next) ? previous : next;
   }).pipe(Atom.withLabel(`${input.label}:space-environment-ids`));
 
-  /** The space's tasks from the live shell, keyed `env\u0000spaceId`; held while none changes. */
-  const tasksAtom = Atom.family((key: string) => {
+  /** The space's task threads from the live shell, keyed `env\u0000spaceId`; held while none changes. */
+  const taskThreadsAtom = Atom.family((key: string) => {
     const separator = key.indexOf("\u0000");
     const environmentId = key.slice(0, separator) as EnvironmentId;
     const spaceId = key.slice(separator + 1);
     let previous = EMPTY_TASKS;
     return Atom.make((get) => {
-      const next = spaceTasksIn(get(input.environmentThreadsAtom(environmentId)), spaceId);
+      const next = spaceTaskThreadsIn(get(input.environmentThreadsAtom(environmentId)), spaceId);
       if (sameItems(next, previous)) return previous;
       previous = next.length === 0 ? EMPTY_TASKS : next;
       return previous;
@@ -264,13 +333,13 @@ export function createSpaceShellAtoms(input: {
         get(input.environmentThreadsAtom(environmentId)),
         get(input.currentMemberIdAtom(environmentId)),
       );
-      const sameTasks = sameItems(next.tasks, previous.tasks);
+      const sameTasks = sameItems(next.taskThreads, previous.taskThreads);
       const sameUnread =
         next.unreadRoomIds.size === previous.unreadRoomIds.size &&
         [...next.unreadRoomIds].every((id) => previous.unreadRoomIds.has(id));
       if (sameTasks && sameUnread && next.roomsKey === previous.roomsKey) return previous;
       previous = {
-        tasks: sameTasks ? previous.tasks : next.tasks,
+        taskThreads: sameTasks ? previous.taskThreads : next.taskThreads,
         unreadRoomIds: sameUnread ? previous.unreadRoomIds : next.unreadRoomIds,
         roomsKey: next.roomsKey,
       };
@@ -278,5 +347,25 @@ export function createSpaceShellAtoms(input: {
     }).pipe(Atom.withLabel(`${input.label}:space-sidebar-shells:${environmentId}`));
   });
 
-  return { environmentIdsAtom, tasksAtom, sidebarShellsAtom };
+  /** Changes on every space or task write in any room here; drives `list` refetches. */
+  const roomsKeyAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(sidebarShellsAtom(environmentId)).roomsKey).pipe(
+      Atom.withLabel(`${input.label}:space-rooms-key:${environmentId}`),
+    ),
+  );
+
+  /** One room's revision from its shell, keyed `env\u0000spaceId`; drives `taskView` refetches. */
+  const roomRevisionAtom = Atom.family((key: string) => {
+    const separator = key.indexOf("\u0000");
+    const environmentId = key.slice(0, separator) as EnvironmentId;
+    const spaceId = key.slice(separator + 1);
+    return Atom.make((get) => {
+      const room = get(input.environmentThreadsAtom(environmentId)).find(
+        (thread) => thread.space?.kind === "room" && thread.space.spaceId === spaceId,
+      );
+      return room?.space?.kind === "room" ? (room.space.revision ?? null) : null;
+    }).pipe(Atom.withLabel(`${input.label}:space-room-revision:${key}`));
+  });
+
+  return { environmentIdsAtom, taskThreadsAtom, sidebarShellsAtom, roomsKeyAtom, roomRevisionAtom };
 }

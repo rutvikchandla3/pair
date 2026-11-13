@@ -5,13 +5,16 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2TurnItem,
-  type ProviderInstanceConfig,
   type RunId,
   type Space,
   type SpaceAction,
+  type SpaceActionOutcome,
   type SpaceNoteItem,
   type SpaceNoteSection,
   type SpaceNotesChange,
+  type SpaceTask,
+  type SpaceTaskId,
+  type SpaceTaskStatus,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -320,10 +323,15 @@ export function spacePairFeedItems(
 
 // ── One action: a record, receipt or confirm card ───────────────────────
 
+/** What a record or card points at: a task page, or a thread. */
+export type SpaceActionTarget =
+  | { readonly kind: "task"; readonly taskId: SpaceTaskId }
+  | { readonly kind: "thread"; readonly threadId: ThreadId };
+
 export type SpaceActionView =
   | {
       readonly kind: "confirm";
-      readonly taskId: ThreadId;
+      readonly threadId: ThreadId;
       readonly title: string;
       readonly text: string;
       readonly ownerName: string;
@@ -335,11 +343,14 @@ export type SpaceActionView =
   | {
       readonly kind: "record";
       readonly lead: string;
-      readonly taskId: ThreadId | null;
+      readonly target: SpaceActionTarget | null;
       readonly title: string | null;
       readonly detail: string;
       readonly quote: string | null;
+      /** Undo through `spaces.action`; a status move's Undo reads `statusEntryId` instead. */
       readonly canUndo: boolean;
+      /** The move's `task-status` line: pass it to `spaceStatusUndo` for its Undo. */
+      readonly statusEntryId: MessageId | null;
     }
   | {
       readonly kind: "receipt";
@@ -350,7 +361,7 @@ export type SpaceActionView =
   | {
       readonly kind: "closed";
       readonly text: string;
-      readonly taskId: ThreadId | null;
+      readonly target: SpaceActionTarget | null;
       readonly title: string | null;
       /** Fills the tagger's composer; nothing is sent until they send it. */
       readonly askAgain: string | null;
@@ -359,8 +370,50 @@ export type SpaceActionView =
 export interface SpaceActionContext {
   readonly viewer: Viewer;
   readonly now: number;
-  /** Whether a task has started; null once it is gone or the viewer can't see it. */
-  readonly taskStarted: (threadId: ThreadId) => boolean | null;
+  /** The space is archived: nothing is undone. */
+  readonly archived: boolean;
+  /** A task and its linked threads; null once it is gone or the viewer can't see it. */
+  readonly taskOf: (taskId: SpaceTaskId) => {
+    readonly task: Pick<SpaceTask, "statusVersion" | "createdAt" | "updatedAt" | "deletedAt">;
+    readonly threadIds: ReadonlyArray<ThreadId>;
+  } | null;
+}
+
+const STATUS_LABEL: Record<SpaceTaskStatus, string> = {
+  todo: "To do",
+  "in-progress": "In progress",
+  "in-review": "In review",
+  done: "Done",
+  canceled: "Canceled",
+};
+
+function outcomeTarget(outcome: SpaceActionOutcome): SpaceActionTarget | null {
+  switch (outcome.type) {
+    case "task.created":
+    case "task.status.moved":
+    case "thread.started":
+      return { kind: "task", taskId: outcome.taskId };
+    case "thread.message.queued":
+      return { kind: "thread", threadId: outcome.threadId };
+    case "notes.changed":
+      return null;
+  }
+}
+
+/** Undo deletes the task, so it goes once anyone touches it or links another thread. */
+function createdTaskUndoable(
+  outcome: Extract<SpaceActionOutcome, { readonly type: "task.created" }>,
+  context: SpaceActionContext,
+): boolean {
+  const found = context.taskOf(outcome.taskId);
+  if (found === null || context.archived) return false;
+  const { task, threadIds } = found;
+  return (
+    task.deletedAt === null &&
+    task.statusVersion === 1 &&
+    task.updatedAt === task.createdAt &&
+    threadIds.every((threadId) => threadId === outcome.threadId)
+  );
 }
 
 export function spaceActionView(action: SpaceAction, context: SpaceActionContext): SpaceActionView {
@@ -370,18 +423,23 @@ export function spaceActionView(action: SpaceAction, context: SpaceActionContext
     memberId === viewer.memberId ? you : viewer.nameOf(memberId);
   const askedBy = `asked by ${name(action.actorId, "you")}`;
   const request = action.request;
-  const done = action.outcome !== null && action.outcome.type !== "notes.changed";
-  const title = done
-    ? (action.outcome as { readonly title: string }).title
-    : (action.proposal?.snapshot.title ?? (request.type === "task.create" ? request.title : null));
-  const taskId = done
-    ? (action.outcome as { readonly threadId: ThreadId }).threadId
-    : request.type === "task.message"
-      ? request.taskId
-      : null;
+  const outcome = action.outcome;
+  const title =
+    outcome !== null && outcome.type !== "notes.changed"
+      ? outcome.title
+      : (action.proposal?.snapshot.title ??
+        (request.type === "task.create" ? request.title : null));
+  const target: SpaceActionTarget | null =
+    outcome !== null
+      ? outcomeTarget(outcome)
+      : request.type === "thread.message"
+        ? { kind: "thread", threadId: request.threadId }
+        : request.type === "task.status" || request.type === "thread.start"
+          ? { kind: "task", taskId: request.taskId }
+          : null;
   const askAgain =
-    isActor && request.type === "task.message"
-      ? `@pair message ${title ?? "the task"}: ${request.text}`
+    isActor && request.type === "thread.message"
+      ? `@pair message ${title ?? "the thread"}: ${request.text}`
       : null;
   const expired =
     action.state === "expired" ||
@@ -393,21 +451,20 @@ export function spaceActionView(action: SpaceAction, context: SpaceActionContext
     return {
       kind: "closed",
       text: "This request expired. Nothing was sent",
-      taskId,
+      target,
       title,
       askAgain,
     };
   }
   switch (action.state) {
     case "proposed": {
-      if (request.type !== "task.message" || action.proposal === null) break;
-      const owner = action.proposal.snapshot.ownerId;
+      if (request.type !== "thread.message" || action.proposal === null) break;
       return {
         kind: "confirm",
-        taskId: request.taskId,
+        threadId: request.threadId,
         title: action.proposal.snapshot.title,
         text: request.text,
-        ownerName: name(owner, "you"),
+        ownerName: name(action.proposal.snapshot.ownerId, "you"),
         canAnswer: isActor,
         waitingFor: viewer.nameOf(action.actorId),
         asAdmin: action.proposal.permission === "admin",
@@ -417,7 +474,7 @@ export function spaceActionView(action: SpaceAction, context: SpaceActionContext
       return {
         kind: "closed",
         text: `${name(action.resolvedBy ?? action.actorId, "You")} cancelled. Nothing changed`,
-        taskId: null,
+        target: null,
         title: null,
         askAgain: null,
       };
@@ -425,81 +482,96 @@ export function spaceActionView(action: SpaceAction, context: SpaceActionContext
       return {
         kind: "closed",
         text: `changed before ${name(action.actorId, "you")} answered. Nothing was sent`,
-        taskId,
+        target,
         title,
         askAgain,
       };
     case "undone": {
       const by = action.undo === null ? action.actorId : action.undo.by;
       const kept = action.undo?.notUndone.length ?? 0;
+      const deleted = outcome?.type === "task.created";
       return {
         kind: "closed",
         text: `${name(by, "You")} undid this${
-          action.outcome?.type === "task.created"
+          deleted
             ? ". The task was deleted"
-            : action.outcome?.type === "task.message.queued"
+            : outcome?.type === "thread.message.queued"
               ? ". The message was removed"
-              : kept > 0
-                ? ` · ${kept === 1 ? "1 note" : `${kept} notes`} changed since, not undone`
-                : ""
+              : outcome?.type === "task.status.moved"
+                ? ` · back to ${STATUS_LABEL[outcome.from]}`
+                : kept > 0
+                  ? ` · ${kept === 1 ? "1 note" : `${kept} notes`} changed since, not undone`
+                  : ""
         }`,
-        taskId: action.outcome?.type === "task.created" ? null : taskId,
-        title: action.outcome?.type === "task.created" ? null : title,
+        target: deleted ? null : target,
+        title: deleted ? null : title,
         askAgain: null,
       };
     }
     case "done":
       break;
   }
-  const outcome = action.outcome;
   if (outcome === null) {
-    return { kind: "closed", text: "Nothing changed", taskId: null, title: null, askAgain: null };
+    return { kind: "closed", text: "Nothing changed", target: null, title: null, askAgain: null };
   }
-  if (outcome.type === "notes.changed") {
-    return {
-      kind: "receipt",
-      lines: outcome.changes.map((change) => {
-        const verb =
-          change.op === "add"
-            ? "Added to notes"
-            : change.op === "edit"
-              ? "Updated a note"
-              : "Removed from notes";
-        const theirs =
-          change.changedMemberNote === null
-            ? ""
-            : ` · Changed ${name(change.changedMemberNote, "your")}${
-                change.changedMemberNote === viewer.memberId ? "" : "'s"
-              } note`;
-        return `${verb}: “${change.text}”${theirs}`;
-      }),
-      detail: askedBy,
-      canUndo: isActor && action.state === "done",
-    };
-  }
-  const forWhom = `for ${name(outcome.ownerId, "you")}`;
-  if (outcome.type === "task.created") {
-    const started = context.taskStarted(outcome.threadId);
-    return {
-      kind: "record",
-      lead: "Pair created",
-      taskId: outcome.threadId,
-      title: outcome.title,
-      detail: `${forWhom} · ${askedBy}`,
-      quote: null,
-      // Undo deletes the task, so it goes once its owner starts it.
-      canUndo: isActor && started === false && !outcome.started,
-    };
-  }
-  return {
+  const record = (
+    lead: string,
+    detail: string,
+    canUndo: boolean,
+    extra: { readonly quote?: string; readonly statusEntryId?: MessageId } = {},
+  ): SpaceActionView => ({
     kind: "record",
-    lead: "Pair messaged",
-    taskId: outcome.threadId,
-    title: outcome.title,
-    detail: `${forWhom} · ${askedBy}`,
-    quote: request.type === "task.message" ? request.text : null,
-    canUndo: isActor,
-  };
+    lead,
+    target,
+    title,
+    detail,
+    quote: extra.quote ?? null,
+    canUndo: canUndo && !context.archived,
+    statusEntryId: extra.statusEntryId ?? null,
+  });
+  switch (outcome.type) {
+    case "notes.changed":
+      return {
+        kind: "receipt",
+        lines: outcome.changes.map((change) => {
+          const verb =
+            change.op === "add"
+              ? "Added to notes"
+              : change.op === "edit"
+                ? "Updated a note"
+                : "Removed from notes";
+          const theirs =
+            change.changedMemberNote === null
+              ? ""
+              : ` · Changed ${name(change.changedMemberNote, "your")}${
+                  change.changedMemberNote === viewer.memberId ? "" : "'s"
+                } note`;
+          return `${verb}: “${change.text}”${theirs}`;
+        }),
+        detail: askedBy,
+        canUndo: isActor && !context.archived,
+      };
+    case "task.created":
+      // Any member may undo a created task, while nobody has touched it.
+      return record(
+        "Pair created",
+        `for ${name(outcome.ownerId, "you")} · ${askedBy}`,
+        viewer.memberId !== null && createdTaskUndoable(outcome, context),
+      );
+    case "task.status.moved":
+      return record("Pair moved", `to ${STATUS_LABEL[outcome.to]} · ${askedBy}`, false, {
+        statusEntryId: outcome.entryId,
+      });
+    case "thread.started":
+      return record("Pair started a thread on", askedBy, false);
+    case "thread.message.queued":
+      return record(
+        "Pair messaged",
+        `for ${name(outcome.ownerId, "you")} · ${askedBy}`,
+        isActor,
+        request.type === "thread.message" ? { quote: request.text } : {},
+      );
+  }
 }
 
 // ── Notes panel ─────────────────────────────────────────────────────────
@@ -550,30 +622,3 @@ export function spaceNoteByline(note: SpaceNoteItem, viewer: Viewer): string {
     .filter((part) => part !== null && part !== "")
     .join(" · ");
 }
-
-// ── The team key ────────────────────────────────────────────────────────
-
-/**
- * Whether a server-owned Claude instance holds an API key, the way the server picks the key for
- * `@pair`. Members see the variable redacted, so its presence is enough.
- */
-export function hasSpaceTeamClaudeKey(
-  instances: Readonly<Record<string, ProviderInstanceConfig>> | undefined,
-): boolean {
-  return Object.values(instances ?? {}).some(
-    (instance) =>
-      instance.driver === "claudeAgent" &&
-      instance.ownerMemberId === undefined &&
-      instance.enabled !== false &&
-      instance.environment?.some(
-        (variable) =>
-          variable.name === "ANTHROPIC_API_KEY" &&
-          (typeof variable.value !== "string" ||
-            variable.value.trim().length > 0 ||
-            variable.valueRedacted === true),
-      ) === true,
-  );
-}
-
-export const SPACE_PAIR_NEEDS_KEY_HINT =
-  "@pair needs a Team Claude key. An admin can add one in Settings.";

@@ -1,15 +1,18 @@
-import { SPACE_PAIR_NEEDS_KEY_HINT } from "@t3tools/client-runtime/spaceAgent";
 import {
   PAIR_MENTION,
+  SPACE_PAIR_OFF_REASON,
   type SpaceMentionQuery,
   type SpaceMentionToken,
   type SpaceViewer,
   insertSpaceMention,
   resolveSpaceMentions,
+  spaceAskAdmin,
   spaceComposerHint,
   spaceMentionCandidates,
   spaceMentionQuery,
+  spacePairOffHint,
 } from "@t3tools/client-runtime/spaces";
+import { teamClaudeKeyIsSet } from "@t3tools/client-runtime/team-claude-key";
 import {
   type EnvironmentId,
   MessageId,
@@ -22,13 +25,15 @@ import { type KeyboardEvent, useRef, useState } from "react";
 
 import { cn, randomUUID } from "~/lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { useSpaceTeamClaudeKey } from "../../state/spaceAgent";
+import { useCanManageTeamClaudeKey, useTeamClaudeKeyStatus } from "../../state/spaceAgent";
 import { spaceEnvironment } from "../../state/spaces";
 import { useTeamMembers } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { MemberAvatar } from "../team/MemberAvatar";
+import { TeamClaudeKeyDialog } from "../team/TeamClaudeKeyCard";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Button } from "../ui/button";
+import { useSpaceComposerDraftStore } from "./spaceComposerDraftStore";
 
 type Post = Extract<SpaceRoomEntry, { type: "post" }>;
 
@@ -45,24 +50,38 @@ export function SpaceComposer(props: {
   const narrow = useMediaQuery("max-sm");
   const post = useAtomCommand(spaceEnvironment.post, "Post to space");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const pairReady = useSpaceTeamClaudeKey(props.environmentId);
-  const [text, setText] = useState(props.initialText ?? "");
-  const [tokens, setTokens] = useState<ReadonlyArray<SpaceMentionToken>>(() =>
-    props.initialText?.startsWith("@pair ") ? [PAIR_MENTION] : [],
+  const keyStatus = useTeamClaudeKeyStatus(props.environmentId);
+  const canManageKey = useCanManageTeamClaudeKey(props.environmentId);
+  const pairReady = teamClaudeKeyIsSet(keyStatus);
+  const [initial] = useState(
+    () =>
+      useSpaceComposerDraftStore.getState().take(props.space.id) ??
+      (props.initialText === undefined
+        ? null
+        : {
+            text: props.initialText,
+            tokens: props.initialText.startsWith("@pair ") ? [PAIR_MENTION] : [],
+          }),
   );
+  const [text, setText] = useState(initial?.text ?? "");
+  const [tokens, setTokens] = useState<ReadonlyArray<SpaceMentionToken>>(initial?.tokens ?? []);
   const [query, setQuery] = useState<SpaceMentionQuery | null>(null);
   const [highlight, setHighlight] = useState(0);
+  const [asked, setAsked] = useState(false);
+  const [addingKey, setAddingKey] = useState(false);
 
-  // Without a Team Claude key, @pair isn't offered and a typed one isn't a tag.
-  const candidates = (
-    query === null ? [] : spaceMentionCandidates(query.query, props.space, props.viewer)
-  ).filter((token) => pairReady || token.mention.type !== "pair");
+  // Without a Team Claude key, Pair is greyed in the menu and a typed @pair isn't a tag.
+  const candidates =
+    query === null ? [] : spaceMentionCandidates(query.query, props.space, props.viewer);
   const mentions = resolveSpaceMentions(text, tokens).filter(
     (mention) => pairReady || mention.type !== "pair",
   );
-  const hint =
-    spaceComposerHint(mentions, props.space, props.viewer) ??
-    (pairReady ? null : SPACE_PAIR_NEEDS_KEY_HINT);
+  const pairOff = spacePairOffHint(
+    keyStatus,
+    canManageKey,
+    spaceAskAdmin(props.space, members.values(), keyStatus),
+  );
+  const hint = spaceComposerHint(mentions, props.viewer) ?? pairOff?.text ?? null;
   const tagsPair = mentions.some((mention) => mention.type === "pair");
   const canSend = text.trim().length > 0;
 
@@ -72,7 +91,7 @@ export function SpaceComposer(props: {
   };
 
   const choose = (token: SpaceMentionToken) => {
-    if (query === null) return;
+    if (query === null || (!pairReady && token.mention.type === "pair")) return;
     const next = insertSpaceMention(text, query, token);
     setText(next.text);
     setTokens([...tokens, token]);
@@ -95,6 +114,19 @@ export function SpaceComposer(props: {
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  const askAdmin = (draft: {
+    readonly text: string;
+    readonly tokens: ReadonlyArray<SpaceMentionToken>;
+  }) => {
+    setText(draft.text);
+    setTokens(draft.tokens);
+    setAsked(true);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(draft.text.length, draft.text.length);
     });
   };
 
@@ -169,15 +201,18 @@ export function SpaceComposer(props: {
             {candidates.map((token, index) => {
               const member =
                 token.mention.type === "member" ? members.get(token.mention.memberId) : undefined;
+              const off = !pairReady && token.mention.type === "pair";
               return (
                 <button
                   key={token.mention.type === "pair" ? "pair" : token.mention.memberId}
                   type="button"
                   role="option"
                   aria-selected={index === highlight}
+                  aria-disabled={off}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
                     index === highlight && "bg-accent",
+                    off && "opacity-60",
                   )}
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setHighlight(index)}
@@ -196,7 +231,9 @@ export function SpaceComposer(props: {
                   )}
                   <span className="truncate">{token.label}</span>
                   {token.mention.type === "pair" ? (
-                    <span className="ml-auto text-muted-foreground text-xs">agent</span>
+                    <span className="ml-auto truncate text-muted-foreground text-xs">
+                      {off ? SPACE_PAIR_OFF_REASON : "agent"}
+                    </span>
                   ) : null}
                 </button>
               );
@@ -261,11 +298,35 @@ export function SpaceComposer(props: {
           >
             {hint}
           </span>
+          {pairOff?.action?.type === "add-key" ? (
+            <Button size="xs" variant="outline" onClick={() => setAddingKey(true)}>
+              Add key
+            </Button>
+          ) : null}
+          {pairOff?.action?.type === "ask" ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={asked}
+              onClick={() => {
+                if (pairOff.action?.type === "ask") askAdmin(pairOff.action.ask.draft);
+              }}
+            >
+              {asked ? "Asked" : pairOff.action.ask.label}
+            </Button>
+          ) : null}
           <Button size="icon-xs" aria-label="Send" disabled={!canSend} onClick={() => void send()}>
             <ArrowUpIcon />
           </Button>
         </div>
       </div>
+      {addingKey ? (
+        <TeamClaudeKeyDialog
+          environmentId={props.environmentId}
+          replacing={false}
+          onClose={() => setAddingKey(false)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,11 +1,12 @@
 import { groupSpaceNotes, spaceNoteByline } from "@t3tools/client-runtime/spaceAgent";
 import {
-  SPACE_OVERVIEW_SECTIONS,
   type SpaceControls,
+  type SpaceOverviewRow,
   type SpaceOverviewSectionId,
   type SpaceViewer,
   groupSpaceOverview,
-  spaceTaskDetail,
+  spaceMemberLabel,
+  spaceThreadsByTask,
 } from "@t3tools/client-runtime/spaces";
 import type {
   EnvironmentId,
@@ -13,10 +14,18 @@ import type {
   Space,
   SpaceNoteChange,
   SpaceNoteItem,
+  SpaceTask,
+  SpaceTaskId,
+  SpaceTaskStatus,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import * as DateTime from "effect/DateTime";
-import { Maximize2Icon, Minimize2Icon, PanelRightCloseIcon, PlusIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PanelRightCloseIcon,
+  PlusIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -30,27 +39,29 @@ import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Textarea } from "../ui/textarea";
-import { SpaceStatusIcon } from "./SpaceStatusIcon";
+import { SpaceActivityIcon, SpaceTaskStatusGlyph } from "./SpaceStatusIcon";
+import { SpaceStatusMenu, handleSpaceStatusKey, useSetSpaceTaskStatus } from "./SpaceStatusMenu";
 
 export type SpacePanelTab = "overview" | "notes";
 
+/** The Overview: tasks grouped by Needs you and status, each with its live activity. */
 export function SpaceOverview(props: {
   readonly environmentId: EnvironmentId;
   readonly space: Space;
-  readonly tasks: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly tasks: ReadonlyArray<SpaceTask>;
+  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly viewer: SpaceViewer;
   readonly canCreateTask: boolean;
+  readonly selectedTaskId?: SpaceTaskId | null;
   readonly onNewTask: () => void;
 }) {
-  const sections = groupSpaceOverview(props.tasks, props.viewer);
-  const members = useTeamMembers(props.environmentId);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<SpaceOverviewSectionId>>(
-    () => new Set(SPACE_OVERVIEW_SECTIONS.filter((s) => s.collapsedByDefault).map((s) => s.id)),
-  );
+  const sections = groupSpaceOverview(props.tasks, spaceThreadsByTask(props.threads), props.viewer);
+  // Sections the viewer flipped from their default.
+  const [flipped, setFlipped] = useState<ReadonlySet<SpaceOverviewSectionId>>(() => new Set());
   const toggle = (id: SpaceOverviewSectionId) => {
-    const next = new Set(collapsed);
+    const next = new Set(flipped);
     if (!next.delete(id)) next.add(id);
-    setCollapsed(next);
+    setFlipped(next);
   };
 
   return (
@@ -61,9 +72,9 @@ export function SpaceOverview(props: {
         </p>
       ) : null}
       {sections.map((section) => {
-        const expanded = !collapsed.has(section.id);
+        const expanded = section.collapsedByDefault === flipped.has(section.id);
         return (
-          <section key={section.id}>
+          <section key={section.id} className={section.band ? "mt-2" : undefined}>
             <CollapsibleSectionHeader
               expanded={expanded}
               tone={section.id === "needs-you" ? "accent" : "muted"}
@@ -78,27 +89,16 @@ export function SpaceOverview(props: {
               {section.label}
             </CollapsibleSectionHeader>
             {expanded
-              ? section.rows.map(({ thread, status }) => (
-                  <Link
-                    key={thread.id}
-                    to="/$environmentId/$threadId"
-                    params={{ environmentId: props.environmentId, threadId: thread.id }}
-                    className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
-                  >
-                    <span className="mt-0.5">
-                      <SpaceStatusIcon icon={status.icon} tone={status.tone} label={status.label} />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{thread.title}</span>
-                      <TaskDetailLine
-                        detail={spaceTaskDetail(thread, status, props.space, props.viewer)}
-                        owner={thread.ownerId == null ? undefined : members.get(thread.ownerId)}
-                      />
-                    </span>
-                    <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-                      <RelativeTime timestamp={DateTime.formatIso(thread.updatedAt)} />
-                    </span>
-                  </Link>
+              ? section.rows.map((row) => (
+                  <SpaceOverviewTaskRow
+                    key={row.task.id}
+                    environmentId={props.environmentId}
+                    space={props.space}
+                    row={row}
+                    viewer={props.viewer}
+                    canSetStatus={props.canCreateTask}
+                    selected={props.selectedTaskId === row.task.id}
+                  />
                 ))
               : null}
           </section>
@@ -118,24 +118,115 @@ export function SpaceOverview(props: {
   );
 }
 
-/** "for [K] Kousik · assigned by you": the owner's avatar leads their name. */
-function TaskDetailLine(props: {
-  readonly detail: string;
-  readonly owner: { readonly name: string; readonly color: string } | undefined;
+/** Line 1: status, title, time; line 2: owner and live activity. 1–5 set the status. */
+function SpaceOverviewTaskRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly space: Space;
+  readonly row: SpaceOverviewRow<OrchestrationV2ThreadShell>;
+  readonly viewer: SpaceViewer;
+  readonly canSetStatus: boolean;
+  readonly selected: boolean;
 }) {
-  const withOwner = props.owner !== undefined && props.detail.startsWith("for ");
+  const { row, viewer } = props;
+  const members = useTeamMembers(props.environmentId);
+  const setStatus = useSetSpaceTaskStatus(props.environmentId);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const owner = members.get(row.task.ownerId);
+  const ownerLabel = spaceMemberLabel(props.space, row.task.ownerId, viewer);
+  const pick = (status: SpaceTaskStatus) => void setStatus(row.task, status);
+  const off = row.task.status === "done" || row.task.status === "canceled";
   return (
-    <span className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs">
-      {withOwner && props.owner !== undefined ? (
-        <>
-          <span className="shrink-0">for</span>
-          <MemberAvatar member={props.owner} size="sm" className="size-3.5" />
-          <span className="truncate">{props.detail.slice(4)}</span>
-        </>
-      ) : (
-        <span className="truncate">{props.detail}</span>
+    <div
+      className={cn(
+        "group/task relative flex flex-col gap-0.5 rounded-md px-2 py-1.5 hover:bg-accent",
+        props.selected && "bg-accent",
       )}
-    </span>
+      onContextMenu={
+        props.canSetStatus
+          ? (event) => {
+              event.preventDefault();
+              setMenuOpen(true);
+            }
+          : undefined
+      }
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <SpaceTaskStatusGlyph
+          icon={row.status.icon}
+          tone={row.status.tone}
+          label={row.status.label}
+        />
+        <Link
+          to="/spaces/$environmentId/$spaceId/tasks/$taskId"
+          params={{
+            environmentId: props.environmentId,
+            spaceId: props.space.id,
+            taskId: row.task.id,
+          }}
+          aria-current={props.selected ? "page" : undefined}
+          className={cn(
+            "min-w-0 flex-1 truncate rounded-sm text-sm after:absolute after:inset-0 focus-visible:outline-none",
+            off && "text-muted-foreground",
+          )}
+          onKeyDown={props.canSetStatus ? (event) => handleSpaceStatusKey(event, pick) : undefined}
+        >
+          {row.task.title}
+        </Link>
+        <span
+          className={cn(
+            "shrink-0 text-muted-foreground text-xs tabular-nums",
+            props.canSetStatus && "group-hover/task:hidden",
+            menuOpen && "hidden",
+          )}
+        >
+          <RelativeTime timestamp={new Date(row.activityAt).toISOString()} />
+        </span>
+        {props.canSetStatus ? (
+          <SpaceStatusMenu
+            status={row.task.status}
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            align="end"
+            onPick={pick}
+            trigger={
+              <Button
+                size="micro"
+                variant="ghost-muted"
+                aria-label={`Status: ${row.status.label}. Change status`}
+                className={menuOpen ? "relative" : "relative hidden group-hover/task:inline-flex"}
+              />
+            }
+          >
+            <SpaceTaskStatusGlyph icon={row.status.icon} tone={row.status.tone} />
+            {row.status.label}
+            <ChevronDownIcon />
+          </SpaceStatusMenu>
+        ) : null}
+      </div>
+      <div className="flex min-w-0 items-center gap-1 ps-5.5 text-muted-foreground text-xs">
+        <MemberAvatar
+          size="sm"
+          className="size-3.5"
+          member={{
+            name: viewer.nameOf(row.task.ownerId),
+            color: owner?.color ?? "var(--muted-foreground)",
+          }}
+        />
+        <span className="shrink-0">{ownerLabel}</span>
+        <span aria-hidden>·</span>
+        {row.activity.glyph === null ? null : (
+          <SpaceActivityIcon glyph={row.activity.glyph} tone={row.activity.tone} />
+        )}
+        <span
+          className={cn(
+            "truncate",
+            row.activity.needsViewer && "font-medium text-warning-foreground",
+          )}
+        >
+          {row.activity.text}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -329,7 +420,9 @@ function SpaceNotes(props: {
 export function SpaceRoomPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly space: Space;
-  readonly tasks: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly tasks: ReadonlyArray<SpaceTask>;
+  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly selectedTaskId: SpaceTaskId | null;
   readonly notes: ReadonlyArray<SpaceNoteItem>;
   readonly viewer: SpaceViewer;
   readonly controls: SpaceControls;
@@ -395,6 +488,8 @@ export function SpaceRoomPanel(props: {
             environmentId={props.environmentId}
             space={props.space}
             tasks={props.tasks}
+            threads={props.threads}
+            selectedTaskId={props.selectedTaskId}
             viewer={props.viewer}
             canCreateTask={props.controls.canCreateTask}
             onNewTask={props.onNewTask}

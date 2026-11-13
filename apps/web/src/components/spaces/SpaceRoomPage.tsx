@@ -1,5 +1,5 @@
 import { useAtomRefresh } from "@effect/atom-react";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { spacePairFeedItems, spacePairRoom } from "@t3tools/client-runtime/spaceAgent";
 import {
   type SpaceConfirm,
@@ -8,13 +8,24 @@ import {
   joinedSpaceOlderEntries,
   prependSpaceEntries,
   spaceControls,
+  spaceDefaultReassignTo,
+  spaceHeaderWorkspaceLabel,
   spaceNewDividerIndex,
+  spaceThreadsByTask,
 } from "@t3tools/client-runtime/spaces";
-import type { EnvironmentId, SpaceId, SpaceRoomEntry } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+  SpaceId,
+  SpaceRoomEntry,
+  SpaceTaskId,
+} from "@t3tools/contracts";
 import { Link, useParams } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BoxesIcon,
+  FolderCodeIcon,
   LogOutIcon,
   MoreHorizontalIcon,
   PanelRightOpenIcon,
@@ -27,13 +38,15 @@ import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { openSpaceDialog } from "../../spaceDialogStore";
-import { useProject, useQuietThreadProjection, useThreadShell } from "../../state/entities";
+import { useQuietThreadProjection, useThreadShell } from "../../state/entities";
 import {
   spaceEnvironment,
+  spaceRepositoryNames,
   useCanOperateSpaces,
   useSpaceOlderEntries,
+  useSpaceProjects,
   useSpaceRoom,
-  useSpaceTasks,
+  useSpaceTaskThreads,
   useSpaceViewer,
 } from "../../state/spaces";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -48,14 +61,45 @@ import { SpaceComposer } from "./SpaceComposer";
 import { SpaceConfirmDialog } from "./SpaceConfirmDialog";
 import { SpaceFeed } from "./SpaceFeed";
 import { SpaceMembersPopover } from "./SpaceMembersPopover";
+import type { SpacePairFeedContext } from "./SpacePairFeed";
 import { SpaceRoomPanel } from "./SpaceRoomPanel";
+import { SpaceTaskPage } from "./SpaceTaskPage";
+
+/** Below this width the panel opens as an overlay over the room. */
+const SPACE_PANEL_INLINE_MIN = 1100;
+
+const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = [];
 
 type Post = Extract<SpaceRoomEntry, { type: "post" }>;
 
 export function SpaceRoomPage() {
   const params = useParams({ from: "/_chat/spaces/$environmentId/$spaceId" });
-  const environmentId = params.environmentId as EnvironmentId;
-  const spaceId = params.spaceId as SpaceId;
+  return (
+    <SpaceRoute
+      environmentId={params.environmentId as EnvironmentId}
+      spaceId={params.spaceId as SpaceId}
+      taskId={null}
+    />
+  );
+}
+
+export function SpaceTaskRoutePage() {
+  const params = useParams({ from: "/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId" });
+  return (
+    <SpaceRoute
+      environmentId={params.environmentId as EnvironmentId}
+      spaceId={params.spaceId as SpaceId}
+      taskId={params.taskId as SpaceTaskId}
+    />
+  );
+}
+
+function SpaceRoute(props: {
+  readonly environmentId: EnvironmentId;
+  readonly spaceId: SpaceId;
+  readonly taskId: SpaceTaskId | null;
+}) {
+  const { environmentId, spaceId } = props;
   const result = useSpaceRoom(environmentId, spaceId);
   const viewer = useSpaceViewer(environmentId);
   const contentArea = workspaceAreaProps("home", 1, "Space");
@@ -73,6 +117,7 @@ export function SpaceRoomPage() {
           environmentId={environmentId}
           room={result.room}
           viewer={viewer}
+          taskId={props.taskId}
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -166,22 +211,28 @@ function SpaceRoom(props: {
   readonly environmentId: EnvironmentId;
   readonly room: SpaceRoomMemberState;
   readonly viewer: SpaceViewer;
+  readonly taskId: SpaceTaskId | null;
 }) {
   const { environmentId, room, viewer } = props;
   const space = room.space;
   const canOperate = useCanOperateSpaces(environmentId);
   const controls = spaceControls(space, viewer.memberId, canOperate);
-  const tasks = useSpaceTasks(environmentId, space.id, room.tasks);
+  const threads = useSpaceTaskThreads(environmentId, space.id, room.threads);
+  const projects = useSpaceProjects(environmentId);
+  const workspace = spaceHeaderWorkspaceLabel(
+    space,
+    projects.find((candidate) => candidate.id === space.projectId) ?? null,
+    spaceRepositoryNames(space, projects),
+  );
   const older = joinedSpaceOlderEntries(
     useSpaceOlderEntries(environmentId, space.id),
     room.entries,
   );
-  const project = useProject(scopeProjectRef(environmentId, space.projectId));
   const roomRef = scopeThreadRef(environmentId, space.roomThreadId);
   const roomShell = useThreadShell(roomRef);
   const pairRoom = spacePairRoom(useQuietThreadProjection(roomRef)?.projection ?? null);
   const pairItems = spacePairFeedItems(pairRoom, room.actions);
-  const wide = useMediaQuery("lg");
+  const wide = useMediaQuery({ min: SPACE_PANEL_INLINE_MIN });
   const loadOlder = useAtomCommand(spaceEnvironment.loadOlder, "Load earlier messages");
   const mutate = useAtomCommand(spaceEnvironment.mutate, "Update space");
 
@@ -193,6 +244,7 @@ function SpaceRoom(props: {
   const [confirm, setConfirm] = useState<SpaceConfirm | null>(null);
   // "Ask again" refills the composer; the count remounts it with the new draft.
   const [draft, setDraft] = useState<{ readonly n: number; readonly text: string } | null>(null);
+  // A task page keeps the Overview open beside it, with the task highlighted.
   const panelState = panel ?? (wide ? "open" : "hidden");
 
   const entries = older === null ? room.entries : prependSpaceEntries(older.entries, room.entries);
@@ -210,13 +262,18 @@ function SpaceRoom(props: {
     const result = await mutate({ environmentId, input: { type: "unarchive", spaceId: space.id } });
     toastCommandFailure("Could not unarchive", result);
   };
-  const pairContext = {
+  const tasksById = new Map(room.tasks.map((task) => [task.id, task]));
+  const threadsByTask = spaceThreadsByTask(threads);
+  const pairContext: SpacePairFeedContext = {
     environmentId,
     roomRef,
     space,
     viewer,
     pairRoom,
-    tasksById: new Map(tasks.map((task) => [task.id, task])),
+    entries,
+    taskOf: (taskId) => tasksById.get(taskId) ?? null,
+    threadIdsOf: (taskId) => (threadsByTask.get(taskId) ?? []).map((thread) => thread.id),
+    threadTitle: (threadId) => threads.find((thread) => thread.id === threadId)?.title ?? null,
     onAskAgain: (text: string) => setDraft({ n: (draft?.n ?? 0) + 1, text }),
   };
   const newTask = () => openSpaceDialog({ type: "new-task", environmentId, spaceId: space.id });
@@ -224,124 +281,156 @@ function SpaceRoom(props: {
   return (
     <div className="relative flex min-h-0 flex-1 bg-background">
       <ThreadVisitWatermark threadRef={roomRef} />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <WorkspacePageHeader electron={isElectron}>
-          <div className="flex min-w-0 flex-1 items-baseline gap-2">
-            <h1 className="truncate font-medium text-sm">{space.name}</h1>
-            {project === null ? null : (
-              <span className="hidden truncate text-muted-foreground text-xs sm:inline">
-                {project.title}
-              </span>
-            )}
-          </div>
-          <SpaceMembersPopover
-            environmentId={environmentId}
-            space={space}
-            viewer={viewer}
-            controls={controls}
-          />
-          <Menu>
-            <MenuTrigger
-              render={<Button size="icon-sm" variant="ghost" aria-label="Space actions" />}
-            >
-              <MoreHorizontalIcon />
-            </MenuTrigger>
-            <MenuPopup align="end">
-              <MenuItem
-                onClick={() =>
-                  openSpaceDialog({ type: "settings", environmentId, spaceId: space.id })
-                }
+      {props.taskId === null ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <WorkspacePageHeader electron={isElectron}>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <UsersIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <h1 className="truncate font-medium text-sm">{space.name}</h1>
+              {workspace.name === null && workspace.repositories === null ? null : (
+                <span className="hidden min-w-0 items-center gap-1 text-muted-foreground text-xs sm:flex">
+                  {workspace.icon === "workspace" ? (
+                    <BoxesIcon aria-hidden className="size-3.5 shrink-0" />
+                  ) : (
+                    <FolderCodeIcon aria-hidden className="size-3.5 shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {[workspace.name, workspace.repositories].filter(Boolean).join(" · ")}
+                  </span>
+                </span>
+              )}
+            </div>
+            <SpaceMembersPopover
+              environmentId={environmentId}
+              space={space}
+              viewer={viewer}
+              controls={controls}
+              onConfirm={setConfirm}
+            />
+            <Menu>
+              <MenuTrigger
+                render={<Button size="icon-sm" variant="ghost" aria-label="Space actions" />}
               >
-                <SettingsIcon />
-                Space settings
-              </MenuItem>
-              {controls.canLeave || controls.canArchive || controls.canUnarchive ? (
-                <MenuSeparator />
-              ) : null}
-              {controls.canArchive ? (
-                <MenuItem onClick={() => setConfirm({ type: "archive", space })}>
-                  <ArchiveIcon />
-                  Archive space
-                </MenuItem>
-              ) : null}
-              {controls.canUnarchive ? (
-                <MenuItem onClick={() => void unarchive()}>
-                  <ArchiveRestoreIcon />
-                  Unarchive
-                </MenuItem>
-              ) : null}
-              {controls.canLeave ? (
+                <MoreHorizontalIcon />
+              </MenuTrigger>
+              <MenuPopup align="end">
                 <MenuItem
-                  variant="destructive"
-                  onClick={() => setConfirm({ type: "leave", space })}
+                  onClick={() =>
+                    openSpaceDialog({ type: "settings", environmentId, spaceId: space.id })
+                  }
                 >
-                  <LogOutIcon />
-                  Leave space
+                  <SettingsIcon />
+                  Space settings
                 </MenuItem>
-              ) : null}
-            </MenuPopup>
-          </Menu>
-          {panelState === "hidden" ? (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Show panel"
-              onClick={() => setPanel("open")}
-            >
-              <PanelRightOpenIcon />
-            </Button>
-          ) : null}
-        </WorkspacePageHeader>
-        <div className="min-h-0 flex-1">
-          <SpaceFeed
-            environmentId={environmentId}
-            space={space}
-            entries={entries}
-            pairItems={pairItems}
-            pairContext={pairContext}
-            viewer={viewer}
-            newIndex={newIndex}
-            canQuote={controls.canPost}
-            hasOlder={hasOlder}
-            loadingOlder={loadingOlder}
-            onLoadOlder={() => void onLoadOlder()}
-            onQuote={setQuote}
-          />
-        </div>
-        {controls.archived ? (
-          <div className="chat-composer-lane flex shrink-0 items-center justify-center gap-3 border-border border-t py-3 text-muted-foreground text-sm">
-            <ArchiveIcon className="size-4" />
-            <span>
-              Archived
-              {space.archivedBy === null
-                ? ""
-                : ` by ${space.archivedBy === viewer.memberId ? "you" : viewer.nameOf(space.archivedBy)}`}{" "}
-              · read-only
-            </span>
-            {controls.canUnarchive ? (
-              <Button size="xs" variant="outline" onClick={() => void unarchive()}>
-                Unarchive
+                {controls.canLeave || controls.canArchive || controls.canUnarchive ? (
+                  <MenuSeparator />
+                ) : null}
+                {controls.canArchive ? (
+                  <MenuItem onClick={() => setConfirm({ type: "archive", space })}>
+                    <ArchiveIcon />
+                    Archive space
+                  </MenuItem>
+                ) : null}
+                {controls.canUnarchive ? (
+                  <MenuItem onClick={() => void unarchive()}>
+                    <ArchiveRestoreIcon />
+                    Unarchive
+                  </MenuItem>
+                ) : null}
+                {controls.canLeave ? (
+                  <MenuItem
+                    variant="destructive"
+                    onClick={() =>
+                      setConfirm({
+                        type: "leave",
+                        space,
+                        reassignTo: spaceDefaultReassignTo("leave", space, viewer),
+                      })
+                    }
+                  >
+                    <LogOutIcon />
+                    Leave space
+                  </MenuItem>
+                ) : null}
+              </MenuPopup>
+            </Menu>
+            {panelState === "hidden" ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Show panel"
+                onClick={() => setPanel("open")}
+              >
+                <PanelRightOpenIcon />
               </Button>
             ) : null}
+          </WorkspacePageHeader>
+          <div className="min-h-0 flex-1">
+            <SpaceFeed
+              environmentId={environmentId}
+              space={space}
+              entries={entries}
+              pairItems={pairItems}
+              pairContext={pairContext}
+              viewer={viewer}
+              newIndex={newIndex}
+              canQuote={controls.canPost}
+              hasOlder={hasOlder}
+              loadingOlder={loadingOlder}
+              onLoadOlder={() => void onLoadOlder()}
+              onQuote={setQuote}
+            />
           </div>
-        ) : controls.canPost ? (
-          <SpaceComposer
-            key={draft?.n ?? 0}
-            initialText={draft?.text}
-            environmentId={environmentId}
-            space={space}
-            viewer={viewer}
-            quote={quote}
-            onQuoteChange={setQuote}
-          />
-        ) : null}
-      </div>
+          {controls.archived ? (
+            <div className="chat-composer-lane flex shrink-0 items-center justify-center gap-3 border-border border-t py-3 text-muted-foreground text-sm">
+              <ArchiveIcon className="size-4" />
+              <span>
+                Archived
+                {space.archivedBy === null
+                  ? ""
+                  : ` by ${space.archivedBy === viewer.memberId ? "you" : viewer.nameOf(space.archivedBy)}`}{" "}
+                · read-only
+              </span>
+              {controls.canUnarchive ? (
+                <Button size="xs" variant="outline" onClick={() => void unarchive()}>
+                  Unarchive
+                </Button>
+              ) : null}
+            </div>
+          ) : controls.canPost ? (
+            <SpaceComposer
+              key={draft?.n ?? 0}
+              initialText={draft?.text}
+              environmentId={environmentId}
+              space={space}
+              viewer={viewer}
+              quote={quote}
+              onQuoteChange={setQuote}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <SpaceTaskPage
+          environmentId={environmentId}
+          space={space}
+          taskId={props.taskId}
+          roomTask={tasksById.get(props.taskId) ?? null}
+          roomEntries={room.entries}
+          roomThreads={threadsByTask.get(props.taskId) ?? EMPTY_THREADS}
+          viewer={viewer}
+          controls={controls}
+          panelHidden={panelState === "hidden"}
+          onShowPanel={() => setPanel("open")}
+        />
+      )}
       {panelState === "hidden" ? null : (
         <div className={wide ? "flex min-h-0" : "absolute inset-y-0 right-0 z-30 flex shadow-lg"}>
           <SpaceRoomPanel
             environmentId={environmentId}
             space={space}
-            tasks={tasks}
+            tasks={room.tasks}
+            threads={threads}
+            selectedTaskId={props.taskId}
             notes={room.notes}
             viewer={viewer}
             controls={controls}
@@ -355,6 +444,7 @@ function SpaceRoom(props: {
       <SpaceConfirmDialog
         environmentId={environmentId}
         viewer={viewer}
+        tasks={room.tasks}
         confirm={confirm}
         onClose={() => setConfirm(null)}
       />

@@ -339,6 +339,14 @@
       "types": "./src/state/teamImage.ts",
       "default": "./src/state/teamImage.ts"
     },
+    "./state/team-claude-key": {
+      "types": "./src/state/teamClaudeKey.ts",
+      "default": "./src/state/teamClaudeKey.ts"
+    },
+    "./team-claude-key": {
+      "types": "./src/teamClaudeKey.ts",
+      "default": "./src/teamClaudeKey.ts"
+    },
     "./team-image-presentation": {
       "types": "./src/teamImagePresentation.ts",
       "default": "./src/teamImagePresentation.ts"

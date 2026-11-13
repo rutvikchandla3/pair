@@ -1,17 +1,20 @@
 import {
+  type SpaceActionTarget,
   type SpacePairFeedItem,
   type SpacePairReply,
   type SpacePairRoom,
   spaceActionView,
   spacePairStatusLine,
 } from "@t3tools/client-runtime/spaceAgent";
-import type { SpaceViewer } from "@t3tools/client-runtime/spaces";
+import { type SpaceViewer, isSpaceTaskLineEntry } from "@t3tools/client-runtime/spaces";
 import type {
   EnvironmentId,
-  OrchestrationV2ThreadShell,
   ScopedThreadRef,
   Space,
   SpaceAction,
+  SpaceRoomEntry,
+  SpaceTask,
+  SpaceTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -27,6 +30,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import { PairMark } from "../PairMark";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Button } from "../ui/button";
+import { SpaceStatusUndoButton, SpaceTaskChip } from "./SpaceRecord";
 
 const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const formatTime = (iso: string) => timeFormat.format(new Date(iso));
@@ -37,24 +41,42 @@ export interface SpacePairFeedContext {
   readonly space: Space;
   readonly viewer: SpaceViewer;
   readonly pairRoom: SpacePairRoom;
-  readonly tasksById: ReadonlyMap<string, OrchestrationV2ThreadShell>;
+  /** The room's entries, for a status move's Undo. */
+  readonly entries: ReadonlyArray<SpaceRoomEntry>;
+  readonly taskOf: (taskId: SpaceTaskId) => SpaceTask | null;
+  readonly threadIdsOf: (taskId: SpaceTaskId) => ReadonlyArray<ThreadId>;
+  readonly threadTitle: (threadId: ThreadId) => string | null;
   readonly onAskAgain: (text: string) => void;
 }
 
-function TaskChip(props: {
-  readonly environmentId: EnvironmentId;
-  readonly taskId: ThreadId | null;
+/** What a record or card points at: a task chip, or a thread link. */
+function ActionTarget(props: {
+  readonly context: SpacePairFeedContext;
+  readonly target: SpaceActionTarget | null;
   readonly title: string | null;
 }) {
-  if (props.title === null) return null;
-  if (props.taskId === null) return <span className="font-medium">{props.title}</span>;
+  const { context, target } = props;
+  if (target === null) {
+    return props.title === null ? null : <span className="font-medium">{props.title}</span>;
+  }
+  if (target.kind === "task") {
+    const task = context.taskOf(target.taskId);
+    return (
+      <SpaceTaskChip
+        environmentId={context.environmentId}
+        spaceId={context.space.id}
+        taskId={target.taskId}
+        task={task ?? (props.title === null ? null : { title: props.title, status: "todo" })}
+      />
+    );
+  }
   return (
     <Link
       to="/$environmentId/$threadId"
-      params={{ environmentId: props.environmentId, threadId: props.taskId }}
+      params={{ environmentId: context.environmentId, threadId: target.threadId }}
       className="font-medium text-foreground hover:underline"
     >
-      {props.title}
+      {props.title ?? context.threadTitle(target.threadId) ?? "a thread"}
     </Link>
   );
 }
@@ -73,9 +95,10 @@ function SpaceActionRow(props: {
   const view = spaceActionView(action, {
     viewer: context.viewer,
     now,
-    taskStarted: (threadId) => {
-      const task = context.tasksById.get(threadId);
-      return task === undefined ? null : task.latestRunId !== null;
+    archived: context.space.archivedAt !== null,
+    taskOf: (taskId) => {
+      const task = context.taskOf(taskId);
+      return task === null ? null : { task, threadIds: context.threadIdsOf(taskId) };
     },
   });
   const send = async (input: Parameters<typeof run>[0]["input"], label: string) => {
@@ -98,9 +121,9 @@ function SpaceActionRow(props: {
       return (
         <div className="flex max-w-xl flex-col gap-2 rounded-lg border border-border bg-card p-3 text-sm">
           <div className="text-muted-foreground text-xs">
-            <TaskChip
-              environmentId={context.environmentId}
-              taskId={view.taskId}
+            <ActionTarget
+              context={context}
+              target={{ kind: "thread", threadId: view.threadId }}
               title={view.title}
             />{" "}
             · for {view.ownerName}
@@ -110,7 +133,7 @@ function SpaceActionRow(props: {
             {view.text}
           </p>
           <p className="text-muted-foreground text-xs">
-            It waits behind the task's current work and never interrupts it. Undo removes it while
+            It waits behind the thread's current work and never interrupts it. Undo removes it while
             it's queued.{view.asAdmin ? " You can send it as a team admin." : ""}
           </p>
           {view.canAnswer ? (
@@ -152,14 +175,13 @@ function SpaceActionRow(props: {
         <div className="flex flex-col gap-0.5 text-muted-foreground text-xs">
           <div className="flex flex-wrap items-center gap-x-1">
             <span>{view.lead}</span>
-            <TaskChip
-              environmentId={context.environmentId}
-              taskId={view.taskId}
-              title={view.title}
-            />
+            <ActionTarget context={context} target={view.target} title={view.title} />
             <span>{view.detail}</span>
             {time}
             {view.canUndo ? undoButton : null}
+            {view.statusEntryId === null ? null : (
+              <StatusMoveUndo context={context} entryId={view.statusEntryId} />
+            )}
           </div>
           {view.quote === null ? null : (
             <span className="line-clamp-2 border-border border-l-2 pl-2">{view.quote}</span>
@@ -182,7 +204,7 @@ function SpaceActionRow(props: {
     case "closed":
       return (
         <div className="flex flex-wrap items-center gap-x-1 text-muted-foreground text-xs">
-          <TaskChip environmentId={context.environmentId} taskId={view.taskId} title={view.title} />
+          <ActionTarget context={context} target={view.target} title={view.title} />
           <span>{view.text}</span>
           {time}
           {view.askAgain === null ? null : (
@@ -197,6 +219,26 @@ function SpaceActionRow(props: {
         </div>
       );
   }
+}
+
+/** `@pair`'s status move: Undo through its `task-status` line, like an agent's. */
+function StatusMoveUndo(props: {
+  readonly context: SpacePairFeedContext;
+  readonly entryId: string;
+}) {
+  const { context } = props;
+  const entry = context.entries.find((candidate) => candidate.id === props.entryId);
+  if (entry === undefined || !isSpaceTaskLineEntry(entry)) return null;
+  return (
+    <SpaceStatusUndoButton
+      environmentId={context.environmentId}
+      space={context.space}
+      entry={entry}
+      task={context.taskOf(entry.line.taskId)}
+      entries={context.entries}
+      viewer={context.viewer}
+    />
+  );
 }
 
 function SpacePairText(props: { readonly roomRef: ScopedThreadRef; readonly itemId: string }) {

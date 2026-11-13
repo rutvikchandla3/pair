@@ -75,6 +75,11 @@ vi.mock("../state/sandbox", () => ({
   readContinueInCloudOffer: () => ({ kind: "hidden" }),
   readThreadShare: () => null,
 }));
+vi.mock("../components/spaces/SpaceThreadContext", () => ({
+  readSpaceThreadActions: () => null,
+  removeThreadFromTask: vi.fn(),
+}));
+vi.mock("../components/spaces/spaceThreadDialogStore", () => ({ openSpaceThreadDialog: vi.fn() }));
 vi.mock("../components/team/shareThreadDialogTarget", () => ({ openShareThreadDialog: vi.fn() }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
 vi.mock("../state/use-atom-command", () => ({

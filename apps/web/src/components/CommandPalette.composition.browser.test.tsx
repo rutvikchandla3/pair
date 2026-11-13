@@ -101,6 +101,17 @@ vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
 vi.mock("./spaces/SpaceShortcuts", () => ({
   useSpaceShortcutTarget: () => ({ environmentId: null, space: null, spaces: [] }),
 }));
+vi.mock("./spaces/SpaceThreadContext", () => ({
+  removeThreadFromTask: vi.fn(),
+  useSpaceThreadActions: () => ({
+    context: null,
+    canAdd: false,
+    canMove: false,
+    canRemove: false,
+    canSetStatus: false,
+    canStartThread: false,
+  }),
+}));
 
 // The real palette and Base UI input must agree that confirming composition is typing.
 describe.each(["repository", "folder", "destination"] as const)("add-project %s", (step) => {

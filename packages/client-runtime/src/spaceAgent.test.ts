@@ -7,6 +7,7 @@ import {
   SpaceId,
   type SpaceNoteItem,
   SpaceNoteId,
+  SpaceTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -32,7 +33,8 @@ const hanad = MemberId.make("mem-hanad");
 const NAMES: Record<string, string> = { [rutvik]: "Rutvik", [kousik]: "Kousik", [hanad]: "Hanad" };
 const viewer = { memberId: rutvik, nameOf: (id: MemberId) => NAMES[id] ?? "Former member" };
 const spaceId = SpaceId.make("spc_0123456789abcdef0123");
-const taskId = ThreadId.make("task-1");
+const taskId = SpaceTaskId.make("stk_0123456789abcdef0123");
+const threadId = ThreadId.make("thread-1");
 
 const action = (id: string, patch: Partial<SpaceAction> = {}): SpaceAction => ({
   id: SpaceActionId.make(id),
@@ -43,7 +45,8 @@ const action = (id: string, patch: Partial<SpaceAction> = {}): SpaceAction => ({
   state: "done",
   outcome: {
     type: "task.created",
-    threadId: taskId,
+    taskId,
+    threadId: null,
     ownerId: hanad,
     title: "Review list",
     started: false,
@@ -225,33 +228,98 @@ describe("@pair queue", () => {
 });
 
 describe("@pair records", () => {
-  const context = (started: boolean | null, as = viewer) => ({
+  const untouched = {
+    task: {
+      statusVersion: 1,
+      createdAt: "2026-11-10T10:00:00.000Z",
+      updatedAt: "2026-11-10T10:00:00.000Z",
+      deletedAt: null,
+    },
+    threadIds: [] as ReadonlyArray<ThreadId>,
+  };
+  const context = (found: typeof untouched | null = untouched, as = viewer, archived = false) => ({
     viewer: as,
     now: Date.parse("2026-11-10T11:00:00.000Z"),
-    taskStarted: () => started,
+    archived,
+    taskOf: () => found,
   });
 
-  it("offers Undo of a created task to the tagger only, until its owner starts it", () => {
-    expect(spaceActionView(action("a"), context(false))).toMatchObject({
+  it.each([
+    ["untouched", context(), true],
+    ["for any member", context(untouched, { ...viewer, memberId: kousik }), true],
+    [
+      "status moved",
+      context({ ...untouched, task: { ...untouched.task, statusVersion: 2 } }),
+      false,
+    ],
+    [
+      "edited",
+      context({ ...untouched, task: { ...untouched.task, updatedAt: "2026-11-10T10:30:00.000Z" } }),
+      false,
+    ],
+    ["another thread linked", context({ ...untouched, threadIds: [threadId] }), false],
+    ["gone", context(null), false],
+    ["archived", context(untouched, viewer, true), false],
+  ])("offers Undo of a created task while nobody touched it: %s", (_name, ctx, canUndo) => {
+    expect(spaceActionView(action("a"), ctx)).toMatchObject({
       kind: "record",
-      detail: "for Hanad · asked by you",
+      lead: "Pair created",
+      target: { kind: "task", taskId },
+      canUndo,
+    });
+  });
+
+  it("reads a status move with its line for Undo, and a message with the tagger's Undo", () => {
+    const moved = action("m", {
+      request: { type: "task.status", taskId, status: "in-review" },
+      outcome: {
+        type: "task.status.moved",
+        taskId,
+        title: "Review list",
+        from: "in-progress",
+        to: "in-review",
+        entryId: MessageId.make("line-1"),
+      },
+    });
+    expect(spaceActionView(moved, context())).toMatchObject({
+      lead: "Pair moved",
+      detail: "to In review · asked by you",
+      canUndo: false,
+      statusEntryId: "line-1",
+    });
+    expect(spaceActionView({ ...moved, state: "undone", undo: null }, context())).toMatchObject({
+      kind: "closed",
+      text: "You undid this · back to In progress",
+    });
+    const message = action("q", {
+      request: { type: "thread.message", threadId, text: "Use 3 sizes" },
+      outcome: {
+        type: "thread.message.queued",
+        threadId,
+        ownerId: hanad,
+        title: "Preview renderer",
+        messageId: MessageId.make("msg-1"),
+      },
+    });
+    expect(spaceActionView(message, context())).toMatchObject({
+      lead: "Pair messaged",
+      target: { kind: "thread", threadId },
+      quote: "Use 3 sizes",
       canUndo: true,
     });
-    expect(spaceActionView(action("a"), context(true)).kind === "record").toBe(true);
-    expect(spaceActionView(action("a"), context(true))).toMatchObject({ canUndo: false });
     expect(
-      spaceActionView(action("a"), context(false, { ...viewer, memberId: hanad })),
-    ).toMatchObject({ detail: "for you · asked by Rutvik", canUndo: false });
+      spaceActionView(message, context(untouched, { ...viewer, memberId: kousik })),
+    ).toMatchObject({ canUndo: false });
   });
 
   it("reads a confirm card past its deadline as expired, with Ask again for the tagger", () => {
     const card = action("card", {
       state: "proposed",
-      request: { type: "task.message", taskId, text: "Use 3 sizes" },
+      request: { type: "thread.message", threadId, text: "Use 3 sizes" },
       outcome: null,
       proposal: {
         snapshot: {
-          threadId: taskId,
+          threadId,
           title: "Preview renderer",
           ownerId: hanad,
           latestRunId: null,
@@ -261,20 +329,23 @@ describe("@pair records", () => {
         expiresAt: "2026-11-11T10:00:00.000Z",
       },
     });
-    expect(spaceActionView(card, context(true))).toMatchObject({
+    expect(spaceActionView(card, context())).toMatchObject({
       kind: "confirm",
+      threadId,
       canAnswer: true,
     });
-    expect(spaceActionView(card, context(true, { ...viewer, memberId: kousik }))).toMatchObject({
+    expect(
+      spaceActionView(card, context(untouched, { ...viewer, memberId: kousik })),
+    ).toMatchObject({
       canAnswer: false,
       waitingFor: "Rutvik",
     });
     expect(
-      spaceActionView(card, { ...context(true), now: Date.parse("2026-11-12T00:00:00.000Z") }),
+      spaceActionView(card, { ...context(), now: Date.parse("2026-11-12T00:00:00.000Z") }),
     ).toEqual({
       kind: "closed",
       text: "This request expired. Nothing was sent",
-      taskId,
+      target: { kind: "thread", threadId },
       title: "Preview renderer",
       askAgain: "@pair message Preview renderer: Use 3 sizes",
     });

@@ -6,6 +6,11 @@ import { startChiefOfStaff, stopChiefOfStaff, useChiefOfStaffStore } from "../ch
 import { useChiefOfStaffTarget } from "../chiefOfStaff/useChiefOfStaffTarget";
 import { openSpaceDialog } from "../spaceDialogStore";
 import { useSpaceShortcutTarget } from "./spaces/SpaceShortcuts";
+import { SPACE_TASK_STATUSES } from "@t3tools/client-runtime/spaces";
+import { useSetSpaceTaskStatus } from "./spaces/SpaceStatusMenu";
+import { SpaceTaskStatusGlyph } from "./spaces/SpaceStatusIcon";
+import { removeThreadFromTask, useSpaceThreadActions } from "./spaces/SpaceThreadContext";
+import { openSpaceThreadDialog } from "./spaces/spaceThreadDialogStore";
 
 import {
   scopedThreadKey,
@@ -510,6 +515,13 @@ function OpenCommandPaletteDialog(props: {
   const paletteRouteTarget = useThreadRouteTarget();
   const chiefOfStaffTarget = useChiefOfStaffTarget();
   const spaceTarget = useSpaceShortcutTarget();
+  const spaceThread = useSpaceThreadActions(
+    activeThread?.environmentId ?? null,
+    activeThread?.id ?? null,
+  );
+  const setSpaceTaskStatus = useSetSpaceTaskStatus(
+    activeThread?.environmentId ?? ("" as EnvironmentId),
+  );
   const chiefOfStaffLive = isChiefOfStaffLive(useChiefOfStaffStore((view) => view.phase));
   const projects = useProjects();
   const referenceThreadRef =
@@ -1874,6 +1886,92 @@ function OpenCommandPaletteDialog(props: {
       icon: <ListPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => openSpaceDialog({ type: "new-task", ...space }),
     });
+  }
+
+  if (activeThread && spaceThread.canAdd) {
+    const threadId = activeThread.id;
+    const environmentId = activeThread.environmentId;
+    actionItems.push({
+      kind: "action",
+      value: "action:space-thread-add",
+      searchTerms: ["task", "space", "add to task", "share", "attach"],
+      title: "Add thread to task…",
+      icon: <ListPlusIcon className={ITEM_ICON_CLASS} />,
+      run: async () =>
+        openSpaceThreadDialog({ type: "attach", environmentId, threadId, target: null }),
+    });
+  }
+  const spaceContext = spaceThread.context;
+  if (spaceContext !== null) {
+    const { environmentId, threadId, placement } = spaceContext;
+    if (spaceThread.canMove) {
+      actionItems.push({
+        kind: "action",
+        value: "action:space-thread-move",
+        searchTerms: ["task", "space", "move", "another task"],
+        title: "Move thread to another task…",
+        icon: <ListPlusIcon className={ITEM_ICON_CLASS} />,
+        run: async () =>
+          openSpaceThreadDialog({
+            type: "attach",
+            environmentId,
+            threadId,
+            target: null,
+            fromTaskId: placement.taskId,
+          }),
+      });
+    }
+    if (spaceThread.canRemove) {
+      actionItems.push({
+        kind: "action",
+        value: "action:space-thread-remove",
+        searchTerms: ["task", "space", "remove", "unlink", "stop sharing"],
+        title: "Remove thread from task",
+        icon: <ListPlusIcon className={ITEM_ICON_CLASS} />,
+        run: () => removeThreadFromTask(spaceContext),
+      });
+    }
+    const task = spaceContext.task;
+    if (task !== null && spaceThread.canSetStatus) {
+      actionItems.push({
+        kind: "submenu",
+        value: "action:space-task-status",
+        searchTerms: ["task", "status", "done", "in review", "in progress", "cancel"],
+        title: "Set task status…",
+        icon: <ListPlusIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <ListPlusIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: "space-task-status",
+            label: task.title,
+            items: SPACE_TASK_STATUSES.map((info) => ({
+              kind: "action" as const,
+              value: `action:space-task-status:${info.status}`,
+              searchTerms: [info.label],
+              title: info.label,
+              icon: <SpaceTaskStatusGlyph icon={info.icon} tone={info.tone} />,
+              run: () => setSpaceTaskStatus(task, info.status),
+            })),
+          },
+        ],
+      });
+    }
+    if (task !== null && spaceThread.canStartThread) {
+      actionItems.push({
+        kind: "action",
+        value: "action:space-task-start-thread",
+        searchTerms: ["task", "start", "new thread", "thread on task"],
+        title: "Start a thread on this task",
+        icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+        run: async () =>
+          openSpaceThreadDialog({
+            type: "start",
+            environmentId,
+            spaceId: task.spaceId,
+            taskId: task.id,
+          }),
+      });
+    }
   }
 
   for (const { environmentId, space } of spaceTarget.spaces) {

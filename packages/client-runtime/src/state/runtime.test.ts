@@ -1151,6 +1151,31 @@ describe("runtime command runner", () => {
     registry.dispose();
   });
 
+  it("interrupts the command's effect when its caller aborts", async () => {
+    const started = Promise.withResolvers<void>();
+    const interrupted = Promise.withResolvers<void>();
+    const runtime = Atom.runtime(Layer.empty);
+    const command = createRuntimeCommand(runtime, {
+      label: "test.abortable",
+      execute: () =>
+        Effect.sync(() => started.resolve()).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Effect.sync(() => interrupted.resolve())),
+        ),
+    });
+    const registry = AtomRegistry.make();
+    const controller = new AbortController();
+
+    const resultPromise = command.run(registry, undefined, { signal: controller.signal });
+    await started.promise;
+    controller.abort();
+
+    const result = await resultPromise;
+    expect(result._tag === "Failure" && Cause.hasInterruptsOnly(result.cause)).toBe(true);
+    await interrupted.promise;
+    registry.dispose();
+  });
+
   it("serializes commands that share a scheduler and lane", async () => {
     const firstLatch = Latch.makeUnsafe();
     const events: string[] = [];

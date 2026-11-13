@@ -1,6 +1,11 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
+import {
+  readSpaceThreadActions,
+  removeThreadFromTask,
+} from "../components/spaces/SpaceThreadContext";
+import { openSpaceThreadDialog } from "../components/spaces/spaceThreadDialogStore";
 import { openShareThreadDialog } from "../components/team/shareThreadDialogTarget";
 import {
   type AtomCommandResult,
@@ -153,6 +158,7 @@ export function useThreadActionMenu(input: {
       const share = readThreadShare(threadRef);
       const moveOffer = continueLocally.offerFor(threadRef);
       const cloudOffer = readContinueInCloudOffer(threadRef);
+      const spaceActions = readSpaceThreadActions(threadRef.environmentId, threadRef.threadId);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -171,6 +177,11 @@ export function useThreadActionMenu(input: {
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         ...(team ? { team } : {}),
         ...(share ? { share: { allowed: share.allowed } } : {}),
+        ...(spaceActions
+          ? {
+              spaceTask: { canMove: spaceActions.canMove, canRemove: spaceActions.canRemove },
+            }
+          : {}),
         ...(machine ? { machine } : {}),
         ...(cloudOffer.kind === "hidden"
           ? {}
@@ -320,6 +331,19 @@ export function useThreadActionMenu(input: {
           return;
         case "share":
           openShareThreadDialog(threadRef);
+          return;
+        case "space-move-task":
+          if (spaceActions === null) return;
+          openSpaceThreadDialog({
+            type: "attach",
+            environmentId: threadRef.environmentId,
+            threadId: threadRef.threadId,
+            target: null,
+            fromTaskId: spaceActions.context.placement.taskId,
+          });
+          return;
+        case "space-remove-task":
+          if (spaceActions !== null) await removeThreadFromTask(spaceActions.context);
           return;
         case "share-guest":
           openGuestShareDialog(threadRef);

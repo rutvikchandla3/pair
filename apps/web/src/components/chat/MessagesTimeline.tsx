@@ -239,6 +239,8 @@ interface MessagesTimelineProps {
   /** Which request is waiting, so a second one of the same kind is announced too. */
   awaitingRequestId?: string | null;
   footer?: ReactNode;
+  /** Above the first message, such as how a thread came to a space task. */
+  header?: ReactNode;
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -344,6 +346,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   activeTurnStartedAt = null,
   worktreeSetup = null,
   footer = null,
+  header = null,
   onCancelWorktreeSetup,
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
   onRetryWorkspacePreparation,
@@ -715,7 +718,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     !isWorking &&
     parentThreadLink === null &&
     historyControls === undefined &&
-    footer === null;
+    footer === null &&
+    header === null;
   const [listOpening, setListOpening] = useState<TimelineListOpening>(() =>
     nextListOpening({ mounted: false }, !showsEmptyState, listIdentityKey),
   );
@@ -1120,6 +1124,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {parentThreadLink === null ? listHeaderLeadingContent : null}
       {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
       {parentThreadLink !== null ? listHeaderLeadingContent : null}
+      {header === null ? null : <div className="messages-timeline-row-frame">{header}</div>}
     </>
   );
 

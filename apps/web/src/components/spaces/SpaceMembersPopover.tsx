@@ -1,10 +1,12 @@
 import {
+  type SpaceConfirm,
   type SpaceControls,
   type SpaceViewer,
   orderSpaceMembers,
+  spaceDefaultReassignTo,
 } from "@t3tools/client-runtime/spaces";
 import type { EnvironmentId, MemberId, Space } from "@t3tools/contracts";
-import { UserPlusIcon } from "lucide-react";
+import { CrownIcon, EllipsisIcon, LogOutIcon, UserMinusIcon, UserPlusIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -16,6 +18,7 @@ import { MemberAvatar } from "../team/MemberAvatar";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { MemberAvatarStack } from "../team/MemberAvatarStack";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Sheet, SheetPopup, SheetTitle } from "../ui/sheet";
 
@@ -25,7 +28,9 @@ function MemberList(props: {
   readonly viewer: SpaceViewer;
   readonly controls: SpaceControls;
   readonly onOpenSettings: () => void;
+  readonly onConfirm: (confirm: SpaceConfirm) => void;
 }) {
+  const { space, viewer } = props;
   const roster = useTeamMembers(props.environmentId);
   const mutate = useAtomCommand(spaceEnvironment.mutate, "Add member");
   const [busy, setBusy] = useState(false);
@@ -60,14 +65,90 @@ function MemberList(props: {
   const requests = props.controls.canManage ? props.space.joinRequests : [];
   return (
     <div className="flex flex-col gap-1">
-      {members.map((member) =>
-        row(
+      {members.map((member) => {
+        const owner = member.memberId === space.ownerId;
+        const self = member.memberId === viewer.memberId;
+        const canManageRow = props.controls.canManage && !owner && !self;
+        const canLeaveRow = self && props.controls.isMember && !props.controls.archived;
+        return row(
           member.memberId,
-          member.memberId === props.space.ownerId ? (
-            <span className="text-muted-foreground text-xs">Owner</span>
-          ) : null,
-        ),
-      )}
+          <>
+            {owner ? <span className="text-muted-foreground text-xs">Owner</span> : null}
+            {canManageRow || canLeaveRow ? (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      aria-label={`Actions for ${viewer.nameOf(member.memberId)}`}
+                    />
+                  }
+                >
+                  <EllipsisIcon />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  {canManageRow ? (
+                    <>
+                      <MenuItem
+                        onClick={() =>
+                          props.onConfirm({ type: "transfer", space, memberId: member.memberId })
+                        }
+                      >
+                        <CrownIcon />
+                        Make owner
+                      </MenuItem>
+                      <MenuItem
+                        variant="destructive"
+                        onClick={() =>
+                          props.onConfirm({
+                            type: "remove",
+                            space,
+                            memberId: member.memberId,
+                            reassignTo: spaceDefaultReassignTo("remove", space, viewer),
+                          })
+                        }
+                      >
+                        <UserMinusIcon />
+                        Remove from space
+                      </MenuItem>
+                    </>
+                  ) : null}
+                  {canLeaveRow && owner ? (
+                    <MenuItem onClick={props.onOpenSettings}>
+                      <CrownIcon />
+                      Transfer ownership…
+                    </MenuItem>
+                  ) : null}
+                  {canLeaveRow ? (
+                    <MenuItem
+                      variant="destructive"
+                      disabled={!props.controls.canLeave}
+                      onClick={() =>
+                        props.onConfirm({
+                          type: "leave",
+                          space,
+                          reassignTo: spaceDefaultReassignTo("leave", space, viewer),
+                        })
+                      }
+                    >
+                      <LogOutIcon />
+                      <span className="flex flex-col">
+                        Leave space
+                        {owner ? (
+                          <span className="text-muted-foreground text-xs">
+                            Transfer ownership first
+                          </span>
+                        ) : null}
+                      </span>
+                    </MenuItem>
+                  ) : null}
+                </MenuPopup>
+              </Menu>
+            ) : null}
+          </>,
+        );
+      })}
       <p className="px-1 text-muted-foreground text-xs">Only members can see this space.</p>
       {requests.length > 0 ? (
         <>
@@ -98,6 +179,7 @@ export function SpaceMembersPopover(props: {
   readonly space: Space;
   readonly viewer: SpaceViewer;
   readonly controls: SpaceControls;
+  readonly onConfirm: (confirm: SpaceConfirm) => void;
 }) {
   const roster = useTeamMembers(props.environmentId);
   const narrow = useMediaQuery("max-sm");
@@ -131,7 +213,16 @@ export function SpaceMembersPopover(props: {
       spaceId: props.space.id,
     });
   };
-  const list = <MemberList {...props} onOpenSettings={openSettings} />;
+  const list = (
+    <MemberList
+      {...props}
+      onOpenSettings={openSettings}
+      onConfirm={(confirm) => {
+        setOpen(false);
+        props.onConfirm(confirm);
+      }}
+    />
+  );
   if (narrow) {
     return (
       <>

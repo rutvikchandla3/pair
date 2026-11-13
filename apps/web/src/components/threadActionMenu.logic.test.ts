@@ -190,6 +190,22 @@ describe("buildThreadActionMenuItems", () => {
     expect(share({ team, share: { allowed: true }, canOperate: false })?.[1]).toBe(true);
   });
 
+  it("offers Move and Remove only on a thread on a space task, disabled without the right", () => {
+    const space = (state: Partial<ThreadActionMenuState>) =>
+      buildThreadActionMenuItems({ ...baseState, ...state })
+        .filter((item) => item.id === "space-move-task" || item.id === "space-remove-task")
+        .map((item) => [item.id, item.disabled ?? false]);
+    expect(space({})).toEqual([]);
+    expect(space({ spaceTask: { canMove: true, canRemove: false } })).toEqual([
+      ["space-move-task", false],
+      ["space-remove-task", true],
+    ]);
+    expect(space({ spaceTask: { canMove: true, canRemove: true }, canOperate: false })).toEqual([
+      ["space-move-task", true],
+      ["space-remove-task", true],
+    ]);
+  });
+
   it("offers Continue locally after the machine actions, disabled with why", () => {
     const ids = (state: ThreadActionMenuState) =>
       buildThreadActionMenuItems(state).map((item) => item.id);

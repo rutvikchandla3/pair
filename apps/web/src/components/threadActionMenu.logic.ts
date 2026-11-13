@@ -25,6 +25,8 @@ export type ThreadActionMenuId =
   | "assign"
   | `assign:${MemberId}`
   | "share"
+  | "space-move-task"
+  | "space-remove-task"
   | "follow"
   | "unfollow"
   | "rename"
@@ -121,6 +123,8 @@ export interface ThreadActionMenuState {
   };
   /** Set only for a cloud thread on a server with a team; only its owner may share it. */
   readonly share?: { readonly allowed: boolean };
+  /** Set only for a thread on a space task; absent hides Move and Remove. */
+  readonly spaceTask?: { readonly canMove: boolean; readonly canRemove: boolean };
   /** Set only for a cloud thread, which has no local path to copy. */
   readonly machine?: {
     readonly actions: ReadonlyArray<SandboxAction>;
@@ -241,6 +245,22 @@ export function buildThreadActionMenuItems(
             label: state.share.allowed ? "Share…" : "Share… (owner only)",
             icon: "users",
             ...(state.share.allowed ? {} : { disabled: true }),
+          },
+        ]
+      : []),
+    ...(state.spaceTask
+      ? [
+          {
+            id: "space-move-task" as const,
+            label: "Move to another task…",
+            icon: "folder-tree",
+            ...(state.spaceTask.canMove ? {} : { disabled: true }),
+          },
+          {
+            id: "space-remove-task" as const,
+            label: "Remove from task",
+            icon: "x",
+            ...(state.spaceTask.canRemove ? {} : { disabled: true }),
           },
         ]
       : []),

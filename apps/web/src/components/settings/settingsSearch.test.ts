@@ -227,6 +227,10 @@ describe("searchSettings", () => {
       ["Team image", "cloud-team-image"],
       ["Allow cloud threads", "project-cloud-allowed"],
       ["Cloud variables", "project-cloud-env"],
+      ["Team Claude key", "team-claude-key"],
+      ["Claude key", "team-claude-key"],
+      ["Anthropic API key", "team-claude-key"],
+      ["Anthropic", "team-claude-key"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
     }

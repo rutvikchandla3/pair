@@ -54,6 +54,7 @@ import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.a
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 import { Route as ChatSpacesEnvironmentIdSpaceIdRouteImport } from './routes/_chat.spaces.$environmentId.$spaceId'
+import { Route as ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRouteImport } from './routes/_chat.spaces.$environmentId.$spaceId_.tasks.$taskId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -287,6 +288,12 @@ const ChatSpacesEnvironmentIdSpaceIdRoute =
     path: '/spaces/$environmentId/$spaceId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute =
+  ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRouteImport.update({
+    id: '/spaces/$environmentId/$spaceId_/tasks/$taskId',
+    path: '/spaces/$environmentId/$spaceId/tasks/$taskId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -333,6 +340,7 @@ export interface FileRoutesByFullPath {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/spaces/$environmentId/$spaceId': typeof ChatSpacesEnvironmentIdSpaceIdRoute
+  '/spaces/$environmentId/$spaceId/tasks/$taskId': typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -379,6 +387,7 @@ export interface FileRoutesByTo {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/spaces/$environmentId/$spaceId': typeof ChatSpacesEnvironmentIdSpaceIdRoute
+  '/spaces/$environmentId/$spaceId/tasks/$taskId': typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -427,6 +436,7 @@ export interface FileRoutesById {
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/_chat/spaces/$environmentId/$spaceId': typeof ChatSpacesEnvironmentIdSpaceIdRoute
+  '/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId': typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -475,6 +485,7 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/spaces/$environmentId/$spaceId'
+    | '/spaces/$environmentId/$spaceId/tasks/$taskId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -521,6 +532,7 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/spaces/$environmentId/$spaceId'
+    | '/spaces/$environmentId/$spaceId/tasks/$taskId'
   id:
     | '__root__'
     | '/_chat'
@@ -568,6 +580,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/_chat/spaces/$environmentId/$spaceId'
+    | '/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -898,6 +911,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSpacesEnvironmentIdSpaceIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId': {
+      id: '/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId'
+      path: '/spaces/$environmentId/$spaceId/tasks/$taskId'
+      fullPath: '/spaces/$environmentId/$spaceId/tasks/$taskId'
+      preLoaderRoute: typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
   }
 }
 
@@ -978,6 +998,7 @@ interface ChatRouteChildren {
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
   ChatSpacesEnvironmentIdSpaceIdRoute: typeof ChatSpacesEnvironmentIdSpaceIdRoute
+  ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute: typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -989,6 +1010,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
   ChatSpacesEnvironmentIdSpaceIdRoute: ChatSpacesEnvironmentIdSpaceIdRoute,
+  ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute:
+    ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

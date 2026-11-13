@@ -1,13 +1,19 @@
-import { useAtomRefresh } from "@effect/atom-react";
 import {
   type SpaceOverviewRow,
   isSpaceOwner,
-  spaceTasksNeedingViewer,
+  spaceSidebarTasks,
+  spaceTaskStatusInfo,
 } from "@t3tools/client-runtime/spaces";
-import type { EnvironmentId, OrchestrationV2ThreadShell, Space } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+  Space,
+  SpaceId,
+  SpaceTask,
+} from "@t3tools/contracts";
 import { Link, useParams } from "@tanstack/react-router";
 import { ArchiveRestoreIcon, MoreHorizontalIcon, PlusIcon, UsersRoundIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { openSpaceDialog } from "../../spaceDialogStore";
@@ -15,18 +21,16 @@ import {
   spaceEnvironment,
   useCanOperateSpaces,
   useSpaceEnvironmentIds,
-  useSpaceList,
+  useSpaceListWithOpenRoom,
   useSpaceSidebarShells,
   useSpaceViewer,
 } from "../../state/spaces";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SpaceStatusIcon } from "../spaces/SpaceStatusIcon";
+import { SpaceTaskStatusGlyph } from "../spaces/SpaceStatusIcon";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-
-const SUB_ROWS = 2;
 
 const rowClass =
   "group/space-row flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground hover:bg-sidebar-row-hover data-[status=active]:bg-sidebar-row-active";
@@ -43,54 +47,91 @@ export function SidebarSpaces() {
   );
 }
 
-function TaskRow(props: {
+function TaskLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly task: SpaceTask;
+  readonly needsYou?: boolean;
+}) {
+  const { task } = props;
+  const status = spaceTaskStatusInfo(task.status);
+  return (
+    <Link
+      to="/spaces/$environmentId/$spaceId/tasks/$taskId"
+      params={{ environmentId: props.environmentId, spaceId: task.spaceId, taskId: task.id }}
+      className={cn(rowClass, "ps-7")}
+    >
+      <SpaceTaskStatusGlyph icon={status.icon} tone={status.tone} label={status.label} />
+      <span className="min-w-0 flex-1 truncate">{task.title}</span>
+      {props.needsYou ? (
+        <span className="shrink-0 text-input-foreground text-xs">Needs you</span>
+      ) : null}
+    </Link>
+  );
+}
+
+/** A task that needs the viewer, with the threads on it; others' say whose they are. */
+function NeedsYouRow(props: {
   readonly environmentId: EnvironmentId;
   readonly row: SpaceOverviewRow<OrchestrationV2ThreadShell>;
-  readonly indent?: boolean;
+  readonly viewerId: string | null;
+  readonly nameOf: (memberId: NonNullable<OrchestrationV2ThreadShell["ownerId"]>) => string;
 }) {
-  const { thread, status } = props.row;
   return (
     <li>
-      <Link
-        to="/$environmentId/$threadId"
-        params={{ environmentId: props.environmentId, threadId: thread.id }}
-        className={cn(rowClass, props.indent && "ps-7")}
-      >
-        <SpaceStatusIcon icon={status.icon} tone={status.tone} label={status.label} />
-        <span className="truncate">{thread.title}</span>
-      </Link>
+      <TaskLink environmentId={props.environmentId} task={props.row.task} needsYou />
+      {props.row.threads.length > 0 ? (
+        <ul className="flex flex-col gap-px">
+          {props.row.threads.map((thread) => {
+            const ownerId = thread.ownerId;
+            const theirs = ownerId != null && ownerId !== props.viewerId;
+            return (
+              <li key={thread.id}>
+                <Link
+                  to="/$environmentId/$threadId"
+                  params={{ environmentId: props.environmentId, threadId: thread.id }}
+                  className={cn(rowClass, "h-auto min-h-7 flex-col items-start gap-0 py-1 ps-12")}
+                >
+                  <span className="w-full truncate">{thread.title}</span>
+                  {theirs && ownerId != null ? (
+                    <span className="w-full truncate text-sidebar-muted-foreground text-xs">
+                      {props.nameOf(ownerId)}'s thread
+                    </span>
+                  ) : null}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </li>
   );
 }
 
 function SidebarSpacesForEnvironment(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
-  const spaces = useSpaceList(environmentId);
+  const params = useParams({ strict: false });
+  const routeSpaceId =
+    params.environmentId === environmentId && params.spaceId !== undefined
+      ? (params.spaceId as SpaceId)
+      : null;
+  const list = useSpaceListWithOpenRoom(environmentId, routeSpaceId);
+  const spaces = list.spaces;
   const shells = useSpaceSidebarShells(environmentId);
   const viewer = useSpaceViewer(environmentId);
   const canOperate = useCanOperateSpaces(environmentId);
   const [assignedOpen, setAssignedOpen] = useState(false);
   const [spacesOpen, setSpacesOpen] = useState(true);
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const refreshList = useAtomRefresh(spaceEnvironment.list({ environmentId, input: undefined }));
-  const listedRooms = useRef(shells.roomsKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's space list when a room is shared with or taken from this member
-  useEffect(() => {
-    if (listedRooms.current === shells.roomsKey) return;
-    listedRooms.current = shells.roomsKey;
-    refreshList();
-  }, [shells.roomsKey, refreshList]);
 
   const activeSpaces = spaces.filter((space) => space.archivedAt === null);
   const archived = spaces.filter((space) => space.archivedAt !== null);
-  // From the shells, not the list: a removed member still sees the tasks they kept.
-  const needing = spaceTasksNeedingViewer(shells.tasks, viewer);
-  const params = useParams({ strict: false });
+  const sidebar = spaceSidebarTasks(list, shells.taskThreads, viewer);
+  const assigned = sidebar.assignedToMe;
   const openSpaceId =
     params.environmentId !== environmentId
       ? null
       : (params.spaceId ??
-        shells.tasks.find((thread) => thread.id === params.threadId)?.space?.spaceId ??
+        shells.taskThreads.find((thread) => thread.id === params.threadId)?.space?.spaceId ??
         null);
 
   return (
@@ -102,19 +143,23 @@ function SidebarSpacesForEnvironment(props: { readonly environmentId: Environmen
         onClick={() => setAssignedOpen(!assignedOpen)}
       >
         <span className="flex-1 truncate">Assigned to me</span>
-        {needing.length > 0 ? (
+        {assigned.length > 0 ? (
           <span className="rounded-full bg-input-foreground/12 px-1.5 text-input-foreground text-xs tabular-nums">
-            {needing.length}
+            {assigned.length}
           </span>
         ) : null}
       </button>
       {assignedOpen ? (
         <ul className="flex flex-col gap-px">
-          {needing.length === 0 ? (
-            <li className="px-7 py-1 text-sidebar-muted-foreground text-xs">Nothing needs you.</li>
+          {assigned.length === 0 ? (
+            <li className="px-7 py-1 text-sidebar-muted-foreground text-xs">
+              No open tasks are yours.
+            </li>
           ) : (
-            needing.map((row) => (
-              <TaskRow key={row.thread.id} environmentId={environmentId} row={row} indent />
+            assigned.map((task) => (
+              <li key={task.id}>
+                <TaskLink environmentId={environmentId} task={task} />
+              </li>
             ))
           )}
         </ul>
@@ -147,12 +192,7 @@ function SidebarSpacesForEnvironment(props: { readonly environmentId: Environmen
             </li>
           ) : null}
           {activeSpaces.map((space) => {
-            const mine =
-              space.id === openSpaceId
-                ? needing.filter((row) => row.thread.space?.spaceId === space.id)
-                : [];
-            const shown = mine.slice(0, SUB_ROWS);
-            const more = mine.length - shown.length;
+            const tasks = space.id === openSpaceId ? sidebar.spaces.get(space.id) : undefined;
             return (
               <li key={space.id}>
                 <SpaceRow
@@ -160,24 +200,30 @@ function SidebarSpacesForEnvironment(props: { readonly environmentId: Environmen
                   space={space}
                   unread={shells.unreadRoomIds.has(space.roomThreadId)}
                 />
-                {shown.length > 0 || more > 0 ? (
+                {tasks === undefined ? null : (
                   <ul className="flex flex-col gap-px">
-                    {shown.map((row) => (
-                      <TaskRow key={row.thread.id} environmentId={environmentId} row={row} indent />
+                    {tasks.needsYou.map((row) => (
+                      <NeedsYouRow
+                        key={row.task.id}
+                        environmentId={environmentId}
+                        row={row}
+                        viewerId={viewer.memberId}
+                        nameOf={viewer.nameOf}
+                      />
                     ))}
-                    {more > 0 ? (
+                    {tasks.more > 0 ? (
                       <li>
                         <Link
                           to="/spaces/$environmentId/$spaceId"
                           params={{ environmentId, spaceId: space.id }}
                           className={cn(rowClass, "ps-7 text-sidebar-muted-foreground text-xs")}
                         >
-                          {more} more
+                          {tasks.more} more {tasks.more === 1 ? "task" : "tasks"}
                         </Link>
                       </li>
                     ) : null}
                   </ul>
-                ) : null}
+                )}
               </li>
             );
           })}

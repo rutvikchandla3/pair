@@ -1276,6 +1276,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     teamOnly: true,
   },
   {
+    id: "team-claude-key",
+    title: "Team Claude key",
+    to: "/settings/team",
+    searchTerms: ["claude key api key anthropic pays for @pair spaces"],
+    teamOnly: true,
+  },
+  {
     id: "provider-accounts",
     title: "Your provider accounts",
     to: "/settings/team",
