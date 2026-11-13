@@ -378,9 +378,8 @@ export function decidePropose(input: {
   if (input.existing !== null) return { _tag: "NoOp" };
   if (!isSpaceActiveMember(space, command.actorId)) return refuse("not-member");
   if (space.archivedAt !== null) return refuse("archived");
-  if (command.request.type !== "task.message") return refuse("not-allowed");
+  if (command.request.type !== "thread.message") return refuse("not-allowed");
   if (input.taskSpaceId !== space.id || input.snapshot === null) return refuse("not-a-task");
-  if (input.snapshot.latestRunId === null) return refuse("unstarted");
   if (input.snapshot.ownerId === command.actorId) return refuse("own-task");
   return {
     _tag: "Accept",
@@ -429,12 +428,11 @@ export function decidePairTaskMessage(input: {
   }
   if (!isSpaceActiveMember(space, actorId)) return refuse("not-member");
   if (space.archivedAt !== null) return refuse("archived");
-  if (snapshot.latestRunId === null) return refuse("unstarted");
   const done = (base: SpaceAction): SpaceAction => ({
     ...base,
     state: "done",
     outcome: {
-      type: "task.message.queued",
+      type: "thread.message.queued",
       threadId: snapshot.threadId,
       ownerId: snapshot.ownerId,
       title: snapshot.title,
@@ -450,7 +448,11 @@ export function decidePairTaskMessage(input: {
       action: done({
         id: command.spaceActionId,
         spaceId: space.id,
-        request: { type: "task.message", taskId: snapshot.threadId, text: command.text as never },
+        request: {
+          type: "thread.message",
+          threadId: snapshot.threadId,
+          text: command.text as never,
+        },
         actorId,
         via,
         state: "done",
@@ -465,7 +467,7 @@ export function decidePairTaskMessage(input: {
   }
   if (existing.actorId !== actorId) return refuse("not-tagger");
   if (existing.state !== "proposed" || existing.proposal === null) return refuse("action-closed");
-  if (existing.request.type !== "task.message" || existing.request.text !== command.text) {
+  if (existing.request.type !== "thread.message" || existing.request.text !== command.text) {
     return refuse("not-allowed");
   }
   const close = (state: SpaceAction["state"]) => ({
@@ -484,60 +486,6 @@ export function decidePairTaskMessage(input: {
   return { _tag: "Send", action: done(existing) };
 }
 
-/** Pair's task, recorded in the commit that creates it; one per reply in M1 (§14.6). */
-export function decideTaskCreateAction(input: {
-  readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>;
-  readonly space: Space;
-  readonly ownerId: MemberId;
-  /** Tasks Pair already created for this reply's post, other than this one. */
-  readonly othersThisReply: number;
-  readonly now: string;
-}):
-  | { readonly _tag: "Refuse"; readonly reason: SpaceRefusal }
-  | { readonly _tag: "Accept"; readonly action: SpaceAction } {
-  const { command, space, now } = input;
-  const via = command.via?.pair;
-  if (
-    via === undefined ||
-    command.spaceActionId === undefined ||
-    command.actorId === undefined ||
-    command.space?.kind !== "task"
-  ) {
-    return refuse("not-allowed");
-  }
-  if (input.othersThisReply > 0) return refuse("over-limit");
-  return {
-    _tag: "Accept",
-    action: {
-      id: command.spaceActionId,
-      spaceId: space.id,
-      request: {
-        type: "task.create",
-        title: command.title,
-        description: command.space.description as never,
-        ownerId: input.ownerId,
-        ...(input.ownerId === command.actorId ? { start: true } : {}),
-      },
-      actorId: command.actorId,
-      via,
-      state: "done",
-      outcome: {
-        type: "task.created",
-        threadId: command.threadId,
-        ownerId: input.ownerId,
-        title: command.title,
-        // `space.action.started` sets it once the start has gone through.
-        started: false,
-      },
-      proposal: null,
-      undo: null,
-      resolvedBy: null,
-      createdAt: now,
-      updatedAt: now,
-    },
-  };
-}
-
 /** Undo of a task or message record: records it once its inverse command has committed. */
 export function decideRecordUndo(input: {
   readonly action: SpaceAction;
@@ -549,7 +497,10 @@ export function decideRecordUndo(input: {
   | { readonly _tag: "Refuse"; readonly reason: SpaceRefusal }
   | { readonly _tag: "Accept"; readonly action: SpaceAction } {
   const { action, actorId, now } = input;
-  if (action.actorId !== actorId) return refuse("not-tagger");
+  // Any member may undo a created task; only the tagger undoes a message.
+  if (action.actorId !== actorId && action.outcome?.type !== "task.created") {
+    return refuse("not-tagger");
+  }
   if (action.state !== "done") return refuse("not-undoable");
   if (!input.reverted) return refuse("not-undoable");
   return {

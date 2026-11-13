@@ -5,13 +5,13 @@ import {
   type SpaceActionId,
   SpaceId,
   SpaceNoteId,
+  type SpaceTaskId,
   type SpaceNotesChange,
   spaceMembershipChange,
 } from "@t3tools/contracts";
 import type {
   GuestShareId,
   MemberId,
-  ThreadSpaceTask,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
@@ -100,14 +100,13 @@ import { canChangeQueuedRun, runStarterId } from "@t3tools/shared/threadCollabor
 import { modelSwitchSince } from "./modelSwitch.ts";
 import {
   decideSpaceCommand,
-  decideTaskCreate,
-  decideTaskMessage,
-  nextTaskPlacement,
+  decideThreadLink,
   spaceRefusal,
   type SpaceRefusal,
   spaceAgentSelection,
   spaceMessageRefusal,
   type SpaceCoreCommand,
+  type SpaceThreadLinkCommand,
 } from "../space/SpaceDecisions.ts";
 import {
   decideNotesEdit,
@@ -115,7 +114,6 @@ import {
   decidePropose,
   decideRecordUndo,
   decidePairTaskMessage,
-  decideTaskCreateAction,
   type SpaceAgentCommand,
   spaceActionExpired,
   spaceNotesReceiptId,
@@ -790,7 +788,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "space.join.request":
     case "space.join.cancel":
     case "space.post":
+    case "space.task.create":
     case "space.task.update":
+    case "space.thread.link":
     case "space.action.propose":
     case "space.action.cancel":
     case "space.action.started":
@@ -3288,9 +3288,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
-    if (command.space?.kind === "task") {
-      yield* dispatchSpaceTaskCreated(command, command.space, now, events);
-    }
     const thread: OrchestrationV2AppThread = {
       createdBy: command.createdBy,
       creationSource: command.creationSource,
@@ -3389,80 +3386,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
-  /** A task's room line goes on the room's stream, in the commit that creates the task. */
-  const dispatchSpaceTaskCreated = Effect.fn("Orchestrator.dispatchSpaceTaskCreated")(function* (
-    command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
-    placement: ThreadSpaceTask,
-    now: DateTime.Utc,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) {
-    const space = yield* projectionStore
-      .getSpace(placement.spaceId)
-      .pipe(
-        Effect.mapError(
-          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-        ),
-      );
-    const decision = decideTaskCreate({
-      space,
-      placement,
-      threadId: command.threadId,
-      ownerId: command.ownerId ?? command.actorId ?? placement.createdBy,
-      commandId: command.commandId,
-      now: DateTime.formatIso(now),
-    });
-    if (decision._tag === "Refuse") {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: spaceRefusal(placement.spaceId, "a new task", decision.reason),
-      });
-    }
-    if (decision._tag === "NoOp" || space === null) return;
-    if (command.via !== undefined) {
-      const roomMessageId = command.via.pair.roomMessageId;
-      const others = (yield* projectionStore
-        .listSpaceActions({ roomMessageId })
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-        )).filter(
-        (action) =>
-          action.id !== command.spaceActionId &&
-          action.request.type === "task.create" &&
-          action.state === "done",
-      );
-      const ownerId = command.ownerId ?? command.actorId ?? placement.createdBy;
-      const recorded = decideTaskCreateAction({
-        command,
-        space,
-        ownerId,
-        othersThisReply: others.length,
-        now: DateTime.formatIso(now),
-      });
-      if (recorded._tag === "Refuse") {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: spaceRefusal(placement.spaceId, "a task from @pair", recorded.reason),
-        });
-      }
-      yield* emitSpaceAction(command, recorded.action, events);
-    }
-    for (const entry of decision.entries) {
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "space.room-entry",
-        threadId: space.roomThreadId,
-        occurredAt: now,
-        payload: entry,
-      });
-    }
-  });
-
   /** Re-decides against the space read under the room's lock; `SpaceService` checked first. */
   const dispatchSpaceCommand = Effect.fn("Orchestrator.dispatchSpaceCommand")(function* (
     command: SpaceCoreCommand,
@@ -3477,24 +3400,77 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "space.post" && command.quoteEntryId !== undefined
         ? yield* projectionStore.getSpaceRoomEntry(command.quoteEntryId).pipe(mapProjection)
         : null;
-    const taskThread =
-      command.type === "space.task.update"
-        ? yield* projectionStore.getThread(command.threadId).pipe(mapProjection)
+    const task =
+      command.type === "space.task.create" || command.type === "space.task.update"
+        ? yield* projectionStore.getSpaceTask(command.taskId).pipe(mapProjection)
         : null;
-    const taskShell =
-      taskThread === null
-        ? null
-        : yield* projectionStore.getThreadShell(command.threadId).pipe(mapProjection);
+    const reassigning =
+      (command.type === "space.member.remove" || command.type === "space.leave") &&
+      command.reassignTo !== undefined;
+    const memberTasks = reassigning
+      ? yield* projectionStore.listSpaceTasks(command.spaceId).pipe(mapProjection)
+      : [];
+    const othersThisReply =
+      command.type === "space.task.create" && command.via !== undefined
+        ? (yield* projectionStore
+            .listSpaceActions({ roomMessageId: command.via.roomMessageId })
+            .pipe(mapProjection)).filter(
+            (action) =>
+              action.id !== command.spaceActionId &&
+              action.request.type === "task.create" &&
+              action.state === "done",
+          ).length
+        : 0;
+    const change = command.type === "space.task.update" ? command.change : null;
+    let agentThreadOnTask = false;
+    if (change?.type === "status" && change.by.type === "agent" && task !== null) {
+      const agentThread = yield* projectionStore
+        .getThreadShell(change.by.threadId)
+        .pipe(mapProjection);
+      agentThreadOnTask =
+        agentThread !== null &&
+        agentThread.deletedAt === null &&
+        agentThread.space?.kind === "task" &&
+        agentThread.space.taskId === task.id;
+    }
+    const undoLine =
+      change?.type === "status-undo"
+        ? yield* projectionStore.getSpaceRoomEntry(change.entryId).pipe(mapProjection)
+        : null;
+    const undoAction =
+      undoLine?.type === "system" &&
+      undoLine.line.type === "task-status" &&
+      undoLine.line.by.type === "pair"
+        ? yield* projectionStore.getSpaceAction(undoLine.line.by.actionId).pipe(mapProjection)
+        : null;
+    const deleting = change?.type === "delete" && task !== null;
+    const taskThreadIds =
+      deleting && task !== null
+        ? yield* projectionStore.listSpaceTaskThreadIdsFor(task.id).pipe(mapProjection)
+        : [];
+    const createdAction =
+      deleting && task?.via != null
+        ? ((yield* projectionStore
+            .listSpaceActions({ roomMessageId: task.via.roomMessageId })
+            .pipe(mapProjection)).find(
+            (action) =>
+              action.outcome?.type === "task.created" && action.outcome.taskId === task.id,
+          ) ?? null)
+        : null;
     const now = yield* DateTime.now;
     const nowIso = DateTime.formatIso(now);
     const decision = decideSpaceCommand({
       command,
       space,
       quoted,
-      task:
-        taskThread === null
-          ? null
-          : { thread: taskThread, started: (taskShell?.latestRunId ?? null) !== null },
+      task,
+      memberTasks,
+      othersThisReply,
+      agentThreadOnTask,
+      undoLine,
+      undoAction,
+      taskThreadIds,
+      createdAction,
       now: nowIso,
     });
     if (decision._tag === "NoOp") return;
@@ -3502,7 +3478,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: spaceRefusal(command.spaceId, command.type, decision.reason),
+        cause: spaceRefusal(command.spaceId, command.type, decision.reason, decision.message),
       });
     }
     if (command.type === "space.create") {
@@ -3539,12 +3515,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(membership === null ? {} : { membership }),
       });
     }
+    for (const updated of decision.tasks) {
+      yield* emitEvent({
+        type: "space.task.updated",
+        threadId: roomThreadId,
+        occurredAt: now,
+        payload: updated,
+      });
+    }
     for (const entry of decision.entries) {
       yield* emitEvent({
         type: "space.room-entry",
         threadId: roomThreadId,
         occurredAt: now,
         payload: entry,
+      });
+    }
+    for (const action of decision.actions) {
+      yield* emitEvent({
+        type: "space.action.updated",
+        threadId: roomThreadId,
+        occurredAt: now,
+        payload: action,
+      });
+    }
+    for (const threadId of decision.archiveThreadIds) {
+      const thread = yield* projectionStore.getThread(threadId).pipe(mapProjection);
+      const { space: _link, ...unlinked } = thread;
+      yield* emitEvent({
+        type: thread.archivedAt === null ? "thread.archived" : "thread.metadata-updated",
+        threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...unlinked, archivedAt: thread.archivedAt ?? now, updatedAt: now },
       });
     }
     if (decision.pairReply !== null && command.type === "space.post") {
@@ -3569,22 +3572,105 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         effects,
       );
     }
-    if (command.type === "space.task.update" && taskThread?.space?.kind === "task") {
-      const change = command.change;
-      const handBack = change.type === "hand-back";
+  });
+
+  /**
+   * Rewrites a thread's `space` on its own stream, with a line in each room it leaves or joins.
+   * Task writes all run on the room's stream; a link never changes the task.
+   */
+  const dispatchSpaceThreadLink = Effect.fn("Orchestrator.dispatchSpaceThreadLink")(function* (
+    command: SpaceThreadLinkCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const mapProjection = Effect.mapError(
+      (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+    );
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+        mapProjection,
+      );
+    const placement = thread?.space?.kind === "task" ? thread.space : null;
+    const read = (spaceId: SpaceId, taskId: SpaceTaskId) =>
+      Effect.all({
+        space: projectionStore.getSpace(spaceId),
+        task: projectionStore.getSpaceTask(taskId),
+      }).pipe(mapProjection);
+    const current = placement === null ? null : yield* read(placement.spaceId, placement.taskId);
+    const target =
+      command.target === null ? null : yield* read(command.target.spaceId, command.target.taskId);
+    const now = yield* DateTime.now;
+    const decision = decideThreadLink({
+      command,
+      thread,
+      current,
+      target,
+      now: DateTime.formatIso(now),
+    });
+    if (decision._tag === "NoOp") return;
+    if (decision._tag === "Refuse" || thread === null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: spaceRefusal(
+          command.target?.spaceId ?? placement?.spaceId ?? SpaceId.make("none"),
+          command.type,
+          decision._tag === "Refuse" ? decision.reason : "not-linkable",
+          decision._tag === "Refuse" ? decision.message : undefined,
+        ),
+      });
+    }
+    const { space: _previous, ...unlinked } = thread;
+    const emitEvent = emit(events, command);
+    yield* emitEvent({
+      type: "thread.metadata-updated",
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: decision.link === null ? unlinked : { ...unlinked, space: decision.link },
+    });
+    for (const { roomThreadId, entry } of decision.entries) {
       yield* emitEvent({
-        type: "thread.metadata-updated",
-        threadId: taskThread.id,
-        providerInstanceId: taskThread.providerInstanceId,
+        type: "space.room-entry",
+        threadId: roomThreadId,
+        occurredAt: now,
+        payload: entry,
+      });
+    }
+    const started = target?.task ?? null;
+    const startedIn = target?.space ?? null;
+    if (
+      command.pairVia !== undefined &&
+      command.spaceActionId !== undefined &&
+      command.via === "start" &&
+      decision.link !== null &&
+      started !== null &&
+      startedIn !== null
+    ) {
+      const nowIso = DateTime.formatIso(now);
+      yield* emitEvent({
+        type: "space.action.updated",
+        threadId: startedIn.roomThreadId,
         occurredAt: now,
         payload: {
-          ...taskThread,
-          ...(change.type === "edit" && change.title !== undefined ? { title: change.title } : {}),
-          space: nextTaskPlacement(taskThread.space, change, command.actorId, nowIso),
-          ...(handBack
-            ? { ownerId: taskThread.space.createdBy, ownerUpdatedBy: command.actorId }
-            : {}),
-          updatedAt: now,
+          id: command.spaceActionId,
+          spaceId: startedIn.id,
+          request: { type: "thread.start", taskId: started.id },
+          actorId: command.actorId,
+          via: command.pairVia,
+          state: "done",
+          outcome: {
+            type: "thread.started",
+            taskId: started.id,
+            threadId: thread.id,
+            title: started.title,
+          },
+          proposal: null,
+          undo: null,
+          resolvedBy: null,
+          createdAt: nowIso,
+          updatedAt: nowIso,
         },
       });
     }
@@ -3777,8 +3863,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       case "space.action.propose": {
         const task =
-          command.request.type === "task.message"
-            ? yield* spaceTaskSnapshotOf(command, command.request.taskId)
+          command.request.type === "thread.message"
+            ? yield* spaceTaskSnapshotOf(command, command.request.threadId)
             : { snapshot: null, spaceId: null };
         const decision = decidePropose({
           command,
@@ -3810,9 +3896,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const action = yield* requireAction(command.actionId);
         if (action.actorId !== command.actorId) return yield* refuse("not-tagger");
         if (action.outcome?.type !== "task.created" || action.outcome.started) return;
+        // The thread the tagger started on the task; a link alone never touches the action.
+        let startedThreadId: ThreadId | null = null;
+        for (const threadId of yield* projectionStore
+          .listSpaceTaskThreadIdsFor(action.outcome.taskId)
+          .pipe(mapProjection)) {
+          const shell = yield* projectionStore.getThreadShell(threadId).pipe(mapProjection);
+          if (shell?.ownerId === command.actorId) {
+            startedThreadId = threadId;
+            break;
+          }
+        }
         yield* emitAction({
           ...action,
-          outcome: { ...action.outcome, started: true },
+          outcome: {
+            ...action.outcome,
+            started: true,
+            threadId: startedThreadId ?? action.outcome.threadId,
+          },
           updatedAt: nowIso,
         });
         return;
@@ -3843,11 +3944,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         let reverted = false;
         if (action.outcome?.type === "task.created") {
-          const shell = yield* projectionStore
-            .getThreadShell(action.outcome.threadId)
+          const task = yield* projectionStore
+            .getSpaceTask(action.outcome.taskId)
             .pipe(mapProjection);
-          reverted = shell === null || shell.deletedAt !== null;
-        } else if (action.outcome?.type === "task.message.queued") {
+          reverted = task === null || task.deletedAt !== null;
+        } else if (action.outcome?.type === "thread.message.queued") {
           const messageId = action.outcome.messageId;
           const task = yield* projectionStore
             .getThreadProjection(action.outcome.threadId)
@@ -15486,27 +15587,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         yield* refuseLocalThread(command, thread);
-        if (thread.space?.kind === "task") {
-          const shell = yield* projectionStore
-            .getThreadShell(command.threadId)
-            .pipe(
-              Effect.mapError(
-                (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-              ),
-            );
-          const refusal = decideTaskMessage({
-            thread,
-            started: (shell?.latestRunId ?? null) !== null,
-            actorId: command.actorId,
-          });
-          if (refusal !== null) {
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: spaceRefusal(thread.space.spaceId, command.type, refusal),
-            });
-          }
-        }
         const guestSend =
           command.guestMessageId === undefined
             ? undefined
@@ -15774,8 +15854,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "space.join.request":
       case "space.join.cancel":
       case "space.post":
+      case "space.task.create":
       case "space.task.update":
         yield* dispatchSpaceCommand(command, events, effects);
+        break;
+      case "space.thread.link":
+        yield* dispatchSpaceThreadLink(command, events);
         break;
       case "space.action.propose":
       case "space.action.cancel":

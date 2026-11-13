@@ -7,8 +7,11 @@ import {
   SpaceError,
   type SpaceNoteItem,
   type SpaceRoomEntry,
+  type SpaceTask,
+  type SpaceTaskStatus,
+  spaceTaskIsOpen,
 } from "@t3tools/contracts";
-import { spaceTaskState } from "@t3tools/shared/spaceTaskState";
+import { type SpaceThreadActivity, spaceThreadActivity } from "@t3tools/shared/spaceThreadActivity";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,6 +50,8 @@ const SPACE_ROOM_WINDOW = 2_000;
 const CHUNK_TARGET = 20;
 const CHUNK_MAX = 40;
 const OPEN_QUESTION_DAYS = 14;
+/** Done and canceled tasks list their threads this long, then shrink to one line. */
+const CLOSED_DETAIL_DAYS = 7;
 
 const estimateTokens = (text: string) => Math.ceil(text.length / 4);
 
@@ -91,51 +96,115 @@ export type SpaceTaskShell = OrchestrationV2ThreadShell & {
   readonly space: Extract<NonNullable<OrchestrationV2ThreadShell["space"]>, { kind: "task" }>;
 };
 
+/** A task and the live threads on it, newest thread first. */
+export interface SpaceTaskInReach {
+  readonly task: SpaceTask;
+  readonly threads: ReadonlyArray<SpaceTaskShell>;
+}
+
 /** Pair's reach: the space's live tasks, and only while the tagger is in the space (§6). */
 export const spaceTasksInReach = Effect.fn("SpaceContext.tasksInReach")(function* (
   projections: ProjectionStoreV2["Service"],
   space: Space,
   taggerId: MemberId,
 ) {
-  if (!isSpaceActiveMember(space, taggerId)) return [];
+  if (!isSpaceActiveMember(space, taggerId)) return [] as ReadonlyArray<SpaceTaskInReach>;
+  const tasks = yield* projections.listSpaceTasks(space.id);
   const ids = yield* projections.listSpaceTaskThreadIds(space.id);
   const shells = yield* Effect.forEach(ids, (id) => projections.getThreadShell(id), {
     concurrency: 8,
   });
-  return shells.filter(
-    (shell): shell is SpaceTaskShell =>
-      shell !== null &&
-      shell.deletedAt === null &&
-      shell.space?.kind === "task" &&
-      shell.space.spaceId === space.id,
-  );
+  const live = shells
+    .filter(
+      (shell): shell is SpaceTaskShell =>
+        shell !== null &&
+        shell.deletedAt === null &&
+        shell.space?.kind === "task" &&
+        shell.space.spaceId === space.id,
+    )
+    .toSorted(
+      (left, right) => right.updatedAt.epochMilliseconds - left.updatedAt.epochMilliseconds,
+    );
+  return tasks
+    .filter((task) => task.deletedAt === null)
+    .map((task) => ({
+      task,
+      threads: live.filter((shell) => shell.space.taskId === task.id),
+    }));
 });
 
-export const taskStatusText = (shell: SpaceTaskShell, members: MemberDirectory) => {
-  const state = spaceTaskState(shell);
-  const owner = shell.ownerId == null ? "nobody" : members.name(shell.ownerId);
-  switch (state.type) {
-    case "not-started":
-      return `Not started, waiting for ${owner}`;
-    case "needs":
-      return `Needs ${state.memberId === null ? owner : members.name(state.memberId)}: ${state.reason}`;
-    case "in-review":
-      return "In review";
+const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
+  todo: "To do",
+  "in-progress": "In progress",
+  "in-review": "In review",
+  done: "Done",
+  canceled: "Canceled",
+};
+
+/** The task's stored status; people (or an agent they asked) set it, never a turn ending. */
+export const taskStatusText = (task: SpaceTask) => STATUS_LABELS[task.status];
+
+const URGENCY: Record<SpaceThreadActivity["type"], number> = {
+  needs: 0,
+  failed: 1,
+  limited: 2,
+  working: 3,
+  stopped: 4,
+  idle: 5,
+};
+
+export const threadActivityText = (shell: OrchestrationV2ThreadShell, members: MemberDirectory) => {
+  const activity = spaceThreadActivity(shell);
+  switch (activity.type) {
+    case "needs": {
+      const who = activity.memberId ?? shell.ownerId;
+      return `needs ${who == null ? "its owner" : members.name(who)}: ${activity.reason}`;
+    }
+    case "failed":
+      return activity.summary === null
+        ? "failed"
+        : `failed: ${capTokens(fence(activity.summary), 30, "…")}`;
+    case "limited":
+      return "hit a usage limit";
     default:
-      return state.type.charAt(0).toUpperCase() + state.type.slice(1);
+      return activity.type;
   }
 };
 
-const isTaskOpen = (shell: SpaceTaskShell) => spaceTaskState(shell).type !== "done";
+const pullRequestText = (shell: OrchestrationV2ThreadShell) => {
+  const prs = (shell.pullRequests ?? []).flatMap((link) =>
+    link.snapshot === null ? [] : [`PR #${link.number} ${link.snapshot.state}`],
+  );
+  return prs.length === 0 ? "" : ` · ${prs.join(", ")}`;
+};
 
-const ledgerLine = (shell: SpaceTaskShell, members: MemberDirectory) =>
-  [
-    shell.id,
-    fence(shell.title),
-    shell.ownerId == null ? "no owner" : members.name(shell.ownerId),
-    taskStatusText(shell, members),
-    timeLabel(DateTime.formatIso(shell.updatedAt)),
+/** The most urgent activity among a task's threads: what someone may need to do next. */
+const mostUrgent = (threads: ReadonlyArray<SpaceTaskShell>) =>
+  threads.toSorted(
+    (left, right) =>
+      URGENCY[spaceThreadActivity(left).type] - URGENCY[spaceThreadActivity(right).type],
+  )[0];
+
+const ledgerLine = (entry: SpaceTaskInReach, members: MemberDirectory, withThreads: boolean) => {
+  const { task, threads } = entry;
+  const urgent = mostUrgent(threads);
+  const head = [
+    task.id,
+    `[${taskStatusText(task)}] ${fence(task.title)}`,
+    members.name(task.ownerId),
+    threads.length === 1 ? "1 thread" : `${threads.length} threads`,
+    ...(urgent === undefined ? [] : [threadActivityText(urgent, members)]),
+    timeLabel(task.updatedAt),
   ].join(" · ");
+  if (!withThreads) return head;
+  return [
+    head,
+    ...threads.map(
+      (shell) =>
+        `  - ${shell.id} "${fence(shell.title)}" · ${shell.ownerId == null ? "no owner" : members.name(shell.ownerId)} · ${threadActivityText(shell, members)}${pullRequestText(shell)}`,
+    ),
+  ].join("\n");
+};
 
 /**
  * A record's one line, from its events; never from what a reply said. Its state can change, so
@@ -146,17 +215,23 @@ const actionLine = (action: SpaceAction, members: MemberDirectory, withState = t
   const state = !withState || action.state === "done" ? "" : ` (${action.state})`;
   const outcome = action.outcome;
   if (outcome?.type === "task.created") {
-    return `Pair created "${fence(outcome.title)}" (${outcome.threadId}) for ${members.name(outcome.ownerId)} · ${asked}${state}`;
+    return `Pair created "${fence(outcome.title)}" (${outcome.taskId}) for ${members.name(outcome.ownerId)} · ${asked}${state}`;
   }
-  if (outcome?.type === "task.message.queued") {
+  if (outcome?.type === "task.status.moved") {
+    return `Pair moved "${fence(outcome.title)}" (${outcome.taskId}) to ${STATUS_LABELS[outcome.to]} · ${asked}${state}`;
+  }
+  if (outcome?.type === "thread.started") {
+    return `Pair started a thread (${outcome.threadId}) on "${fence(outcome.title)}" for ${members.name(action.actorId)}${state}`;
+  }
+  if (outcome?.type === "thread.message.queued") {
     return `Pair queued a message in "${fence(outcome.title)}" for ${members.name(action.actorId)}${state}`;
   }
   if (outcome?.type === "notes.changed") {
     const items = outcome.changes.map((change) => `${change.op} "${fence(change.text)}"`);
     return `Pair changed the notes: ${items.join("; ")} · ${asked}${state}`;
   }
-  if (action.request.type === "task.message") {
-    const task = action.proposal?.snapshot.title ?? action.request.taskId;
+  if (action.request.type === "thread.message") {
+    const task = action.proposal?.snapshot.title ?? action.request.threadId;
     return `Pair asked ${members.name(action.actorId)} to confirm a message to "${fence(task)}"${state}`;
   }
   return `Pair ${action.request.type} · ${asked}${state}`;
@@ -179,9 +254,17 @@ const systemLineText = (entry: Extract<SpaceRoomEntry, { type: "system" }>, m: M
   const line = entry.line;
   switch (line.type) {
     case "task-created":
-      return `${actor} created task ${line.threadId} for ${m.name(line.ownerId)}`;
+      return `${actor} created task ${line.taskId} for ${m.name(line.ownerId)}`;
     case "task-handed-back":
-      return `${actor} handed back task ${line.threadId}: ${fence(line.reason)}`;
+      return `${actor} handed back task ${line.taskId}: ${fence(line.reason)}`;
+    case "task-assigned":
+      return `${actor} assigned task ${line.taskId} to ${m.name(line.to)}`;
+    case "task-status":
+      return `${line.by.type === "agent" ? `A thread's agent (${line.by.threadId})` : line.by.type === "pair" ? "Pair" : actor} moved task ${line.taskId} from ${STATUS_LABELS[line.from]} to ${STATUS_LABELS[line.to]}${line.undoOf === null ? "" : " (Undo)"}`;
+    case "task-thread-added":
+      return `${m.name(line.threadOwnerId)}'s thread ${line.threadId} ${line.via === "start" ? "started on" : "added to"} task ${line.taskId}`;
+    case "task-thread-removed":
+      return `thread ${line.threadId} removed from task ${line.taskId}`;
     case "members-added":
       return `${actor} added ${line.memberIds.map(m.name).join(", ")}`;
     case "member-removed":
@@ -395,16 +478,21 @@ const make = Effect.gen(function* () {
       }\n</room>`;
 
       const tasks = yield* spaceTasksInReach(projections, space, scope.taggerId);
-      const byActivity = (left: SpaceTaskShell, right: SpaceTaskShell) =>
-        right.updatedAt.epochMilliseconds - left.updatedAt.epochMilliseconds;
-      const open = tasks.filter(isTaskOpen).toSorted(byActivity);
-      const done = tasks.filter((task) => !isTaskOpen(task)).toSorted(byActivity);
+      const byActivity = (left: SpaceTaskInReach, right: SpaceTaskInReach) =>
+        epochMillis(right.task.updatedAt) - epochMillis(left.task.updatedAt);
+      const recent = (entry: SpaceTaskInReach) =>
+        now.epochMilliseconds - epochMillis(entry.task.updatedAt) <=
+        CLOSED_DETAIL_DAYS * 86_400_000;
+      const open = tasks.filter((entry) => spaceTaskIsOpen(entry.task.status)).toSorted(byActivity);
+      const done = tasks
+        .filter((entry) => !spaceTaskIsOpen(entry.task.status))
+        .toSorted(byActivity);
       const ledger: Array<string> = [];
       let ledgerTokens = 0;
       const fits = (line: string) =>
         ledgerTokens + estimateTokens(line) <= SPACE_CONTEXT_BUDGETS.tasks;
-      for (const [index, task] of open.entries()) {
-        const line = ledgerLine(task, members);
+      for (const [index, entry] of open.entries()) {
+        const line = ledgerLine(entry, members, true);
         if (!fits(line)) {
           ledger.push(`and ${open.length - index} more open`);
           break;
@@ -413,8 +501,8 @@ const make = Effect.gen(function* () {
         ledgerTokens += estimateTokens(line);
       }
       let shownDone = 0;
-      for (const task of done) {
-        const line = ledgerLine(task, members);
+      for (const entry of done) {
+        const line = ledgerLine(entry, members, recent(entry));
         if (!fits(`${line}\nand ${done.length} done`)) break;
         ledger.push(line);
         ledgerTokens += estimateTokens(line);

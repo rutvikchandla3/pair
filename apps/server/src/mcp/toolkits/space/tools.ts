@@ -1,7 +1,6 @@
 import {
   MemberId,
   MessageId,
-  ModelSelection,
   OrchestratorMcpFailure,
   SpaceBrief,
   SpaceId,
@@ -9,7 +8,10 @@ import {
   SpaceMutation,
   SpaceName,
   SpaceRoomEntry,
-  SpaceTaskBase,
+  SpaceTaskDescription,
+  SpaceTaskId,
+  SpaceTaskStatus,
+  SpaceTaskTitle,
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -39,17 +41,26 @@ const SpaceSummary = Schema.Struct({
 });
 
 const SpaceTaskSummary = Schema.Struct({
-  threadId: ThreadId,
+  taskId: SpaceTaskId,
   title: Schema.String,
-  ownerId: Schema.NullOr(MemberId),
-  /** not-started, working, needs-answer, needs-approval, failed, limited, stopped, in-review, done. */
-  status: Schema.String,
+  ownerId: MemberId,
+  /** todo, in-progress, in-review, done or canceled: set by people, never by a turn ending. */
+  status: SpaceTaskStatus,
+  threads: Schema.Array(
+    Schema.Struct({
+      threadId: ThreadId,
+      title: Schema.String,
+      ownerId: Schema.NullOr(MemberId),
+      /** working, needs-answer, needs-approval, failed, limited, stopped or idle. */
+      activity: Schema.String,
+    }),
+  ),
 });
 
 const SpaceReadTool = Tool.make("t3_space_read", {
   ...shared,
   description:
-    "Read your spaces (shared team rooms with a brief and tasks). Without `spaceId`, lists them; with it, returns the brief, members, recent room posts and every task's status.",
+    "Read your spaces (shared team rooms with a brief and tasks). Without `spaceId`, lists them; with it, returns the brief, members, recent room posts, and every task with its status and its threads' activity.",
   parameters: Schema.Struct({ spaceId: Schema.optionalKey(SpaceId) }),
   success: Schema.Union([
     Schema.Struct({ spaces: Schema.Array(SpaceSummary) }),
@@ -86,17 +97,45 @@ const SpacePostTool = Tool.make("t3_space_post", {
 const SpaceTaskCreateTool = Tool.make("t3_space_task_create", {
   ...shared,
   description:
-    "Create a task in a space: a cloud thread owned by `ownerId`. Your own task starts now; someone else's waits until they start it.",
+    "Create a task in a space, assigned to `ownerId` (you by default), at To do unless `status` says otherwise. It starts no thread.",
   parameters: Schema.Struct({
     spaceId: SpaceId,
-    title: TrimmedNonEmptyString,
-    description: TrimmedNonEmptyString,
-    ownerId: MemberId,
-    modelSelection: ModelSelection,
-    base: SpaceTaskBase,
+    title: SpaceTaskTitle,
+    description: SpaceTaskDescription,
+    ownerId: Schema.optionalKey(MemberId),
+    status: Schema.optionalKey(SpaceTaskStatus),
   }),
-  success: Schema.Struct({ threadId: ThreadId, started: Schema.Boolean }),
+  success: Schema.Struct({ taskId: SpaceTaskId }),
 }).annotate(Tool.Destructive, false);
+
+const SpaceThreadStartTool = Tool.make("t3_space_thread_start", {
+  ...shared,
+  description:
+    "Start a thread on one of your spaces' open tasks, on your own account, in the space's repositories. Its first message is `prompt`, or the task's description. It doesn't change the task's status.",
+  parameters: Schema.Struct({
+    taskId: SpaceTaskId,
+    prompt: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  success: Schema.Struct({ threadId: ThreadId }),
+}).annotate(Tool.Destructive, false);
+
+const SpaceTaskStatusTool = Tool.make("t3_space_task_status", {
+  ...shared,
+  description:
+    "Set the status of the space task this thread is on. Call it only when the user explicitly asks " +
+    'you to change the task\'s status in this turn (for example "move this to In review"). Finishing ' +
+    "the work, passing tests, opening or merging a pull request, or ending your turn is never a reason " +
+    "to call it. Statuses: todo, in-progress, in-review, done, canceled.",
+  parameters: Schema.Struct({ status: SpaceTaskStatus }),
+  success: Schema.Struct({
+    taskId: SpaceTaskId,
+    title: Schema.String,
+    from: SpaceTaskStatus,
+    to: SpaceTaskStatus,
+  }),
+})
+  .annotate(Tool.Title, "Set task status")
+  .annotate(Tool.Destructive, false);
 
 const SpaceManageTool = Tool.make("t3_space_manage", {
   ...shared,
@@ -111,5 +150,7 @@ export const SpaceToolkit = Toolkit.make(
   SpaceReadTool,
   SpacePostTool,
   SpaceTaskCreateTool,
+  SpaceThreadStartTool,
+  SpaceTaskStatusTool,
   SpaceManageTool,
 );

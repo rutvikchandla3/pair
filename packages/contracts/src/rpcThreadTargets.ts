@@ -264,6 +264,8 @@ export const RPC_OUTPUT_FILTERED: { readonly [M in WsMethod]?: string } = {
   [WS_METHODS.spacesGet]: "space/SpaceService.ts get: a non-member sees only the space's name",
   [WS_METHODS.spacesList]: "space/SpaceService.ts list: the caller's spaces, whose rooms they open",
   [WS_METHODS.spacesMutate]: "space/SpaceService.ts mutate: null once the caller is not a member",
+  [WS_METHODS.spacesTaskGet]:
+    "space/SpaceService.ts taskGet: members only, and only the task's threads the caller may open",
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]:
     "orchestration-v2/MemberThreadView.ts assertViewerThread, makeThreadEventView",
 };

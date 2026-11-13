@@ -225,17 +225,6 @@ const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission
   }
   if (command.type !== "thread.delete" || command.actorId === undefined) return;
   if (yield* actorOwnsThreadOrAdmin(command.actorId, command.threadId)) return;
-  // A space task's creator may delete it until its first turn: nothing ran and nothing is lost.
-  const shell = yield* (yield* ThreadManagement.ThreadManagementService).getThreadShell(
-    command.threadId,
-  );
-  if (
-    shell?.space?.kind === "task" &&
-    shell.space.createdBy === command.actorId &&
-    shell.latestRunId === null
-  ) {
-    return;
-  }
   return yield* new ThreadMessageIntakeForbiddenError({
     threadId: command.threadId,
     memberId: command.actorId,

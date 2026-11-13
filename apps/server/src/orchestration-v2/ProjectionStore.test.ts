@@ -32,6 +32,7 @@ import {
   RunId,
   SandboxId,
   SpaceId,
+  SpaceTaskId,
   ThreadId,
   TurnItemId,
   type ThreadPullRequestLink,
@@ -2235,9 +2236,10 @@ it.effect("SQL list older settled threads below a cursor", () =>
       space: {
         kind: "task",
         spaceId,
-        createdBy: alice,
-        description: "Fix the build",
-        base: { baseRef: "main" },
+        taskId: SpaceTaskId.make("stk_0123456789abcdef0123"),
+        linkedBy: bob,
+        linkedAt: DateTime.formatIso(now),
+        via: "attach",
       },
     });
     yield* assertShellIndexCoversShells();
@@ -2290,11 +2292,11 @@ it.effect("SQL list older settled threads below a cursor", () =>
         roomThreadId: id("space-room"),
         name: "Renamed",
         brief: "",
+        repositoryIds: [ProjectId.make("project:space")],
         projectId: ProjectId.make("project:space"),
         ownerId: alice,
         members: [],
         joinRequests: [],
-        pairBilling: { type: "team" },
         createdBy: alice,
         createdAt: DateTime.formatIso(now),
         updatedAt: renamedAt,
@@ -2308,6 +2310,43 @@ it.effect("SQL list older settled threads below a cursor", () =>
       revision: renamedAt,
       latestEntry: { by: alice, at: DateTime.formatIso(postedAt) },
     });
+    // A task write refetches the list too, but its room line is what moves the shell.
+    const taskId = SpaceTaskId.make("stk_0123456789abcdef0123");
+    const taskAt = DateTime.formatIso(at(27));
+    yield* store.apply({
+      id: EventId.make("event:older:space-room:task"),
+      type: "space.task.updated",
+      threadId: id("space-room"),
+      occurredAt: at(27),
+      payload: {
+        id: taskId,
+        spaceId,
+        title: "Fix the build",
+        description: "It is red.",
+        ownerId: bob,
+        createdBy: alice,
+        createdAt: taskAt,
+        assignedBy: alice,
+        status: "todo",
+        statusVersion: 1,
+        statusChangedAt: taskAt,
+        statusChangedBy: { type: "member", memberId: alice },
+        handedBack: null,
+        remindedAt: null,
+        via: null,
+        updatedAt: taskAt,
+        deletedAt: null,
+      },
+    });
+    const taskShell = yield* store.getThreadShell(id("space-room"));
+    assert.deepEqual(taskShell?.space?.kind === "room" ? taskShell.space.revision : null, taskAt);
+    assert.deepEqual(taskShell?.updatedAt, postedAt);
+    assert.deepEqual((yield* store.getSpaceTask(taskId))?.ownerId, bob);
+    assert.deepEqual(
+      (yield* store.listOpenSpaceTasks([spaceId])).map((open) => open.id),
+      [taskId],
+    );
+    assert.deepEqual(yield* store.listSpaceTaskThreadIdsFor(taskId), [id("space-task")]);
     // A removed member opens nothing, even a team machine or their own thread.
     yield* sql`UPDATE members SET removed_at = ${DateTime.formatIso(now)} WHERE id = ${bob}`;
     assert.deepEqual(yield* pageIds(bob, null), []);

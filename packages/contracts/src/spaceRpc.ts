@@ -15,15 +15,21 @@ import { OrchestrationV2ThreadShell } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import {
   Space,
+  SpaceActionId,
   SpaceBrief,
   SpaceId,
   SpaceMention,
   SpaceName,
-  SpacePairBilling,
+  SpaceRepositoryIds,
   SpaceRoomEntry,
+  SpaceTask,
   SpaceTaskBase,
+  SpaceTaskDescription,
+  SpaceTaskId,
+  SpaceTaskStatus,
+  SpaceTaskTitle,
 } from "./space.ts";
-import { SpaceAction, SpaceActionId, SpaceNoteChange, SpaceNoteItem } from "./spaceAgent.ts";
+import { SpaceAction, SpaceNoteChange, SpaceNoteItem } from "./spaceAgent.ts";
 
 export const SPACE_ROOM_PAGE_LIMIT = 200;
 
@@ -41,7 +47,6 @@ export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
     "no-request",
     "quote-not-found",
     "not-a-task",
-    "task-started",
     "not-task-creator",
     "not-task-owner",
     "own-task",
@@ -54,16 +59,23 @@ export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
     "note-stale",
     "bad-source",
     "removed-source",
-    "unstarted",
     "over-limit",
     "not-allowed",
     "reply-not-found",
+    "no-account",
+    "not-thread-owner",
+    "not-linkable",
+    "too-many-repositories",
     "failed",
   ]),
   message: Schema.String,
 }) {}
 
-export const SpaceListResult = Schema.Struct({ spaces: Schema.Array(Space) });
+/** `tasks`: the open tasks of the caller's non-archived spaces, for the sidebar. */
+export const SpaceListResult = Schema.Struct({
+  spaces: Schema.Array(Space),
+  tasks: Schema.Array(SpaceTask),
+});
 export type SpaceListResult = typeof SpaceListResult.Type;
 
 export const SpaceGetInput = Schema.Struct({
@@ -81,8 +93,10 @@ export const SpaceView = Schema.Union([
     space: Space,
     entries: Schema.Array(SpaceRoomEntry),
     hasMoreEntries: Schema.Boolean,
-    /** The space's tasks, newest first, as the viewer may open them. */
-    tasks: Schema.Array(OrchestrationV2ThreadShell),
+    /** Every task that isn't deleted; `space.task.updated` events update them. */
+    tasks: Schema.Array(SpaceTask),
+    /** The threads on those tasks that the viewer may open. */
+    threads: Schema.Array(OrchestrationV2ThreadShell),
     /** Pair's notes; `space.notes.changed` events update them. */
     notes: Schema.Array(SpaceNoteItem),
     /** Records, confirm cards and receipts, newest last; `space.action.updated` updates them. */
@@ -100,16 +114,48 @@ export const SpaceView = Schema.Union([
 ]);
 export type SpaceView = typeof SpaceView.Type;
 
+export const SpaceTaskGetInput = Schema.Struct({ spaceId: SpaceId, taskId: SpaceTaskId });
+export type SpaceTaskGetInput = typeof SpaceTaskGetInput.Type;
+
+export const SPACE_TASK_ENTRY_LIMIT = 100;
+
+export const SpaceTaskView = Schema.Struct({
+  task: SpaceTask,
+  threads: Schema.Array(OrchestrationV2ThreadShell),
+  /** This task's room lines, the newest `SPACE_TASK_ENTRY_LIMIT`, oldest first. */
+  entries: Schema.Array(SpaceRoomEntry),
+});
+export type SpaceTaskView = typeof SpaceTaskView.Type;
+
+export const SpaceWorkspacePreviewInput = Schema.Struct({
+  repositoryIds: SpaceRepositoryIds,
+  spaceName: SpaceName,
+  workspaceName: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Space settings; omitted in New space. */
+  spaceId: Schema.optionalKey(SpaceId),
+});
+export type SpaceWorkspacePreviewInput = typeof SpaceWorkspacePreviewInput.Type;
+
+/** Where the space's threads will run: one repository, a matching workspace, or a new one. */
+export const SpaceWorkspacePreview = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("project"), projectId: ProjectId, title: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("reuse"), projectId: ProjectId, title: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("create"), title: Schema.String }),
+]);
+export type SpaceWorkspacePreview = typeof SpaceWorkspacePreview.Type;
+
 const SpaceRef = { spaceId: SpaceId } as const;
+const SpaceTaskRef = { spaceId: SpaceId, taskId: SpaceTaskId } as const;
 
 export const SpaceMutation = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("create"),
     name: SpaceName,
     brief: SpaceBrief,
-    projectId: ProjectId,
+    repositoryIds: SpaceRepositoryIds,
+    /** The new workspace's name when 2+ repositories match none; the space's name by default. */
+    workspaceName: Schema.optionalKey(TrimmedNonEmptyString),
     memberIds: Schema.Array(MemberId),
-    pairBilling: Schema.optionalKey(SpacePairBilling),
     /** The room thread's model; `@pair` replies may pick their own. */
     modelSelection: ModelSelection,
   }),
@@ -118,8 +164,8 @@ export const SpaceMutation = Schema.Union([
     ...SpaceRef,
     name: Schema.optionalKey(SpaceName),
     brief: Schema.optionalKey(SpaceBrief),
-    projectId: Schema.optionalKey(ProjectId),
-    pairBilling: Schema.optionalKey(SpacePairBilling),
+    repositoryIds: Schema.optionalKey(SpaceRepositoryIds),
+    workspaceName: Schema.optionalKey(TrimmedNonEmptyString),
   }),
   Schema.Struct({ type: Schema.Literal("archive"), ...SpaceRef }),
   Schema.Struct({ type: Schema.Literal("unarchive"), ...SpaceRef }),
@@ -130,9 +176,19 @@ export const SpaceMutation = Schema.Union([
     memberIds: Schema.Array(MemberId),
     restore: Schema.optionalKey(Schema.Boolean),
   }),
-  Schema.Struct({ type: Schema.Literal("member.remove"), ...SpaceRef, memberId: MemberId }),
+  /** `reassignTo` takes the removed member's open tasks. */
+  Schema.Struct({
+    type: Schema.Literal("member.remove"),
+    ...SpaceRef,
+    memberId: MemberId,
+    reassignTo: Schema.optionalKey(MemberId),
+  }),
   Schema.Struct({ type: Schema.Literal("owner.transfer"), ...SpaceRef, ownerId: MemberId }),
-  Schema.Struct({ type: Schema.Literal("leave"), ...SpaceRef }),
+  Schema.Struct({
+    type: Schema.Literal("leave"),
+    ...SpaceRef,
+    reassignTo: Schema.optionalKey(MemberId),
+  }),
   Schema.Struct({ type: Schema.Literal("join.request"), ...SpaceRef }),
   Schema.Struct({ type: Schema.Literal("join.cancel"), ...SpaceRef }),
 ]);
@@ -155,53 +211,71 @@ export type SpacePostInput = typeof SpacePostInput.Type;
 export const SpacePostResult = Schema.Struct({ entry: SpaceRoomEntry });
 export type SpacePostResult = typeof SpacePostResult.Type;
 
+/** A new thread on a task, on the caller's own account. */
+export const SpaceThreadStart = Schema.Struct({
+  /** Runs in: a repository or a workspace. */
+  projectId: ProjectId,
+  modelSelection: ModelSelection,
+  base: SpaceTaskBase,
+  /** The first message; the task's description, verbatim, by default. */
+  text: Schema.optionalKey(TrimmedNonEmptyString),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  interactionMode: Schema.optionalKey(ProviderInteractionMode),
+});
+export type SpaceThreadStart = typeof SpaceThreadStart.Type;
+
 export const SpaceTaskAction = Schema.Union([
-  /** Assigned to the caller, it starts at once; to someone else, it waits for them. */
+  /** With `start`, a thread starts too; with no usable account the task is still created. */
   Schema.Struct({
     type: Schema.Literal("create"),
     ...SpaceRef,
-    title: TrimmedNonEmptyString,
-    description: TrimmedNonEmptyString,
+    title: SpaceTaskTitle,
+    description: SpaceTaskDescription,
     ownerId: MemberId,
-    modelSelection: ModelSelection,
-    base: SpaceTaskBase,
-    runtimeMode: Schema.optionalKey(RuntimeMode),
-    interactionMode: Schema.optionalKey(ProviderInteractionMode),
+    status: Schema.optionalKey(SpaceTaskStatus),
+    start: Schema.optionalKey(SpaceThreadStart),
   }),
-  /** The owner starts it on their own account, with the model they pick; `text` is the first message, the description by default. */
-  Schema.Struct({
-    type: Schema.Literal("start"),
-    threadId: ThreadId,
-    modelSelection: Schema.optionalKey(ModelSelection),
-    text: Schema.optionalKey(TrimmedNonEmptyString),
-  }),
+  Schema.Struct({ type: Schema.Literal("start"), ...SpaceTaskRef, ...SpaceThreadStart.fields }),
   Schema.Struct({
     type: Schema.Literal("edit"),
-    threadId: ThreadId,
-    title: Schema.optionalKey(TrimmedNonEmptyString),
-    description: Schema.optionalKey(TrimmedNonEmptyString),
-    base: Schema.optionalKey(SpaceTaskBase),
+    ...SpaceTaskRef,
+    title: Schema.optionalKey(SpaceTaskTitle),
+    description: Schema.optionalKey(SpaceTaskDescription),
   }),
-  /** "Can't take it": back to its creator, with a line in the room. */
+  Schema.Struct({ type: Schema.Literal("reassign"), ...SpaceTaskRef, ownerId: MemberId }),
+  /** "Can't take it": back to whoever assigned it, with a line in the room. */
   Schema.Struct({
     type: Schema.Literal("hand-back"),
-    threadId: ThreadId,
+    ...SpaceTaskRef,
     reason: TrimmedNonEmptyString,
   }),
-  Schema.Struct({ type: Schema.Literal("remind"), threadId: ThreadId }),
-  Schema.Struct({ type: Schema.Literal("reassign"), threadId: ThreadId, ownerId: MemberId }),
+  Schema.Struct({ type: Schema.Literal("remind"), ...SpaceTaskRef }),
+  Schema.Struct({ type: Schema.Literal("status"), ...SpaceTaskRef, status: SpaceTaskStatus }),
+  /** Undo an agent's or `@pair`'s move; `entryId` is its `task-status` line. */
+  Schema.Struct({ type: Schema.Literal("status.undo"), ...SpaceTaskRef, entryId: MessageId }),
+  /** Add the caller's thread to a task, move it to another, or remove it (`target: null`). */
+  Schema.Struct({
+    type: Schema.Literal("thread.link"),
+    threadId: ThreadId,
+    target: Schema.NullOr(Schema.Struct(SpaceTaskRef)),
+  }),
 ]);
 export type SpaceTaskAction = typeof SpaceTaskAction.Type;
 
 export const SpaceTaskResult = Schema.Struct({
-  threadId: ThreadId,
-  /** Set once the task's first turn was asked for. */
+  /** The task after the change; null after a link removal. */
+  task: Schema.NullOr(SpaceTask),
+  threadId: Schema.optionalKey(ThreadId),
+  /** Set once a thread's first turn was asked for. */
   started: Schema.Boolean,
   sequence: Schema.optionalKey(NonNegativeInt),
 });
 export type SpaceTaskResult = typeof SpaceTaskResult.Type;
 
-/** Answer a confirm card or Undo a record. Only the action's tagger may. */
+/**
+ * Answer a confirm card or Undo a record. The tagger may undo messages and notes; any member may
+ * undo a created task. Status Undo is `spaces.task` `status.undo`, not this.
+ */
 export const SpaceActionInput = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("answer"),

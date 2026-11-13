@@ -12,6 +12,7 @@ import {
   SandboxId,
   type Space,
   SpaceId,
+  SpaceTaskId,
   type SandboxAccess,
   type SandboxAccessChange,
   ThreadId,
@@ -688,6 +689,71 @@ describe("ThreadAccess", () => {
       assert.deepStrictEqual(moved.after, { sandboxId: legacyId, ownerId: bob });
       assert.strictEqual(access.movedAt(ownerThreadId, moved.sequence), moved);
       assert.isUndefined(access.movedAt(ownerThreadId, assigned.sequence));
+    }).pipe(Effect.provide(makeLayer([]))),
+  );
+
+  it.effect("moves a thread as it is attached to a task, moved across spaces and detached", () =>
+    Effect.gen(function* () {
+      const access = yield* ThreadAccess.ThreadAccess;
+      const index = yield* ThreadAccess.ThreadAccessIndex;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* seed;
+      const otherSpaceId = SpaceId.make("spc_fedcba9876543210fedc");
+      for (const [sequence, id, memberId] of [
+        [1, spaceId, carol],
+        [2, otherSpaceId, bob],
+      ] as const) {
+        yield* index.observeCommitted([
+          {
+            sequence,
+            commandId: null,
+            event: {
+              ...at(`space:${id}`),
+              type: "space.updated",
+              payload: {
+                id,
+                members: [{ memberId, joinedAt: t0, addedBy: alice, removedAt: null }],
+              } as unknown as Space,
+            },
+          },
+        ]);
+      }
+      const moves = yield* access.moves.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const link = (id: SpaceId, taskId: string) => ({
+        kind: "task" as const,
+        spaceId: id,
+        taskId: SpaceTaskId.make(taskId),
+        linkedBy: alice,
+        linkedAt: "2026-11-10T10:00:00.000Z",
+        via: "attach" as const,
+      });
+      const update = (id: string, payload: typeof thread) =>
+        sink.write({ events: [{ ...at(id), type: "thread.metadata-updated", payload }] });
+      yield* update("attach", { ...thread, space: link(spaceId, "stk_0123456789abcdef0123") });
+      yield* update("move", { ...thread, space: link(otherSpaceId, "stk_fedcba9876543210fedc") });
+      yield* update("detach", thread);
+      const steps = yield* Fiber.join(moves);
+      const readers = (target: ThreadAccess.ThreadAccessTarget) =>
+        [alice, bob, carol].filter((memberId) => access.allowsThread(memberId, target));
+      assert.deepStrictEqual(
+        steps.map((move) => [readers(move.before), readers(move.after)]),
+        [
+          [[alice], [alice, carol]],
+          [
+            [alice, carol],
+            [alice, bob],
+          ],
+          [[alice, bob], [alice]],
+        ],
+      );
+      assert.deepStrictEqual(
+        steps.map((move) => move.after.space?.spaceId),
+        [spaceId, otherSpaceId, undefined],
+      );
     }).pipe(Effect.provide(makeLayer([]))),
   );
 

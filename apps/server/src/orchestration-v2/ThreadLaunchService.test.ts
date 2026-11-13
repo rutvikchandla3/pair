@@ -2959,6 +2959,40 @@ it.effect("launches a cloud thread and releases it on runner hello", () => {
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("starts a cloud thread with no base from the repository's default branch", () => {
+  const harness = cloudHarness({
+    defaultBranch: () => Effect.succeed("master"),
+    hasCommit: ({ refName }) => Effect.succeed(refName === "refs/remotes/origin/master"),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const commandId = CommandId.make("command:launch:cloud-default-base");
+    const launched = yield* launches.launch({
+      ...launchInput({
+        command: commandId,
+        thread: "thread:launch:cloud-default-base",
+        message: "Fix the build",
+      }),
+      workspaceStrategy: { type: "cloud" },
+    });
+    assert.deepInclude(launched.projection.runs[0] ?? {}, {
+      workspacePreparation: { type: "worktree", baseRef: "master" },
+    });
+    const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+    yield* threads.dispatch({
+      type: "sandbox.runner.attached",
+      commandId: CommandId.make(`sandbox-attached:${sandboxId}:1:boot`),
+      threadId: launched.threadId,
+      sandboxId,
+      generation: 1,
+      runnerBootId: "boot",
+    });
+    yield* runReaching(launched.threadId, "starting");
+    assert.equal(harness.createWorktree.mock.calls[0]?.[0].refName, "origin/master");
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each([
   { name: "on its driver boots it", driverId: "docker", boots: true },
   { name: "on another driver is skipped", driverId: "fly", boots: false },

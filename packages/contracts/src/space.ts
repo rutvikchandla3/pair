@@ -1,11 +1,14 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
   IsoDateTime,
   MemberId,
   MessageId,
+  NonNegativeInt,
   PositiveInt,
   ProjectId,
+  RunId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -37,12 +40,11 @@ export const SpaceJoinRequest = Schema.Struct({
 });
 export type SpaceJoinRequest = typeof SpaceJoinRequest.Type;
 
-/** Whose Claude account pays for `@pair` replies. */
-export const SpacePairBilling = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("team") }),
-  Schema.Struct({ type: Schema.Literal("member"), memberId: MemberId }),
-]);
-export type SpacePairBilling = typeof SpacePairBilling.Type;
+export const SPACE_MAX_REPOSITORIES = 8;
+export const SpaceRepositoryIds = Schema.Array(ProjectId).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(SPACE_MAX_REPOSITORIES),
+);
 
 export const SpaceMembershipChange = Schema.Struct({
   added: Schema.Array(MemberId),
@@ -56,11 +58,13 @@ export const Space = Schema.Struct({
   roomThreadId: ThreadId,
   name: SpaceName,
   brief: SpaceBrief,
+  /** 1..8 repository projects, in the order picked. */
+  repositoryIds: SpaceRepositoryIds,
+  /** Where new threads run by default: the one repository, or the resolved workspace. */
   projectId: ProjectId,
   ownerId: MemberId,
   members: Schema.Array(SpaceMember),
   joinRequests: Schema.Array(SpaceJoinRequest),
-  pairBilling: SpacePairBilling,
   createdBy: MemberId,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -76,9 +80,19 @@ export const SpaceMention = Schema.Union([
 ]);
 export type SpaceMention = typeof SpaceMention.Type;
 
-/** Where a task's cloud checkout starts: a new branch from `baseRef`, or an existing one. */
+export const SpaceActionId = TrimmedNonEmptyString.pipe(Schema.brand("SpaceActionId"));
+export type SpaceActionId = typeof SpaceActionId.Type;
+
+/** Pair acting for the tagger, within one reply: the run and the post that tagged it. */
+export const SpacePairVia = Schema.Struct({ runId: RunId, roomMessageId: MessageId });
+export type SpacePairVia = typeof SpacePairVia.Type;
+
+/**
+ * Where a thread's cloud checkout starts: a new branch from `baseRef`, or an existing one. No
+ * `baseRef` is the repository's default branch; a workspace always starts from its default branches.
+ */
 export const SpaceTaskBase = Schema.Struct({
-  baseRef: TrimmedNonEmptyString,
+  baseRef: Schema.optionalKey(TrimmedNonEmptyString),
   branch: Schema.optionalKey(TrimmedNonEmptyString),
   existingBranch: Schema.optionalKey(Schema.Literal(true)),
   /** "Continue pair-be#482": `branch` is that pull request's head. */
@@ -95,47 +109,151 @@ export const SpaceTaskHandBack = Schema.Struct({
 });
 export type SpaceTaskHandBack = typeof SpaceTaskHandBack.Type;
 
-/** A thread's place in a space: its room, or one of its tasks. */
+export const SpaceTaskId = TrimmedNonEmptyString.check(Schema.isPattern(/^stk_[0-9a-f]{20}$/)).pipe(
+  Schema.brand("SpaceTaskId"),
+);
+export type SpaceTaskId = typeof SpaceTaskId.Type;
+
+export const SpaceTaskStatus = Schema.Literals([
+  "todo",
+  "in-progress",
+  "in-review",
+  "done",
+  "canceled",
+]);
+export type SpaceTaskStatus = typeof SpaceTaskStatus.Type;
+
+export const SpaceTaskTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
+export const SpaceTaskDescription = TrimmedNonEmptyString.check(Schema.isMaxLength(20_000));
+
+/** Who moved a status: a person, a thread's agent, or `@pair`. */
+export const SpaceStatusActor = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("member"), memberId: MemberId }),
+  Schema.Struct({ type: Schema.Literal("agent"), threadId: ThreadId }),
+  Schema.Struct({ type: Schema.Literal("pair"), runId: RunId, actionId: SpaceActionId }),
+]);
+export type SpaceStatusActor = typeof SpaceStatusActor.Type;
+
+/** Lives on the room thread's stream. Threads point at it (`ThreadSpace`), so it lists none. */
+export const SpaceTask = Schema.Struct({
+  id: SpaceTaskId,
+  spaceId: SpaceId,
+  title: SpaceTaskTitle,
+  description: SpaceTaskDescription,
+  ownerId: MemberId,
+  createdBy: MemberId,
+  createdAt: IsoDateTime,
+  /** Who last gave it to `ownerId`; null when the owner took it themselves. */
+  assignedBy: Schema.NullOr(MemberId),
+  status: SpaceTaskStatus,
+  /** +1 on every status write, Undo included; an Undo applies only while it still matches. */
+  statusVersion: PositiveInt,
+  statusChangedAt: IsoDateTime,
+  statusChangedBy: SpaceStatusActor,
+  handedBack: Schema.NullOr(SpaceTaskHandBack),
+  remindedAt: Schema.NullOr(IsoDateTime),
+  /** Set when `@pair` created it; that action's Undo deletes the task. */
+  via: Schema.NullOr(SpacePairVia),
+  updatedAt: IsoDateTime,
+  /** Only `@pair`'s created-task Undo deletes; people cancel instead. */
+  deletedAt: Schema.NullOr(IsoDateTime),
+});
+export type SpaceTask = typeof SpaceTask.Type;
+
+export function spaceTaskIsOpen(status: SpaceTaskStatus): boolean {
+  return status === "todo" || status === "in-progress" || status === "in-review";
+}
+
+export const ThreadSpaceRoom = Schema.Struct({
+  kind: Schema.Literal("room"),
+  spaceId: SpaceId,
+  /** Bumped by every space and task write, so each member's sidebar refetches `spaces.list`. */
+  revision: Schema.optionalKey(IsoDateTime),
+  /** Who wrote the room's latest line, and when; a member's own line isn't unread. */
+  latestEntry: Schema.optionalKey(Schema.Struct({ by: MemberId, at: IsoDateTime })),
+});
+
+/** A thread's place in a space: its room, or a link to one of its tasks. */
 export const ThreadSpace = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("room"),
-    spaceId: SpaceId,
-    /** The space's `updatedAt`, so a member's shell changes when it is renamed or archived. */
-    revision: Schema.optionalKey(IsoDateTime),
-    /** Who wrote the room's latest line, and when; a member's own line isn't unread. */
-    latestEntry: Schema.optionalKey(Schema.Struct({ by: MemberId, at: IsoDateTime })),
-  }),
+  ThreadSpaceRoom,
   Schema.Struct({
     kind: Schema.Literal("task"),
     spaceId: SpaceId,
-    createdBy: MemberId,
-    description: TrimmedNonEmptyString,
-    base: SpaceTaskBase,
-    handedBack: Schema.optionalKey(SpaceTaskHandBack),
-    remindedAt: Schema.optionalKey(IsoDateTime),
+    taskId: SpaceTaskId,
+    linkedBy: MemberId,
+    linkedAt: IsoDateTime,
+    /** "started this thread on" vs "added this thread to". */
+    via: Schema.Literals(["start", "attach"]),
   }),
 ]);
 export type ThreadSpace = typeof ThreadSpace.Type;
 export type ThreadSpaceTask = Extract<ThreadSpace, { readonly kind: "task" }>;
 
+/** Lines from before v2 carry neither; read them as "nothing reassigned". */
+const SpaceReassignFields = {
+  reassignedTo: Schema.NullOr(MemberId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  tasks: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+} as const;
+
 export const SpaceSystemLine = Schema.Union([
   Schema.Struct({ type: Schema.Literal("created") }),
   Schema.Struct({ type: Schema.Literal("renamed"), name: SpaceName }),
   Schema.Struct({ type: Schema.Literal("brief-edited") }),
-  Schema.Struct({ type: Schema.Literal("project-changed"), projectId: ProjectId }),
-  Schema.Struct({ type: Schema.Literal("billing-changed"), pairBilling: SpacePairBilling }),
+  Schema.Struct({
+    type: Schema.Literal("repositories-changed"),
+    repositoryIds: Schema.Array(ProjectId),
+    projectId: ProjectId,
+  }),
   Schema.Struct({ type: Schema.Literal("members-added"), memberIds: Schema.Array(MemberId) }),
   Schema.Struct({ type: Schema.Literal("member-restored"), memberId: MemberId }),
-  Schema.Struct({ type: Schema.Literal("member-removed"), memberId: MemberId }),
-  Schema.Struct({ type: Schema.Literal("left") }),
+  Schema.Struct({
+    type: Schema.Literal("member-removed"),
+    memberId: MemberId,
+    ...SpaceReassignFields,
+  }),
+  Schema.Struct({ type: Schema.Literal("left"), ...SpaceReassignFields }),
   Schema.Struct({ type: Schema.Literal("owner-transferred"), ownerId: MemberId }),
   Schema.Struct({ type: Schema.Literal("archived") }),
   Schema.Struct({ type: Schema.Literal("unarchived") }),
-  Schema.Struct({ type: Schema.Literal("task-created"), threadId: ThreadId, ownerId: MemberId }),
+  Schema.Struct({ type: Schema.Literal("task-created"), taskId: SpaceTaskId, ownerId: MemberId }),
   Schema.Struct({
     type: Schema.Literal("task-handed-back"),
-    threadId: ThreadId,
+    taskId: SpaceTaskId,
     reason: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("task-assigned"),
+    taskId: SpaceTaskId,
+    from: Schema.NullOr(MemberId),
+    to: MemberId,
+  }),
+  /** Title or description. */
+  Schema.Struct({ type: Schema.Literal("task-edited"), taskId: SpaceTaskId }),
+  /** The entry's `actorId` is the mover, or the asker for an agent's or `@pair`'s move. */
+  Schema.Struct({
+    type: Schema.Literal("task-status"),
+    taskId: SpaceTaskId,
+    from: SpaceTaskStatus,
+    to: SpaceTaskStatus,
+    by: SpaceStatusActor,
+    askedBy: Schema.NullOr(MemberId),
+    /** The task's `statusVersion` after this move. */
+    version: PositiveInt,
+    /** Set on an Undo: the line it undid. */
+    undoOf: Schema.NullOr(MessageId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("task-thread-added"),
+    taskId: SpaceTaskId,
+    threadId: ThreadId,
+    threadOwnerId: MemberId,
+    via: Schema.Literals(["start", "attach", "move"]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("task-thread-removed"),
+    taskId: SpaceTaskId,
+    threadId: ThreadId,
+    threadOwnerId: MemberId,
   }),
 ]);
 export type SpaceSystemLine = typeof SpaceSystemLine.Type;

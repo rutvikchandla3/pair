@@ -15,6 +15,9 @@ import {
   SandboxId,
   type Space,
   SpaceId,
+  type SpaceSystemLine,
+  type SpaceTask,
+  SpaceTaskId,
   type TeamImageBuild,
   TeamImageBuildId,
   ComputeDriverId,
@@ -419,38 +422,80 @@ describe("MemberPushNotifier", () => {
   it.effect("pushes a space task's assignment to its owner and a Remind only to them", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({});
-      const task = (change: { readonly remindedAt?: string } = {}) =>
-        appThread({
-          ownerId: CAROL.id,
-          space: {
-            kind: "task",
+      const at = DateTime.makeUnsafe(NOW);
+      const taskId = SpaceTaskId.make("stk_0123456789abcdef0123");
+      const task = (change: Partial<SpaceTask> = {}): SpaceTask => ({
+        id: taskId,
+        spaceId: SPACE_ID,
+        title: "Fix the invoice export",
+        description: "Fix it",
+        ownerId: CAROL.id,
+        createdBy: ALICE.id,
+        createdAt: NOW,
+        assignedBy: ALICE.id,
+        status: "todo",
+        statusVersion: 1,
+        statusChangedAt: NOW,
+        statusChangedBy: { type: "member", memberId: ALICE.id },
+        handedBack: null,
+        remindedAt: null,
+        via: null,
+        updatedAt: NOW,
+        deletedAt: null,
+        ...change,
+      });
+      const updated = (id: string, payload: SpaceTask) =>
+        harness.emit({
+          id: EventId.make(id),
+          type: "space.task.updated",
+          threadId: ROOM_ID,
+          occurredAt: at,
+          payload,
+        });
+      const line = (id: string, actorId: MemberId, value: SpaceSystemLine) =>
+        harness.emit({
+          id: EventId.make(id),
+          type: "space.room-entry",
+          threadId: ROOM_ID,
+          occurredAt: at,
+          payload: {
+            type: "system",
+            id: MessageId.make(id),
             spaceId: SPACE_ID,
-            createdBy: ALICE.id,
-            description: "Fix it",
-            base: { baseRef: "main" },
-            ...change,
+            actorId,
+            line: value,
+            createdAt: NOW,
           },
         });
-      const at = DateTime.makeUnsafe(NOW);
-      yield* harness.emit({
-        id: EventId.make("e-task"),
-        type: "thread.created",
-        threadId: THREAD_ID,
-        occurredAt: at,
-        payload: task(),
+      yield* updated("e-task", task());
+      yield* line("e-created", ALICE.id, { type: "task-created", taskId, ownerId: CAROL.id });
+      // A status move keeps the old remindedAt; only the Remind write stamps it now.
+      yield* updated("e-remind", task({ remindedAt: LATER, updatedAt: LATER }));
+      yield* updated("e-status", task({ remindedAt: LATER, status: "in-progress" }));
+      yield* updated("e-reassign", task({ ownerId: BOB.id, assignedBy: CAROL.id }));
+      yield* line("e-assigned", CAROL.id, {
+        type: "task-assigned",
+        taskId,
+        from: CAROL.id,
+        to: BOB.id,
       });
-      yield* harness.emit({
-        id: EventId.make("e-remind"),
-        type: "thread.metadata-updated",
-        threadId: THREAD_ID,
-        occurredAt: at,
-        payload: task({ remindedAt: NOW }),
+      // Taking a task yourself tells nobody.
+      yield* updated("e-take", task({ ownerId: CAROL.id, assignedBy: null }));
+      yield* line("e-took", CAROL.id, {
+        type: "task-assigned",
+        taskId,
+        from: BOB.id,
+        to: CAROL.id,
       });
+      const link = `/spaces/env-1/${SPACE_ID}/tasks/${taskId}`;
       assert.deepStrictEqual(
-        harness.requests.flatMap((batch) => batch.map((m) => [m.to, m.title])),
+        harness.requests.flatMap((batch) =>
+          batch.map((m) => [m.to, m.title, m.body, m.data.deepLink]),
+        ),
         [
-          [token(CAROL), "Assigned to you"],
-          [token(CAROL), "Alice reminded you"],
+          [token(CAROL), "Alice assigned you", "Fix the invoice export", link],
+          [token(CAROL), "Alice reminded you", "Fix the invoice export", link],
+          [token(BOB), "Carol assigned you", "Fix the invoice export", link],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -465,6 +510,7 @@ describe("MemberPushNotifier", () => {
         roomThreadId: ROOM_ID,
         name: "Billing",
         brief: "Invoices",
+        repositoryIds: [ProjectId.make("project-1")],
         projectId: ProjectId.make("project-1"),
         ownerId: ALICE.id,
         members: [ALICE, BOB, CAROL].map((record) => ({
@@ -474,7 +520,6 @@ describe("MemberPushNotifier", () => {
           removedAt: null,
         })),
         joinRequests: [],
-        pairBilling: { type: "team" },
         createdBy: ALICE.id,
         createdAt: NOW,
         updatedAt: NOW,

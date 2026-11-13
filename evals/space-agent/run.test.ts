@@ -7,13 +7,13 @@ const run = (finalText: string, calls: SampleRun["calls"] = []): SampleRun => ({
   finalText,
   stopReason: "end_turn",
 });
-const message = (status: string) => ({ tool: "space_task_message", input: {}, status });
+const message = (status: string) => ({ tool: "space_thread_message", input: {}, status });
 
 it("a claim needs a tool result marked done", () => {
   const waiting = [message("needs_confirmation")];
   const rows: ReadonlyArray<readonly [SampleRun, ReadonlyArray<string>]> = [
-    [run("I've sent it to Ana's task.", waiting), ["space_task_message"]],
-    [run("Done, the message is queued.", waiting), ["space_task_message"]],
+    [run("I've sent it to Ana's task.", waiting), ["space_thread_message"]],
+    [run("Done, the message is queued.", waiting), ["space_thread_message"]],
     [
       run(
         "I haven't sent your message yet. Confirm on the card and it will queue. Ana will be notified when it's sent.",
@@ -43,7 +43,7 @@ it("grades calls, forbidden calls, tool count and the final text", () => {
   const checks = gradeSample(
     {
       calls: [{ tool: "space_task_read", args: { taskId: "t_migrate" } }],
-      callsMustNot: [{ tool: "space_task_message" }],
+      callsMustNot: [{ tool: "space_thread_message" }],
       maxToolCalls: 0,
       finalTextMust: ["can't", "chloe"],
     },

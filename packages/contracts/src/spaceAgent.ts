@@ -10,7 +10,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
-import { SpaceId } from "./space.ts";
+import { SpaceActionId, SpaceId, SpacePairVia, SpaceTaskId, SpaceTaskStatus } from "./space.ts";
 
 export const SPACE_NOTES_MAX_ITEMS = 30;
 const SPACE_NOTE_MAX_LENGTH = 240;
@@ -23,15 +23,8 @@ export const SPACE_AGENT_DRIVER = ProviderDriverKind.make("spaceAgent");
 export const SPACE_AGENT_INSTANCE_ID = ProviderInstanceId.make("spaceAgent");
 export const SPACE_AGENT_DEFAULT_MODEL = "claude-opus-5-5";
 
-export const SpaceActionId = TrimmedNonEmptyString.pipe(Schema.brand("SpaceActionId"));
-export type SpaceActionId = typeof SpaceActionId.Type;
-
 export const SpaceNoteId = TrimmedNonEmptyString.pipe(Schema.brand("SpaceNoteId"));
 export type SpaceNoteId = typeof SpaceNoteId.Type;
-
-/** Pair acting for the tagger, within one reply: the run and the post that tagged it. */
-export const SpacePairVia = Schema.Struct({ runId: RunId, roomMessageId: MessageId });
-export type SpacePairVia = typeof SpacePairVia.Type;
 
 export const SpaceWriter = Schema.Union([
   Schema.Struct({ type: Schema.Literal("pair"), askedBy: MemberId, runId: RunId }),
@@ -118,8 +111,19 @@ export const SpaceActionRequest = Schema.Union([
     start: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
-    type: Schema.Literal("task.message"),
-    taskId: ThreadId,
+    type: Schema.Literal("task.status"),
+    taskId: SpaceTaskId,
+    status: SpaceTaskStatus,
+  }),
+  /** Always on the tagger's own account. */
+  Schema.Struct({
+    type: Schema.Literal("thread.start"),
+    taskId: SpaceTaskId,
+    text: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.message"),
+    threadId: ThreadId,
     text: TrimmedNonEmptyString,
   }),
   Schema.Struct({ type: Schema.Literal("notes.edit"), changes: Schema.Array(SpaceNoteChange) }),
@@ -142,13 +146,30 @@ export type SpaceNoteChangeRecord = typeof SpaceNoteChangeRecord.Type;
 export const SpaceActionOutcome = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("task.created"),
-    threadId: ThreadId,
+    taskId: SpaceTaskId,
+    /** The thread it started; null when it started none. */
+    threadId: Schema.NullOr(ThreadId),
     ownerId: MemberId,
     title: TrimmedNonEmptyString,
     started: Schema.Boolean,
   }),
   Schema.Struct({
-    type: Schema.Literal("task.message.queued"),
+    type: Schema.Literal("task.status.moved"),
+    taskId: SpaceTaskId,
+    title: TrimmedNonEmptyString,
+    from: SpaceTaskStatus,
+    to: SpaceTaskStatus,
+    /** The `task-status` room line; Undo goes through `spaces.task` `status.undo`. */
+    entryId: MessageId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.started"),
+    taskId: SpaceTaskId,
+    threadId: ThreadId,
+    title: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.message.queued"),
     threadId: ThreadId,
     ownerId: MemberId,
     title: TrimmedNonEmptyString,
@@ -161,7 +182,7 @@ export const SpaceActionOutcome = Schema.Union([
 ]);
 export type SpaceActionOutcome = typeof SpaceActionOutcome.Type;
 
-/** The task as the proposal saw it; Confirm runs only if it still looks the same. */
+/** The thread a message proposal targets, as it saw it; Confirm runs only if it still looks the same. */
 export const SpaceActionTaskSnapshot = Schema.Struct({
   threadId: ThreadId,
   title: TrimmedNonEmptyString,

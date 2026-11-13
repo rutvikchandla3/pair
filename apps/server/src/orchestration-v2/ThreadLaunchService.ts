@@ -162,10 +162,17 @@ export interface ThreadLaunchInput {
   };
 }
 
+type CloudLaunchStrategy = Extract<ThreadLaunchWorkspaceStrategy, { readonly type: "cloud" }>;
+
 /** A launch as callers ask for it; `launch` resolves an omitted strategy for the project. */
 export interface ThreadLaunchRequest extends Omit<ThreadLaunchInput, "workspaceStrategy"> {
-  /** Omitted: a new worktree for a workspace, which runs nowhere else; otherwise the project folder. */
-  readonly workspaceStrategy?: ThreadLaunchWorkspaceStrategy;
+  /**
+   * Omitted: a new worktree for a workspace, which runs nowhere else; otherwise the project folder.
+   * A cloud strategy without `baseRef` starts from the repository's default branch.
+   */
+  readonly workspaceStrategy?:
+    | Exclude<ThreadLaunchWorkspaceStrategy, CloudLaunchStrategy>
+    | (Omit<CloudLaunchStrategy, "baseRef"> & { readonly baseRef?: string | undefined });
 }
 
 type PreparationInput = Pick<
@@ -1700,18 +1707,33 @@ const make = Effect.gen(function* () {
   const withDefaultStrategy = Effect.fn("ThreadLaunchService.withDefaultStrategy")(function* (
     request: ThreadLaunchRequest,
   ) {
-    if (request.workspaceStrategy !== undefined) {
-      return { ...request, workspaceStrategy: request.workspaceStrategy };
+    const strategy = request.workspaceStrategy;
+    if (strategy !== undefined && strategy.type !== "cloud") {
+      return { ...request, workspaceStrategy: strategy };
+    }
+    if (strategy?.baseRef !== undefined) {
+      return { ...request, workspaceStrategy: { ...strategy, baseRef: strategy.baseRef } };
     }
     const project = yield* projects
       .getById(request.projectId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     // A workspace starts each root from its own default branch, so baseRef is never read.
-    const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
-      Option.isSome(project) && project.value.roots !== undefined
+    const workspace = Option.isSome(project) && project.value.roots !== undefined;
+    if (strategy === undefined) {
+      const workspaceStrategy: ThreadLaunchWorkspaceStrategy = workspace
         ? { type: "worktree", baseRef: "HEAD" }
         : { type: "root" };
-    return { ...request, workspaceStrategy };
+      return { ...request, workspaceStrategy };
+    }
+    const root = Option.isSome(project) ? project.value.workspaceRoot : null;
+    // The server's checkout of a cloud project is a clone, so origin/HEAD names its default branch.
+    const baseRef =
+      workspace || root === null
+        ? "HEAD"
+        : ((yield* git.defaultBranch(root).pipe(Effect.orElseSucceed(() => null))) ??
+          (yield* git.currentBranch(root).pipe(Effect.orElseSucceed(() => null))) ??
+          "main");
+    return { ...request, workspaceStrategy: { ...strategy, baseRef } };
   });
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(

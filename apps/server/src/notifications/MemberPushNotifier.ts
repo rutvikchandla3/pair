@@ -1,13 +1,14 @@
 import {
   isListedThreadLineage,
   type MemberId,
-  type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type SandboxAccessChange,
   type Space,
   type SpaceId,
   type SpaceRoomEntry,
+  type SpaceTask,
+  type SpaceTaskId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -88,6 +89,8 @@ const threadDeepLink = (environmentId: string, threadId: ThreadId) =>
   `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`;
 const spaceDeepLink = (environmentId: string, spaceId: SpaceId) =>
   `/spaces/${encodeURIComponent(environmentId)}/${encodeURIComponent(spaceId)}`;
+const spaceTaskDeepLink = (environmentId: string, spaceId: SpaceId, taskId: SpaceTaskId) =>
+  `${spaceDeepLink(environmentId, spaceId)}/tasks/${encodeURIComponent(taskId)}`;
 
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -109,6 +112,8 @@ export const make = Effect.gen(function* () {
   // Each thread's holder as last seen, so a metadata update can tell an Assign apart.
   const holders = new Map<ThreadId, MemberId>();
   const spaces = new Map<SpaceId, Space>();
+  // Every task line commits after its `space.task.updated`, so this holds the task it names.
+  const tasks = new Map<SpaceTaskId, SpaceTask>();
   const seeded = yield* Ref.make(false);
   // Runs, requests, guest messages and user messages already notified, oldest first.
   const handled = new Set<string>();
@@ -254,12 +259,7 @@ export const make = Effect.gen(function* () {
           threadTitle: thread.title,
           thread,
         };
-        if (event.type === "thread.created") {
-          const placement = thread.space;
-          return placement?.kind === "task" && placement.createdBy !== ownerId
-            ? { ...base, kind: "assigned", actorId: placement.createdBy }
-            : null;
-        }
+        if (event.type === "thread.created") return null;
         if (event.type === "thread.metadata-updated") {
           if (previousOwnerId === undefined || previousOwnerId === ownerId) return null;
           return { ...base, kind: "assigned", actorId: thread.ownerUpdatedBy ?? ownerId };
@@ -393,6 +393,17 @@ export const make = Effect.gen(function* () {
     entry: SpaceRoomEntry,
   ) {
     if (!firstSighting(`space-entry:${entry.id}`)) return;
+    if (
+      entry.type === "system" &&
+      (entry.line.type === "task-created" || entry.line.type === "task-assigned")
+    ) {
+      yield* sendAssigned(
+        entry.actorId,
+        entry.line.type === "task-created" ? entry.line.ownerId : entry.line.to,
+        entry.line.taskId,
+      );
+      return;
+    }
     const space = spaces.get(entry.spaceId);
     const actorId = entry.type === "post" ? entry.authorId : entry.actorId;
     const named =
@@ -424,20 +435,37 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  /** A creator's Remind on a task that has not started reaches its owner. */
-  const sendRemind = Effect.fn("MemberPushNotifier.sendRemind")(function* (
-    thread: OrchestrationV2AppThread,
+  const sendTaskMessage = Effect.fn("MemberPushNotifier.sendTaskMessage")(function* (
+    task: SpaceTask,
+    title: string,
   ) {
-    const placement = thread.space;
-    if (placement?.kind !== "task" || placement.remindedAt === undefined) return;
-    if (!firstSighting(`remind:${thread.id}:${placement.remindedAt}`)) return;
-    const ownerId = thread.ownerId;
-    if (ownerId === null || ownerId === undefined || ownerId === placement.createdBy) return;
-    yield* sendToMembers(new Set([ownerId]), {
-      title: `${yield* memberName(placement.createdBy)} reminded you`,
-      body: thread.title,
-      deepLink: threadDeepLink(yield* environment.getEnvironmentId, thread.id),
+    yield* sendToMembers(new Set([task.ownerId]), {
+      title,
+      body: task.title,
+      deepLink: spaceTaskDeepLink(yield* environment.getEnvironmentId, task.spaceId, task.id),
     });
+  });
+
+  /** A task given to someone else reaches its new owner. */
+  const sendAssigned = Effect.fn("MemberPushNotifier.sendAssigned")(function* (
+    actorId: MemberId,
+    ownerId: MemberId,
+    taskId: SpaceTaskId,
+  ) {
+    const task = tasks.get(taskId);
+    if (ownerId === actorId || task === undefined || task.ownerId !== ownerId) return;
+    yield* sendTaskMessage(task, `${yield* memberName(actorId)} assigned you`);
+  });
+
+  /** Remind reaches the task's owner once per press; only the remind write stamps both times. */
+  const sendRemind = Effect.fn("MemberPushNotifier.sendRemind")(function* (task: SpaceTask) {
+    if (task.deletedAt === null) tasks.set(task.id, task);
+    else tasks.delete(task.id);
+    if (task.remindedAt === null || task.remindedAt !== task.updatedAt) return;
+    if (!firstSighting(`remind:${task.id}:${task.remindedAt}`)) return;
+    const actorId = task.assignedBy ?? task.createdBy;
+    if (task.deletedAt !== null || actorId === task.ownerId) return;
+    yield* sendTaskMessage(task, `${yield* memberName(actorId)} reminded you`);
   });
 
   // A build has no thread to view, and its recipients are already chosen.
@@ -475,11 +503,14 @@ export const make = Effect.gen(function* () {
       spaces.set(event.payload.id, event.payload);
       return;
     }
+    if (event.type === "space.task.updated") {
+      yield* sendRemind(event.payload);
+      return;
+    }
     if (event.type === "space.room-entry") {
       yield* sendSpaceEntry(event.threadId, event.payload);
       return;
     }
-    if (event.type === "thread.metadata-updated") yield* sendRemind(event.payload);
     yield* seedHolders;
     const notification = yield* detect(event);
     if (notification !== null) yield* send(notification);

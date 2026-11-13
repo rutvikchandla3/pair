@@ -163,6 +163,7 @@ import * as SpaceAgentTools from "./space/SpaceAgentTools.ts";
 import * as SpaceContext from "./space/SpaceContext.ts";
 import * as SpaceIntake from "./space/SpaceIntake.ts";
 import * as SpaceService from "./space/SpaceService.ts";
+import * as SpaceWorkspaces from "./space/SpaceWorkspaces.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as StagedCloudImports from "./cloudMove/StagedCloudImports.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
@@ -1053,7 +1054,16 @@ const layerMakeRoutes = Layer.mergeAll(
   // Spaces for WebSocket clients and /mcp agents.
   Layer.provide(
     SpaceService.layer.pipe(
-      Layer.provide(Layer.mergeAll(ProjectionStoreV2.layer, IdAllocator.layer, SpaceIntake.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          ProjectionStoreV2.layer,
+          IdAllocator.layer,
+          SpaceIntake.layer,
+          SpaceWorkspaces.layer.pipe(
+            Layer.provide(Layer.merge(RuntimeLayer.layerProjectService, IdAllocator.layer)),
+          ),
+        ),
+      ),
     ),
   ),
   Layer.provide(PreviewAutomationBroker.layer),

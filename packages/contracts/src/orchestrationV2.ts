@@ -50,21 +50,27 @@ import { ScopedThreadRef } from "./environment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import {
   Space,
+  SpaceActionId,
   SpaceMembershipChange,
   SpaceId,
   SpaceMention,
-  SpacePairBilling,
+  SpacePairVia,
+  SpaceRepositoryIds,
   SpaceRoomEntry,
-  SpaceTaskBase,
+  SpaceStatusActor,
+  SpaceTask,
+  SpaceTaskDescription,
+  SpaceTaskId,
+  SpaceTaskStatus,
+  SpaceTaskTitle,
   ThreadSpace,
+  ThreadSpaceRoom,
 } from "./space.ts";
 import {
   SpaceAction,
-  SpaceActionId,
   SpaceActionRequest,
   SpaceNoteChange,
   SpaceNotesChange,
-  SpacePairVia,
 } from "./spaceAgent.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import {
@@ -706,7 +712,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ),
   /** Absent on local threads; older clients drop the key. */
   sandboxId: Schema.optionalKey(SandboxId),
-  /** Set at creation on a space's room or task; never changes the space. */
+  /** A room's is set at creation and never changes; a task link is set by `space.thread.link`. */
   space: Schema.optionalKey(ThreadSpace),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
@@ -2362,6 +2368,12 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     type: Schema.Literal("space.notes.changed"),
     payload: SpaceNotesChange,
   }),
+  /** On the room thread's stream: the whole task after any write. */
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("space.task.updated"),
+    payload: SpaceTask,
+  }),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
@@ -3364,6 +3376,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     type: Schema.Literal("space.notes.changed"),
     payload: SpaceNotesChange,
   }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("space.task.updated"),
+    payload: SpaceTask,
+  }),
 ]);
 export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
 
@@ -3412,9 +3429,9 @@ export const OrchestrationV2Command = Schema.Union([
     roots: OrchestrationV2AppThread.fields.roots,
     /** Only the server sets this, for threads created on a member's behalf (scheduled task, MCP client). */
     ownerId: Schema.optional(MemberId),
-    /** Only the server sets this, from `SpaceService`; a client's thread.create never carries one. */
-    space: Schema.optional(ThreadSpace),
-    /** Only the server sets these, when Pair creates a space task for the tagger. */
+    /** Only the server sets this, for a space's room; a thread joins a task by `space.thread.link`. */
+    space: Schema.optional(ThreadSpaceRoom),
+    /** Only the server sets these, when Pair starts a thread for the tagger. */
     via: Schema.optional(Schema.Struct({ pair: SpacePairVia })),
     spaceActionId: Schema.optional(SpaceActionId),
     /** Only the server sets this; a client's thread.create never carries one. */
@@ -3930,9 +3947,9 @@ export const OrchestrationV2Command = Schema.Union([
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 /**
- * Space commands run on the room thread's stream (`threadId`), except `space.task.update`, which
- * runs on the task's. `SpaceService` sends them after checking who may act; the Orchestrator
- * re-checks against the space it reads.
+ * Space commands run on the room thread's stream (`threadId`), except `space.thread.link`, which
+ * runs on the linked thread's. `SpaceService` sends them after checking who may act; the
+ * Orchestrator re-checks against the space it reads.
  */
 const SpaceCommandFields = {
   commandId: CommandId,
@@ -3941,6 +3958,28 @@ const SpaceCommandFields = {
   actorId: MemberId,
 } as const;
 
+export const OrchestrationV2SpaceTaskChange = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("edit"),
+    title: Schema.optionalKey(SpaceTaskTitle),
+    description: Schema.optionalKey(SpaceTaskDescription),
+  }),
+  Schema.Struct({ type: Schema.Literal("reassign"), ownerId: MemberId }),
+  Schema.Struct({ type: Schema.Literal("hand-back"), reason: TrimmedNonEmptyString }),
+  Schema.Struct({ type: Schema.Literal("remind") }),
+  Schema.Struct({
+    type: Schema.Literal("status"),
+    status: SpaceTaskStatus,
+    by: SpaceStatusActor,
+    askedBy: Schema.NullOr(MemberId),
+  }),
+  /** `entryId` is the agent's or `@pair`'s `task-status` line being undone. */
+  Schema.Struct({ type: Schema.Literal("status-undo"), entryId: MessageId }),
+  /** Only `@pair`'s created-task Undo. */
+  Schema.Struct({ type: Schema.Literal("delete") }),
+]);
+export type OrchestrationV2SpaceTaskChange = typeof OrchestrationV2SpaceTaskChange.Type;
+
 export const OrchestrationV2SpaceCommand = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("space.create"),
@@ -3948,18 +3987,19 @@ export const OrchestrationV2SpaceCommand = Schema.Union([
     ...OrchestrationV2CreationFields,
     name: TrimmedNonEmptyString,
     brief: Schema.String,
+    repositoryIds: SpaceRepositoryIds,
     projectId: ProjectId,
     memberIds: Schema.Array(MemberId),
-    pairBilling: SpacePairBilling,
     modelSelection: ModelSelection,
   }),
+  /** `repositoryIds` and `projectId` change together or not at all. */
   Schema.Struct({
     type: Schema.Literal("space.update"),
     ...SpaceCommandFields,
     name: Schema.optional(TrimmedNonEmptyString),
     brief: Schema.optional(Schema.String),
+    repositoryIds: Schema.optional(SpaceRepositoryIds),
     projectId: Schema.optional(ProjectId),
-    pairBilling: Schema.optional(SpacePairBilling),
   }),
   Schema.Struct({ type: Schema.Literal("space.archive"), ...SpaceCommandFields }),
   Schema.Struct({ type: Schema.Literal("space.unarchive"), ...SpaceCommandFields }),
@@ -3970,17 +4010,23 @@ export const OrchestrationV2SpaceCommand = Schema.Union([
     memberIds: Schema.Array(MemberId),
     restore: Schema.optional(Schema.Boolean),
   }),
+  /** `reassignTo` takes the member's open tasks. */
   Schema.Struct({
     type: Schema.Literal("space.member.remove"),
     ...SpaceCommandFields,
     memberId: MemberId,
+    reassignTo: Schema.optional(MemberId),
   }),
   Schema.Struct({
     type: Schema.Literal("space.owner.transfer"),
     ...SpaceCommandFields,
     ownerId: MemberId,
   }),
-  Schema.Struct({ type: Schema.Literal("space.leave"), ...SpaceCommandFields }),
+  Schema.Struct({
+    type: Schema.Literal("space.leave"),
+    ...SpaceCommandFields,
+    reassignTo: Schema.optional(MemberId),
+  }),
   Schema.Struct({ type: Schema.Literal("space.join.request"), ...SpaceCommandFields }),
   Schema.Struct({ type: Schema.Literal("space.join.cancel"), ...SpaceCommandFields }),
   Schema.Struct({
@@ -3993,20 +4039,41 @@ export const OrchestrationV2SpaceCommand = Schema.Union([
     /** `user` only for a person in a client; agents and API tokens never queue `@pair`. */
     authorKind: Schema.Literals(["user", "agent"]),
   }),
-  /** On the task's stream; edits, hand-back and reminders apply only before the task starts. */
+  /** `via` and `spaceActionId` only when `@pair` creates it for the tagger. */
+  Schema.Struct({
+    type: Schema.Literal("space.task.create"),
+    ...SpaceCommandFields,
+    taskId: SpaceTaskId,
+    title: SpaceTaskTitle,
+    description: SpaceTaskDescription,
+    ownerId: MemberId,
+    status: SpaceTaskStatus,
+    via: Schema.optional(SpacePairVia),
+    spaceActionId: Schema.optional(SpaceActionId),
+  }),
+  /** `via` and `spaceActionId` only on `@pair`'s status move, which records its action. */
   Schema.Struct({
     type: Schema.Literal("space.task.update"),
     ...SpaceCommandFields,
-    change: Schema.Union([
-      Schema.Struct({
-        type: Schema.Literal("edit"),
-        title: Schema.optional(TrimmedNonEmptyString),
-        description: Schema.optional(TrimmedNonEmptyString),
-        base: Schema.optional(SpaceTaskBase),
-      }),
-      Schema.Struct({ type: Schema.Literal("hand-back"), reason: TrimmedNonEmptyString }),
-      Schema.Struct({ type: Schema.Literal("remind") }),
-    ]),
+    taskId: SpaceTaskId,
+    change: OrchestrationV2SpaceTaskChange,
+    via: Schema.optional(SpacePairVia),
+    spaceActionId: Schema.optional(SpaceActionId),
+  }),
+  /**
+   * Rewrites a thread's `space`: attach, move (another task, maybe another space) or remove
+   * (`target: null`). `threadId` is the linked thread; its owner is `actorId` except on removal.
+   */
+  Schema.Struct({
+    type: Schema.Literal("space.thread.link"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    actorId: MemberId,
+    target: Schema.NullOr(Schema.Struct({ spaceId: SpaceId, taskId: SpaceTaskId })),
+    via: Schema.Literals(["start", "attach"]),
+    /** Only when `@pair` starts a thread for the tagger; records its `thread.start` action. */
+    pairVia: Schema.optional(SpacePairVia),
+    spaceActionId: Schema.optional(SpaceActionId),
   }),
   /** Pair stores a confirm card for a task the tagger doesn't own; nothing else changes. */
   Schema.Struct({

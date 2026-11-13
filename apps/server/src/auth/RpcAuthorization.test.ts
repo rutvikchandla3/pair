@@ -182,6 +182,25 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets members read a space's tasks, its workspace preview and the Team Claude key's status", () => {
+    for (const method of [
+      WS_METHODS.spacesTaskGet,
+      WS_METHODS.spacesWorkspacePreview,
+      WS_METHODS.teamClaudeKeySubscribe,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
+  it("keeps setting and removing the Team Claude key, which every space's @pair uses, admin only", () => {
+    for (const method of [WS_METHODS.teamClaudeKeySet, WS_METHODS.teamClaudeKeyRemove]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
+      expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(method));
+      expect(ADMIN_SCOPES).toContain(requiredScopeForRpcMethod(method));
+      expect(clientRpcRequiredScopes(method, {})).toEqual([AuthSettingsWriteScope]);
+    }
+  });
+
   it("keeps draining, which holds every member's new cloud turns, admin only", () => {
     expect(MEMBER_SCOPES).not.toContain(AuthEnvironmentMaintainScope);
     expect(ADMIN_SCOPES).toContain(AuthEnvironmentMaintainScope);

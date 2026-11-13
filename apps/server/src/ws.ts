@@ -7,6 +7,7 @@ import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceService from "./space/SpaceService.ts";
+import * as TeamClaudeKey from "./team/TeamClaudeKey.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1705,7 +1706,12 @@ export const layerWsRpc = (
       const cloudMoves = yield* CloudMoves.CloudMoves;
       const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
       const spaces = yield* SpaceService.SpaceService;
-      const spaceCaller = { memberId: currentSession.memberId, authorKind: "user" as const };
+      const teamClaudeKey = yield* TeamClaudeKey.TeamClaudeKey;
+      const spaceCaller = {
+        memberId: currentSession.memberId,
+        authorKind: "user" as const,
+        mayOpen: (threadId: ThreadId) => viewerMayOpen(threadViewer, threadId),
+      };
       const chiefOfStaffCaller = {
         memberId: currentSession.memberId,
         scopes: currentSession.scopes,
@@ -3125,6 +3131,13 @@ export const layerWsRpc = (
         [WS_METHODS.spacesAction]: (input) => spaces.action(spaceCaller, input),
         [WS_METHODS.spacesNotes]: (input) => spaces.notes(spaceCaller, input),
         [WS_METHODS.spacesReply]: (input) => spaces.reply(spaceCaller, input),
+        [WS_METHODS.spacesTaskGet]: (input) => spaces.taskGet(spaceCaller, input),
+        [WS_METHODS.spacesWorkspacePreview]: (input) => spaces.workspacePreview(spaceCaller, input),
+        [WS_METHODS.teamClaudeKeySubscribe]: () =>
+          Stream.concat(Stream.fromEffect(teamClaudeKey.status), teamClaudeKey.changes),
+        [WS_METHODS.teamClaudeKeySet]: (input) =>
+          teamClaudeKey.set(currentSession.memberId, input.value),
+        [WS_METHODS.teamClaudeKeyRemove]: () => teamClaudeKey.remove(currentSession.memberId),
         [WS_METHODS.threadMovePreview]: (input) => cloudMoves.preview(input),
         [WS_METHODS.threadMoveToCloud]: (input) =>
           cloudMoves.continueInCloud({

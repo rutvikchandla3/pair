@@ -11,6 +11,8 @@ import {
   SpaceNoteItem,
   SpaceNotesChange,
   SpaceRoomEntry,
+  SpaceTask,
+  type SpaceTaskId,
   spaceActiveMemberIds,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -25,6 +27,13 @@ const EntryPayload = Schema.fromJsonString(SpaceRoomEntry);
 const encodeEntry = Schema.encodeEffect(EntryPayload);
 const decodeEntry = Schema.decodeUnknownEffect(EntryPayload);
 const encodeIds = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
+const TaskPayload = Schema.fromJsonString(SpaceTask);
+const encodeTask = Schema.encodeEffect(TaskPayload);
+const decodeTask = Schema.decodeUnknownEffect(TaskPayload);
+
+/** The task a room line is about, so a task's activity is an indexed read of its room. */
+const entryTaskId = (entry: SpaceRoomEntry): SpaceTaskId | null =>
+  entry.type === "system" && "taskId" in entry.line ? entry.line.taskId : null;
 
 /** Runs once per event; the projection apply that calls it owns the span. */
 export const applySpaceUpdated = Effect.fnUntraced(function* (
@@ -62,11 +71,100 @@ export const applySpaceRoomEntry = Effect.fnUntraced(function* (
   const entry = event.payload;
   yield* sql`
     INSERT INTO orchestration_v2_projection_space_room_entries (
-      entry_id, space_id, created_at, payload_json
+      entry_id, space_id, created_at, task_id, payload_json
     )
-    VALUES (${entry.id}, ${entry.spaceId}, ${entry.createdAt}, ${yield* encodeEntry(entry)})
+    VALUES (
+      ${entry.id}, ${entry.spaceId}, ${entry.createdAt}, ${entryTaskId(entry)},
+      ${yield* encodeEntry(entry)}
+    )
     ON CONFLICT(entry_id) DO NOTHING
   `;
+});
+
+export const applySpaceTaskUpdated = Effect.fnUntraced(function* (
+  event: Extract<OrchestrationV2DomainEvent, { readonly type: "space.task.updated" }>,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const task = event.payload;
+  yield* sql`
+    INSERT INTO orchestration_v2_projection_space_tasks (
+      task_id, space_id, owner_id, status, deleted_at, updated_at, payload_json
+    )
+    VALUES (
+      ${task.id}, ${task.spaceId}, ${task.ownerId}, ${task.status}, ${task.deletedAt},
+      ${task.updatedAt}, ${yield* encodeTask(task)}
+    )
+    ON CONFLICT(task_id) DO UPDATE SET
+      space_id = excluded.space_id,
+      owner_id = excluded.owner_id,
+      status = excluded.status,
+      deleted_at = excluded.deleted_at,
+      updated_at = excluded.updated_at,
+      payload_json = excluded.payload_json
+  `;
+});
+
+/** Deleted ones too: a room line or record may still name it. */
+export const getSpaceTask = Effect.fnUntraced(function* (taskId: SpaceTaskId) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly payload_json: string }>`
+    SELECT payload_json FROM orchestration_v2_projection_space_tasks WHERE task_id = ${taskId}
+  `;
+  const row = rows[0];
+  return row === undefined ? null : yield* decodeTask(row.payload_json);
+});
+
+/** The space's tasks that are not deleted, most recently changed first. */
+export const listSpaceTasks = Effect.fnUntraced(function* (spaceId: SpaceId) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly payload_json: string }>`
+    SELECT payload_json FROM orchestration_v2_projection_space_tasks
+    WHERE space_id = ${spaceId} AND deleted_at IS NULL
+    ORDER BY updated_at DESC, rowid DESC
+  `;
+  return yield* Effect.forEach(rows, (row) => decodeTask(row.payload_json));
+});
+
+/** Open (to do, in progress, in review) tasks of these spaces, most recently changed first. */
+export const listOpenSpaceTasks = Effect.fnUntraced(function* (spaceIds: ReadonlyArray<SpaceId>) {
+  if (spaceIds.length === 0) return [];
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly payload_json: string }>`
+    SELECT payload_json FROM orchestration_v2_projection_space_tasks
+    WHERE space_id IN (SELECT value FROM json_each(${yield* encodeIds(spaceIds)}))
+      AND deleted_at IS NULL AND status IN ('todo', 'in-progress', 'in-review')
+    ORDER BY updated_at DESC, rowid DESC
+  `;
+  return yield* Effect.forEach(rows, (row) => decodeTask(row.payload_json));
+});
+
+/** Ids of the threads on a task that are not deleted, newest first. */
+export const listTaskThreadIds = Effect.fnUntraced(function* (taskId: SpaceTaskId) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly thread_id: string }>`
+    SELECT thread_id FROM orchestration_v2_projection_threads
+    WHERE json_extract(payload_json, '$.space.taskId') = ${taskId}
+      AND json_extract(payload_json, '$.space.kind') = 'task'
+      AND json_extract(payload_json, '$.deletedAt') IS NULL
+    ORDER BY created_at DESC, rowid DESC
+  `;
+  return rows.map((row) => row.thread_id);
+});
+
+/** The task's newest `limit` room lines, oldest first. */
+export const listTaskEntries = Effect.fnUntraced(function* (input: {
+  readonly taskId: SpaceTaskId;
+  readonly limit: number;
+}) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly payload_json: string }>`
+    SELECT payload_json FROM orchestration_v2_projection_space_room_entries
+    WHERE task_id = ${input.taskId}
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT ${input.limit}
+  `;
+  const entries = yield* Effect.forEach(rows, (row) => decodeEntry(row.payload_json));
+  return entries.toReversed();
 });
 
 export const getSpace = Effect.fnUntraced(function* (spaceId: SpaceId) {
@@ -135,7 +233,7 @@ export const getRoomEntry = Effect.fnUntraced(function* (entryId: MessageId) {
   return row === undefined ? null : yield* decodeEntry(row.payload_json);
 });
 
-/** Ids of the space's task threads that are not deleted, newest first. */
+/** Ids of the threads on the space's tasks that are not deleted, newest first. */
 export const listSpaceTaskThreadIds = Effect.fnUntraced(function* (spaceId: SpaceId) {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<{ readonly thread_id: string }>`

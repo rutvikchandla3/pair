@@ -143,6 +143,7 @@ function shouldPublishAgentAwarenessEvent(event: OrchestrationV2DomainEvent): bo
     case "space.room-entry":
     case "space.action.updated":
     case "space.notes.changed":
+    case "space.task.updated":
       return false;
   }
 }

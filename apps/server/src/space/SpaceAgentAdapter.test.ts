@@ -4,7 +4,6 @@ import {
   MessageId,
   NodeId,
   ProjectId,
-  ProviderInstanceId,
   ProviderSessionId,
   RunAttemptId,
   RunId,
@@ -15,18 +14,18 @@ import {
   type OrchestrationV2ConversationMessage,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import { SpaceAgentKeyMissingError, TeamClaudeKey } from "../team/TeamClaudeKey.ts";
 import * as SpaceAgentAdapter from "./SpaceAgentAdapter.ts";
 import { SpaceAgentTools, SpaceContext, type SpaceReplyScope } from "./SpaceAgentRuntime.ts";
 
@@ -151,8 +150,8 @@ const runReply = Effect.fn("SpaceAgentAdapterTest.runReply")(function* (
   replies: ReadonlyArray<Reply>,
   options: {
     readonly afterRetryItem?: Effect.Effect<void>;
-    readonly teamEnvironment?: ReadonlyArray<{ name: string; value: string; sensitive: boolean }>;
-    readonly processEnv?: Record<string, string>;
+    /** `null` is no Team Claude key. */
+    readonly baseUrl?: string | null;
   } = {},
 ) {
   const requests: Array<Record<string, unknown>> = [];
@@ -212,17 +211,15 @@ const runReply = Effect.fn("SpaceAgentAdapterTest.runReply")(function* (
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getMessagesById: () => Effect.succeed(new Map([[messageId, userMessage]])),
     }),
-    ServerSettings.layerTest({
-      providerInstances: {
-        [ProviderInstanceId.make("team")]: {
-          driver: "claudeAgent",
-          environment: options.teamEnvironment ?? [
-            { name: "ANTHROPIC_API_KEY", value: "sk-ant-team", sensitive: true },
-          ],
-        },
-      },
+    Layer.mock(TeamClaudeKey)({
+      endpoint:
+        options.baseUrl === null
+          ? Effect.fail(new SpaceAgentKeyMissingError())
+          : Effect.succeed({
+              apiKey: Redacted.make("sk-ant-team"),
+              baseUrl: options.baseUrl ?? "https://api.anthropic.com",
+            }),
     }),
-    ConfigProvider.layer(ConfigProvider.fromEnv({ env: options.processEnv ?? {} })),
   );
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -408,7 +405,7 @@ it.effect("maps a rejected key, an empty balance and a refusal to their failures
       [
         { status: 401, body: { error: { type: "authentication_error" } } },
         "permission_error",
-        "The Team Claude key was rejected. An admin can replace it in Settings.",
+        "The Team Claude key was rejected. An admin can replace it in Settings → Team.",
       ],
       [
         { status: 402, body: { error: { type: "billing_error" } } },
@@ -430,21 +427,18 @@ it.effect("maps a rejected key, an empty balance and a refusal to their failures
   }),
 );
 
-it.effect("pays only with the team Claude instance's key, never the server's own", () =>
+it.effect("pays only with the Team Claude key, at its base URL", () =>
   Effect.gen(function* () {
-    const unpaid = yield* runReply([], {
-      teamEnvironment: [],
-      processEnv: { ANTHROPIC_API_KEY: "sk-ant-team" },
-    });
+    const unpaid = yield* runReply([], { baseUrl: null });
     assert.strictEqual(terminalOf(unpaid.events).failure?.code, "missing_key");
+    assert.strictEqual(
+      terminalOf(unpaid.events).failure?.message,
+      "@pair needs a Team Claude key. An admin can add one in Settings → Team.",
+    );
     assert.lengthOf(unpaid.requests, 0);
 
     const gateway = yield* runReply([ok(message(textBlock(0, "Hi"), "end_turn"))], {
-      teamEnvironment: [
-        { name: "ANTHROPIC_API_KEY", value: "sk-ant-team", sensitive: true },
-        { name: "ANTHROPIC_BASE_URL", value: "https://gateway.example", sensitive: false },
-      ],
-      processEnv: { ANTHROPIC_BASE_URL: "https://elsewhere.example" },
+      baseUrl: "https://gateway.example",
     });
     assert.deepStrictEqual(gateway.urls, ["https://gateway.example/v1/messages"]);
   }),

@@ -55,11 +55,11 @@ export interface ThreadAccessRoster {
 export interface ThreadAccessTarget {
   readonly sandboxId?: SandboxId | undefined;
   readonly ownerId?: MemberId | null | undefined;
-  /** Never changes after creation, so a move never involves it. */
+  /** A task link changes when a thread is attached, detached or moved; that is a move too. */
   readonly space?: { readonly spaceId: SpaceId; readonly kind: "room" | "task" } | undefined;
 }
 
-/** A committed thread event that changed the thread's machine or owner. */
+/** A committed thread event that changed the thread's machine, owner or space. */
 export interface ThreadAccessMove {
   readonly sequence: number;
   readonly threadId: ThreadId;
@@ -281,13 +281,11 @@ export const layerIndex = Layer.effect(
               threads.set(id, { sandboxId, ownerId, ...(space === undefined ? {} : { space }) });
             } else if (
               known.sandboxId !== sandboxId ||
-              (known.ownerId ?? null) !== (ownerId ?? null)
+              (known.ownerId ?? null) !== (ownerId ?? null) ||
+              known.space?.spaceId !== space?.spaceId ||
+              known.space?.kind !== space?.kind
             ) {
-              const after = {
-                sandboxId,
-                ownerId,
-                ...(known.space === undefined ? {} : { space: known.space }),
-              };
+              const after = { sandboxId, ownerId, ...(space === undefined ? {} : { space }) };
               const move = { sequence, threadId: id, before: known, after };
               threads.set(id, move.after);
               lastMoves.set(id, move);

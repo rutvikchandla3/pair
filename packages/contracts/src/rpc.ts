@@ -87,9 +87,14 @@ import {
   SpacePostInput,
   SpacePostResult,
   SpaceTaskAction,
+  SpaceTaskGetInput,
   SpaceTaskResult,
+  SpaceTaskView,
   SpaceView,
+  SpaceWorkspacePreview,
+  SpaceWorkspacePreviewInput,
 } from "./spaceRpc.ts";
+import { TeamClaudeKeyError, TeamClaudeKeySetInput, TeamClaudeKeyStatus } from "./teamClaudeKey.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -607,6 +612,8 @@ export const WS_METHODS = {
   chiefOfStaffListVoices: "chiefOfStaff.listVoices",
   spacesList: "spaces.list",
   spacesGet: "spaces.get",
+  spacesTaskGet: "spaces.taskGet",
+  spacesWorkspacePreview: "spaces.workspacePreview",
   spacesMutate: "spaces.mutate",
   spacesPost: "spaces.post",
   spacesTask: "spaces.task",
@@ -646,6 +653,9 @@ export const WS_METHODS = {
   teamImageDismissProposal: "teamImage.dismissProposal",
   teamImageSetSecret: "teamImage.setSecret",
   teamImageRemoveSecret: "teamImage.removeSecret",
+  teamClaudeKeySubscribe: "teamClaudeKey.subscribe",
+  teamClaudeKeySet: "teamClaudeKey.set",
+  teamClaudeKeyRemove: "teamClaudeKey.remove",
   teamImageSubscribeBuildLog: "teamImage.subscribeBuildLog",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
@@ -1009,6 +1019,20 @@ const WsSpacesGetRpc = Rpc.make(WS_METHODS.spacesGet, {
   error: spaceRpcError,
 });
 
+/** A task, its threads the caller may open, and its newest room lines. */
+const WsSpacesTaskGetRpc = Rpc.make(WS_METHODS.spacesTaskGet, {
+  payload: SpaceTaskGetInput,
+  success: SpaceTaskView,
+  error: spaceRpcError,
+});
+
+/** Where a space with these repositories would run its threads; writes nothing. */
+const WsSpacesWorkspacePreviewRpc = Rpc.make(WS_METHODS.spacesWorkspacePreview, {
+  payload: SpaceWorkspacePreviewInput,
+  success: SpaceWorkspacePreview,
+  error: spaceRpcError,
+});
+
 const WsSpacesMutateRpc = Rpc.make(WS_METHODS.spacesMutate, {
   payload: SpaceMutation,
   success: SpaceMutationResult,
@@ -1275,6 +1299,29 @@ const WsTeamImageRemoveSecretRpc = Rpc.make(WS_METHODS.teamImageRemoveSecret, {
   payload: TeamImageRemoveSecretInput,
   success: Schema.Void,
   error: TeamImageRpcError,
+});
+
+const TeamClaudeKeyRpcError = Schema.Union([TeamClaudeKeyError, EnvironmentAuthorizationError]);
+
+/** The current status, then every change. */
+const WsTeamClaudeKeySubscribeRpc = Rpc.make(WS_METHODS.teamClaudeKeySubscribe, {
+  payload: Schema.Struct({}),
+  success: TeamClaudeKeyStatus,
+  error: TeamClaudeKeyRpcError,
+  stream: true,
+});
+
+/** Admins only; the server checks the key with Anthropic before storing it. */
+const WsTeamClaudeKeySetRpc = Rpc.make(WS_METHODS.teamClaudeKeySet, {
+  payload: TeamClaudeKeySetInput,
+  success: TeamClaudeKeyStatus,
+  error: TeamClaudeKeyRpcError,
+});
+
+const WsTeamClaudeKeyRemoveRpc = Rpc.make(WS_METHODS.teamClaudeKeyRemove, {
+  payload: Schema.Struct({}),
+  success: TeamClaudeKeyStatus,
+  error: TeamClaudeKeyRpcError,
 });
 
 const WsTeamImageSubscribeBuildLogRpc = Rpc.make(WS_METHODS.teamImageSubscribeBuildLog, {
@@ -2544,6 +2591,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacesActionRpc,
   WsSpacesNotesRpc,
   WsSpacesReplyRpc,
+  WsSpacesTaskGetRpc,
+  WsSpacesWorkspacePreviewRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
@@ -2576,6 +2625,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamImageDismissProposalRpc,
   WsTeamImageSetSecretRpc,
   WsTeamImageRemoveSecretRpc,
+  WsTeamClaudeKeySubscribeRpc,
+  WsTeamClaudeKeySetRpc,
+  WsTeamClaudeKeyRemoveRpc,
   WsTeamImageSubscribeBuildLogRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,

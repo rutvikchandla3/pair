@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
-  EnvironmentId,
   MemberId,
   MessageId,
   type OrchestrationV2ServerCommand,
@@ -10,17 +9,15 @@ import {
   ProviderInstanceId,
   SPACE_AGENT_DRIVER,
   SPACE_AGENT_INSTANCE_ID,
-  type SpaceMutation,
   SpaceId,
   type SpaceNoteChange,
+  SpaceTaskId,
   type SpacePairVia,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -29,15 +26,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
-import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import * as McpToolAccess from "../mcp/McpToolAccess.ts";
-import * as SpaceHandlers from "../mcp/toolkits/space/handlers.ts";
-import { SpaceToolkit } from "../mcp/toolkits/space/tools.ts";
 import { spaceActionIdFor } from "./SpaceAgentDecisions.ts";
-import * as SpaceIntake from "./SpaceIntake.ts";
-import * as SpaceService from "./SpaceService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -56,10 +45,9 @@ const pairAdapter = {
   driver: SPACE_AGENT_DRIVER,
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
-const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
-
 const layerDatabase = SqlitePersistence.layerMemory;
-const layerCore = Layer.mergeAll(
+// The Orchestrator alone: `SpaceService` and the MCP toolkit are tested beside them.
+const layer = Layer.mergeAll(
   layerDatabase,
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
@@ -69,30 +57,12 @@ const layerCore = Layer.mergeAll(
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
 );
-const layer = SpaceService.layer.pipe(
-  Layer.provideMerge(layerCore),
-  Layer.provide(
-    Layer.mergeAll(
-      IdAllocator.layer,
-      NodeCrypto.layer,
-      SpaceIntake.layerDirect.pipe(Layer.provide(layerCore)),
-      Layer.mock(ThreadLaunch.ThreadLaunchService)({
-        launch: (input) =>
-          Effect.sync(() => {
-            launched.push(input);
-            return { threadId: input.threadId!, resumed: false } as ThreadLaunch.ThreadLaunchResult;
-          }),
-      }),
-    ),
-  ),
-);
 
 const rutvik = MemberId.make("member:rutvik");
 const kousik = MemberId.make("member:kousik");
 const hanad = MemberId.make("member:hanad");
 const spaceId = SpaceId.make("spc_0123456789abcdef0123");
 const roomThreadId = ThreadId.make("thread:room");
-const taskThreadId = ThreadId.make("thread:task");
 const projectId = ProjectId.make("project:spaces");
 const base = { spaceId, threadId: roomThreadId } as const;
 
@@ -111,9 +81,9 @@ const createSpace = dispatch({
   creationSource: "web",
   name: "Question creation",
   brief: "Ship the new question editor.",
+  repositoryIds: [projectId],
   projectId,
   memberIds: [kousik],
-  pairBilling: { type: "team" },
   modelSelection,
 });
 
@@ -135,6 +105,76 @@ const post = (
     ...options,
   });
 };
+
+const task = (id: string) => SpaceTaskId.make(`stk_${id.padStart(20, "0")}`);
+
+const createTask = (
+  actorId: MemberId,
+  taskId: SpaceTaskId,
+  options: Partial<Extract<OrchestrationV2ServerCommand, { type: "space.task.create" }>> = {},
+) =>
+  dispatch({
+    type: "space.task.create",
+    ...base,
+    commandId: commandId("task"),
+    actorId,
+    taskId,
+    title: "Preview renderer",
+    description: "Fix the preview renderer",
+    ownerId: kousik,
+    status: "todo",
+    ...options,
+  });
+
+const updateTask = (
+  actorId: MemberId,
+  taskId: SpaceTaskId,
+  change: Extract<OrchestrationV2ServerCommand, { type: "space.task.update" }>["change"],
+) =>
+  dispatch({
+    type: "space.task.update",
+    ...base,
+    commandId: commandId("update"),
+    actorId,
+    taskId,
+    change,
+  });
+
+const createThread = (threadId: ThreadId, ownerId: MemberId) =>
+  dispatch({
+    type: "thread.create",
+    commandId: commandId("thread"),
+    actorId: ownerId,
+    threadId,
+    projectId,
+    title: "Work",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+    ownerId,
+  });
+
+const linkThread = (
+  threadId: ThreadId,
+  actorId: MemberId,
+  target: { readonly spaceId: SpaceId; readonly taskId: SpaceTaskId } | null,
+) =>
+  dispatch({
+    type: "space.thread.link",
+    commandId: commandId("link"),
+    threadId,
+    actorId,
+    target,
+    via: "attach",
+  });
+
+/** Each stored event's type and stream, in commit order. */
+const streams = (result: Orchestrator.OrchestratorV2DispatchResult) =>
+  result.storedEvents.map(({ event }) => [event.type, event.threadId] as const);
 
 /** The refusal reason the Orchestrator put in the error's cause. */
 const refusal = <A, E>(effect: Effect.Effect<A, E, Orchestrator.OrchestratorV2>) =>
@@ -250,102 +290,177 @@ it.layer(layer)("space orchestration", (it) => {
     }),
   );
 
-  it.effect("a task waits for its owner, who can hand it back with a room line", () =>
-    Effect.gen(function* () {
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const placement = {
-        kind: "task" as const,
-        spaceId,
-        createdBy: rutvik,
-        description: "Fix the preview renderer",
-        base: { baseRef: "main" },
-      };
-      yield* dispatch({
-        type: "thread.create",
-        commandId: commandId("task"),
-        actorId: rutvik,
-        threadId: taskThreadId,
-        projectId,
-        title: "Preview renderer",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdBy: "user",
-        creationSource: "web",
-        ownerId: kousik,
-        space: placement,
-      });
-      const task = yield* projections.getThread(taskThreadId);
-      assert.strictEqual(task.ownerId, kousik);
-      assert.deepStrictEqual(yield* projections.listSpaceTaskThreadIds(spaceId), [taskThreadId]);
+  it.effect(
+    "tasks live on the room stream; a link writes the thread and each room it touches",
+    () =>
+      Effect.gen(function* () {
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const preview = task("1");
+        yield* createTask(rutvik, preview);
+        assert.deepInclude(yield* projections.getSpaceTask(preview), {
+          ownerId: kousik,
+          assignedBy: rutvik,
+          status: "todo",
+        });
+        assert.include(yield* refusal(createTask(rutvik, preview)), "already-exists");
+        assert.include(
+          yield* refusal(createTask(rutvik, task("2"), { ownerId: hanad })),
+          "not-a-target-member",
+        );
 
-      const update = (
-        actorId: MemberId,
-        change: Extract<OrchestrationV2ServerCommand, { type: "space.task.update" }>["change"],
-      ) =>
-        dispatch({
-          type: "space.task.update",
-          commandId: commandId("update"),
-          threadId: taskThreadId,
+        // A task write bumps the room's revision, so every member's sidebar refetches.
+        yield* TestClock.adjust("1 hour");
+        const moved = yield* updateTask(kousik, preview, {
+          type: "status",
+          status: "in-progress",
+          by: { type: "member", memberId: kousik },
+          askedBy: null,
+        });
+        assert.deepStrictEqual(streams(moved), [
+          ["space.task.updated", roomThreadId],
+          ["space.room-entry", roomThreadId],
+        ]);
+        const room = yield* projections.getThread(roomThreadId);
+        assert.strictEqual(
+          room.space?.kind === "room" ? room.space.revision : null,
+          "1970-01-01T01:00:00.000Z",
+        );
+        assert.include(
+          yield* refusal(updateTask(kousik, preview, { type: "remind" })),
+          "not-task-creator",
+        );
+        yield* updateTask(kousik, preview, { type: "hand-back", reason: "On leave this week" });
+        assert.deepInclude(yield* projections.getSpaceTask(preview), {
+          ownerId: rutvik,
+          assignedBy: null,
+        });
+
+        // Attach: the thread's own stream and the room's, in one commit.
+        const work = ThreadId.make("thread:work");
+        yield* createThread(work, kousik);
+        assert.include(
+          yield* refusal(linkThread(work, rutvik, { spaceId, taskId: preview })),
+          "not-thread-owner",
+        );
+        const attached = yield* linkThread(work, kousik, { spaceId, taskId: preview });
+        assert.deepStrictEqual(streams(attached), [
+          ["thread.metadata-updated", work],
+          ["space.room-entry", roomThreadId],
+        ]);
+        const linked = yield* projections.getThread(work);
+        assert.deepInclude(linked.space, {
+          kind: "task",
           spaceId,
-          actorId,
-          change,
+          taskId: preview,
+          linkedBy: kousik,
         });
-      assert.include(yield* refusal(update(kousik, { type: "remind" })), "not-task-creator");
-      yield* update(rutvik, { type: "edit", title: "Preview renderer v2" });
-      const send = (actorId: MemberId | undefined) => {
-        const id = commandId("send");
-        return dispatch({
-          type: "message.dispatch",
-          commandId: id,
-          threadId: taskThreadId,
-          ...(actorId === undefined ? {} : { actorId }),
-          messageId: MessageId.make(`message:${id}`),
-          text: "Start please",
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: actorId === undefined ? "agent" : "user",
-          creationSource: actorId === undefined ? "mcp" : "web",
-        });
-      };
-      // Before its first turn only the owner starts a task, from a client or over MCP.
-      assert.include(yield* refusal(send(rutvik)), "not-task-owner");
-      assert.include(yield* refusal(send(undefined)), "not-task-owner");
-      const reassign = (ownerId: MemberId) =>
-        dispatch({
-          type: "thread.owner.set",
-          commandId: commandId("assign"),
-          threadId: taskThreadId,
-          actorId: rutvik,
-          ownerId,
-        });
-      assert.include(yield* refusal(reassign(hanad)), "not-a-target-member");
-      assert.include(
-        yield* refusal(update(rutvik, { type: "hand-back", reason: "nope" })),
-        "not-task-owner",
-      );
-      yield* update(kousik, { type: "hand-back", reason: "On leave this week" });
+        assert.deepStrictEqual(yield* projections.listSpaceTaskThreadIdsFor(preview), [work]);
+        assert.deepStrictEqual(
+          (yield* projections.listSpaceTaskEntries({ taskId: preview, limit: 10 })).map((entry) =>
+            entry.type === "system" ? entry.line.type : entry.type,
+          ),
+          ["task-created", "task-status", "task-handed-back", "task-thread-added"],
+        );
 
-      const handedBack = yield* projections.getThread(taskThreadId);
-      assert.strictEqual(handedBack.ownerId, rutvik);
-      assert.strictEqual(handedBack.title, "Preview renderer v2");
-      assert.strictEqual(
-        handedBack.space?.kind === "task" ? handedBack.space.handedBack?.reason : null,
-        "On leave this week",
-      );
-      const lines = (yield* projections.listSpaceRoomEntries({ spaceId, limit: 50 })).flatMap(
-        (entry) => (entry.type === "system" ? [entry.line.type] : []),
-      );
-      assert.deepStrictEqual(lines.slice(-2), ["task-created", "task-handed-back"]);
+        // Move to another space's task: a line leaves the old room and one joins the new.
+        const otherSpace = SpaceId.make("spc_00000000000000000b0b");
+        const otherRoom = ThreadId.make("thread:other-room");
+        yield* dispatch({
+          type: "space.create",
+          spaceId: otherSpace,
+          threadId: otherRoom,
+          commandId: commandId("create"),
+          actorId: kousik,
+          createdBy: "user",
+          creationSource: "web",
+          name: "Other",
+          brief: "",
+          repositoryIds: [projectId],
+          projectId,
+          memberIds: [],
+          modelSelection,
+        });
+        const elsewhere = task("3");
+        yield* dispatch({
+          type: "space.task.create",
+          spaceId: otherSpace,
+          threadId: otherRoom,
+          commandId: commandId("task"),
+          actorId: kousik,
+          taskId: elsewhere,
+          title: "Elsewhere",
+          description: "In the other space",
+          ownerId: kousik,
+          status: "todo",
+        });
+        const movedAcross = yield* linkThread(work, kousik, {
+          spaceId: otherSpace,
+          taskId: elsewhere,
+        });
+        assert.deepStrictEqual(streams(movedAcross), [
+          ["thread.metadata-updated", work],
+          ["space.room-entry", roomThreadId],
+          ["space.room-entry", otherRoom],
+        ]);
+        assert.deepStrictEqual(yield* projections.listSpaceTaskThreadIdsFor(preview), []);
+        assert.deepStrictEqual(yield* projections.listSpaceTaskThreadIdsFor(elsewhere), [work]);
 
-      // Its new owner starts it; after that anyone's message queues behind the turn.
-      yield* send(rutvik);
-      yield* send(kousik);
-    }),
+        // Detach removes the key.
+        const detached = yield* linkThread(work, kousik, null);
+        assert.deepStrictEqual(streams(detached), [
+          ["thread.metadata-updated", work],
+          ["space.room-entry", otherRoom],
+        ]);
+        assert.isUndefined((yield* projections.getThread(work)).space);
+        assert.deepStrictEqual(streams(yield* linkThread(work, kousik, null)), []);
+      }),
   );
 
+  it.effect("removing a member with reassignTo moves each open task in that commit", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      yield* dispatch({
+        type: "space.member.add",
+        ...base,
+        commandId: commandId("add"),
+        actorId: rutvik,
+        memberIds: [hanad, kousik],
+      });
+      const open = [task("10"), task("11")];
+      const done = task("12");
+      for (const taskId of [...open, done]) yield* createTask(rutvik, taskId, { ownerId: hanad });
+      yield* updateTask(hanad, done, {
+        type: "status",
+        status: "done",
+        by: { type: "member", memberId: hanad },
+        askedBy: null,
+      });
+      const removed = yield* dispatch({
+        type: "space.member.remove",
+        ...base,
+        commandId: commandId("remove"),
+        actorId: rutvik,
+        memberId: hanad,
+        reassignTo: kousik,
+      });
+      const updated = removed.storedEvents.flatMap(({ event }) =>
+        event.type === "space.task.updated" ? [event.payload.id] : [],
+      );
+      assert.deepStrictEqual(updated.toSorted(), open);
+      const line = removed.storedEvents.flatMap(({ event }) =>
+        event.type === "space.room-entry" && event.payload.type === "system"
+          ? [event.payload.line]
+          : [],
+      );
+      assert.deepStrictEqual(line, [
+        { type: "member-removed", memberId: hanad, reassignedTo: kousik, tasks: 2 },
+      ]);
+      for (const taskId of open) {
+        assert.strictEqual((yield* projections.getSpaceTask(taskId))?.ownerId, kousik);
+      }
+      assert.strictEqual((yield* projections.getSpaceTask(done))?.ownerId, hanad);
+    }),
+  );
   it.effect("members: owner-only adds, Undo restores joinedAt, owner must transfer to leave", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -396,147 +511,6 @@ it.layer(layer)("space orchestration", (it) => {
     }),
   );
 
-  it.effect("the service: create, views, typed refusals, and a task that waits for its owner", () =>
-    Effect.gen(function* () {
-      const spaces = yield* SpaceService.SpaceService;
-      const as = (memberId: MemberId) => ({ memberId, authorKind: "user" as const });
-      const { space } = yield* spaces.mutate(as(rutvik), {
-        type: "create",
-        name: "Billing",
-        brief: "",
-        projectId,
-        memberIds: [kousik],
-        modelSelection,
-      });
-      assert.isNotNull(space);
-      const spaceId = space!.id;
-      assert.match(spaceId, /^spc_[0-9a-f]{20}$/);
-
-      const outsider = yield* spaces.get(as(hanad), { spaceId });
-      assert.deepStrictEqual(
-        outsider.type === "not_member" ? [outsider.requested, outsider.memberCount] : null,
-        [false, 2],
-      );
-      const denied = yield* Effect.flip(
-        spaces.post(as(hanad), {
-          spaceId,
-          messageId: MessageId.make("message:svc-denied"),
-          text: "hi",
-          mentions: [],
-        }),
-      );
-      assert.strictEqual(denied.reason, "not-member");
-
-      const { threadId } = yield* spaces.task(as(rutvik), {
-        type: "create",
-        spaceId,
-        title: "Invoices",
-        description: "Export invoices as CSV",
-        ownerId: kousik,
-        modelSelection,
-        base: { baseRef: "main" },
-      });
-      assert.deepStrictEqual(launched, []);
-      const notOwner = yield* Effect.flip(spaces.task(as(rutvik), { type: "start", threadId }));
-      assert.strictEqual(notOwner.reason, "not-task-owner");
-      // The owner may reword the description before it goes out as the first message.
-      yield* spaces.task(as(kousik), {
-        type: "start",
-        threadId,
-        text: "Export invoices as CSV, newest first",
-      });
-      assert.deepStrictEqual(
-        launched.map((input) => [
-          input.threadId,
-          input.reuseExistingThread,
-          input.workspaceStrategy,
-          input.initialMessage?.text,
-          input.actorId,
-        ]),
-        [
-          [
-            threadId,
-            true,
-            { type: "cloud", baseRef: "main" },
-            "Export invoices as CSV, newest first",
-            kousik,
-          ],
-        ],
-      );
-
-      const view = yield* spaces.get(as(kousik), { spaceId, limit: 1 });
-      assert.strictEqual(view.type, "member");
-      if (view.type !== "member") return;
-      assert.deepStrictEqual(
-        view.tasks.map((task) => task.id),
-        [threadId],
-      );
-      assert.strictEqual(view.entries.length, 1);
-      assert.isTrue(view.hasMoreEntries);
-
-      const left = yield* spaces.mutate(as(kousik), { type: "leave", spaceId });
-      assert.isNull(left.space);
-    }),
-  );
-  it.effect("t3_space_manage runs the service's mutations as the connected member", () =>
-    Effect.gen(function* () {
-      const toolkit = yield* SpaceToolkit.pipe(
-        Effect.provide(McpToolAccess.HandlersLayer.layer(SpaceHandlers.layer)),
-      );
-      const manage = (memberId: MemberId, action: SpaceMutation) =>
-        toolkit.handle("t3_space_manage", { action }).pipe(
-          Stream.unwrap,
-          Stream.runCollect,
-          Effect.map((parts) => parts.at(-1)?.result),
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.succeed(McpInvocationContext.McpInvocationContext, {
-                environmentId: EnvironmentId.make("environment"),
-                requestNamespace: "client:session-1",
-                thread: undefined,
-                client: {
-                  sessionId: "session-1",
-                  memberId,
-                  label: "Claude Code",
-                  access: "full-access",
-                },
-                issuedAt: 0,
-                capabilities: new Set(["orchestration" as const]),
-              }),
-              Layer.mock(ThreadManagement.ThreadManagementService)({}),
-              NodeCrypto.layer,
-            ),
-          ),
-        );
-      const created = yield* manage(rutvik, {
-        type: "create",
-        name: "Agents",
-        brief: "",
-        projectId,
-        memberIds: [kousik],
-        modelSelection,
-      });
-      const spaceId = (created as { space: { spaceId: SpaceId } }).space.spaceId;
-      const summary = (name: string) => ({ space: { spaceId, name, archived: false } });
-      const rows: ReadonlyArray<readonly [MemberId, SpaceMutation, object]> = [
-        [rutvik, { type: "update", spaceId, name: "Agent tools" }, summary("Agent tools")],
-        [
-          kousik,
-          { type: "archive", spaceId },
-          {
-            code: "invalid_request",
-            message: `Space ${spaceId} refused space.archive: not-owner.`,
-          },
-        ],
-        [rutvik, { type: "member.add", spaceId, memberIds: [hanad] }, summary("Agent tools")],
-        [hanad, { type: "leave", spaceId }, { space: null }],
-      ];
-      for (const [memberId, action, expected] of rows) {
-        assert.deepInclude(yield* manage(memberId, action), expected, action.type);
-      }
-    }),
-  );
-
   it.effect("Pair's records: notes receipts, tombstones, one task per reply, never steering", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -552,9 +526,9 @@ it.layer(layer)("space orchestration", (it) => {
         creationSource: "web",
         name: "Pair",
         brief: "",
+        repositoryIds: [projectId],
         projectId,
         memberIds: [kousik],
-        pairBilling: { type: "team" },
         modelSelection,
       });
       const tagId = MessageId.make("message:pair-tag");
@@ -629,37 +603,41 @@ it.layer(layer)("space orchestration", (it) => {
         ["Postgres in Q3"],
       );
 
-      const createTask = (threadId: string, key: string) =>
+      const pairTask = task("a1e");
+      const createdId = spaceActionIdFor(tagId, "task-1");
+      const createByPair = (taskId: SpaceTaskId, key: string) =>
         dispatch({
-          type: "thread.create",
+          type: "space.task.create",
+          ...at,
           commandId: commandId("pair-task"),
           actorId: kousik,
-          threadId: ThreadId.make(threadId),
-          projectId,
+          taskId,
           title: "Migrate to SQLite",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdBy: "user",
-          creationSource: "server",
+          description: "Move the store to SQLite",
           ownerId: kousik,
-          space: {
-            kind: "task",
-            spaceId: pairSpace,
-            createdBy: kousik,
-            description: "Move the store to SQLite",
-            base: { baseRef: "main" },
-          },
-          via: { pair: via },
+          status: "todo",
+          via,
           spaceActionId: spaceActionIdFor(tagId, key),
         });
-      yield* createTask("thread:pair-task", "task-1");
-      const createdId = spaceActionIdFor(tagId, "task-1");
-      const created = yield* projections.getSpaceAction(createdId);
-      assert.deepInclude(created?.outcome, { type: "task.created", started: false });
-      // Only the tagger marks it started, once the start went through.
+      yield* createByPair(pairTask, "task-1");
+      assert.deepInclude((yield* projections.getSpaceAction(createdId))?.outcome, {
+        type: "task.created",
+        taskId: pairTask,
+        threadId: null,
+        started: false,
+      });
+      assert.include(yield* refusal(createByPair(task("a1f"), "task-2")), "over-limit");
+      // Only the tagger marks it started; the record names the thread they started on it.
+      const pairThreadId = ThreadId.make("thread:pair-task");
+      yield* createThread(pairThreadId, kousik);
+      yield* dispatch({
+        type: "space.thread.link",
+        commandId: commandId("link"),
+        threadId: pairThreadId,
+        actorId: kousik,
+        target: { spaceId: pairSpace, taskId: pairTask },
+        via: "start",
+      });
       const started = (actorId: MemberId) =>
         dispatch({
           type: "space.action.started",
@@ -672,9 +650,9 @@ it.layer(layer)("space orchestration", (it) => {
       yield* started(kousik);
       assert.deepInclude((yield* projections.getSpaceAction(createdId))?.outcome, {
         type: "task.created",
+        threadId: pairThreadId,
         started: true,
       });
-      assert.include(yield* refusal(createTask("thread:pair-task-2", "task-2")), "over-limit");
 
       const steer = (
         dispatchMode: { type: "start_immediately" } | { type: "queue_after_active" },
@@ -683,7 +661,7 @@ it.layer(layer)("space orchestration", (it) => {
           type: "message.dispatch",
           commandId: commandId("pair-message"),
           actorId: kousik,
-          threadId: ThreadId.make("thread:pair-task"),
+          threadId: pairThreadId,
           messageId: MessageId.make(`message:${counter}`),
           text: "Also drop the old tables",
           attachments: [],
@@ -701,6 +679,66 @@ it.layer(layer)("space orchestration", (it) => {
         yield* refusal(steer({ type: "queue_after_active" })),
         "refused a message from @pair: not-allowed",
       );
+
+      // Undo of the created task deletes it while untouched, and archives the thread it started.
+      const deleted = yield* dispatch({
+        type: "space.task.update",
+        ...at,
+        commandId: commandId("delete"),
+        actorId: kousik,
+        taskId: pairTask,
+        change: { type: "delete" },
+      });
+      assert.deepStrictEqual(streams(deleted), [
+        ["space.task.updated", pairRoom],
+        ["thread.archived", pairThreadId],
+      ]);
+      assert.isNotNull((yield* projections.getSpaceTask(pairTask))?.deletedAt);
+      const archived = yield* projections.getThread(pairThreadId);
+      assert.isNotNull(archived.archivedAt);
+      assert.isUndefined(archived.space);
+
+      // A thread Pair starts for the tagger records its action in the link's commit.
+      const ownTask = task("a20");
+      yield* dispatch({
+        type: "space.task.create",
+        ...at,
+        commandId: commandId("task"),
+        actorId: kousik,
+        taskId: ownTask,
+        title: "Seed roles",
+        description: "Seed the role catalog",
+        ownerId: kousik,
+        status: "todo",
+      });
+      const startedThreadId = ThreadId.make("thread:pair-started");
+      yield* createThread(startedThreadId, kousik);
+      const startId = spaceActionIdFor(tagId, "start-1");
+      const startedLink = yield* dispatch({
+        type: "space.thread.link",
+        commandId: commandId("link"),
+        threadId: startedThreadId,
+        actorId: kousik,
+        target: { spaceId: pairSpace, taskId: ownTask },
+        via: "start",
+        pairVia: via,
+        spaceActionId: startId,
+      });
+      assert.deepStrictEqual(streams(startedLink), [
+        ["thread.metadata-updated", startedThreadId],
+        ["space.room-entry", pairRoom],
+        ["space.action.updated", pairRoom],
+      ]);
+      assert.deepInclude(yield* projections.getSpaceAction(startId), {
+        state: "done",
+        actorId: kousik,
+        outcome: {
+          type: "thread.started",
+          taskId: ownTask,
+          threadId: startedThreadId,
+          title: "Seed roles",
+        },
+      });
     }),
   );
 });

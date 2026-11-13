@@ -32,6 +32,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.teamImageDismissProposal]: AuthSettingsWriteScope,
   [WS_METHODS.teamImageSetSecret]: AuthSettingsWriteScope,
   [WS_METHODS.teamImageRemoveSecret]: AuthSettingsWriteScope,
+  // @pair replies on this key in every space, so only admins replace or remove it.
+  [WS_METHODS.teamClaudeKeySet]: AuthSettingsWriteScope,
+  [WS_METHODS.teamClaudeKeyRemove]: AuthSettingsWriteScope,
   // A lease keeps a machine awake, so read-only sessions cannot hold one.
   [WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope,
   // The same stop `sandbox.sleep` and `sandbox.discard` send, by machine id.

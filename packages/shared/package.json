@@ -407,9 +407,9 @@
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
     },
-    "./spaceTaskState": {
-      "types": "./src/spaceTaskState.ts",
-      "import": "./src/spaceTaskState.ts"
+    "./spaceThreadActivity": {
+      "types": "./src/spaceThreadActivity.ts",
+      "import": "./src/spaceThreadActivity.ts"
     },
     "./usageLimits": {
       "types": "./src/usageLimits.ts",

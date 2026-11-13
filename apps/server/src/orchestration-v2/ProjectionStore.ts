@@ -9,6 +9,8 @@ import type {
   SpaceNoteItem,
   SpaceNoteTombstone,
   SpaceRoomEntry,
+  SpaceTask,
+  SpaceTaskId,
 } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
@@ -703,6 +705,27 @@ export interface ProjectionStoreV2Shape {
   readonly listSpaceTaskThreadIds: (
     spaceId: SpaceId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  /** Deleted tasks too; null when there never was one. */
+  readonly getSpaceTask: (
+    taskId: SpaceTaskId,
+  ) => Effect.Effect<SpaceTask | null, ProjectionStoreV2Error>;
+  /** The space's tasks that are not deleted, most recently changed first. */
+  readonly listSpaceTasks: (
+    spaceId: SpaceId,
+  ) => Effect.Effect<ReadonlyArray<SpaceTask>, ProjectionStoreV2Error>;
+  /** Open tasks (to do, in progress, in review) of these spaces, most recently changed first. */
+  readonly listOpenSpaceTasks: (
+    spaceIds: ReadonlyArray<SpaceId>,
+  ) => Effect.Effect<ReadonlyArray<SpaceTask>, ProjectionStoreV2Error>;
+  /** Threads on the task that are not deleted, newest first. */
+  readonly listSpaceTaskThreadIdsFor: (
+    taskId: SpaceTaskId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  /** The task's newest `limit` room lines, oldest first. */
+  readonly listSpaceTaskEntries: (input: {
+    readonly taskId: SpaceTaskId;
+    readonly limit: number;
+  }) => Effect.Effect<ReadonlyArray<SpaceRoomEntry>, ProjectionStoreV2Error>;
   /** Live (not deleted) threads using the sandbox, oldest first. */
   readonly listSandboxThreads: (
     sandboxId: SandboxId,
@@ -1193,6 +1216,19 @@ export function applyToProjection(
             thread: {
               ...projection.thread,
               space: { ...projection.thread.space, revision: event.payload.updatedAt },
+            },
+          }
+        : projection;
+    case "space.task.updated":
+      return projection.thread.space?.kind === "room"
+        ? {
+            ...projection,
+            thread: {
+              ...projection.thread,
+              space: {
+                ...projection.thread.space,
+                revision: DateTime.formatIso(event.occurredAt),
+              },
             },
           }
         : projection;
@@ -3248,6 +3284,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "space.notes.changed":
               yield* withSql(SpaceProjection.applySpaceNotesChanged(event));
               break;
+            case "space.task.updated": {
+              yield* withSql(SpaceProjection.applySpaceTaskUpdated(event));
+              // The revision is what makes each member's sidebar refetch `spaces.list`.
+              const revision = yield* encodeThreadUpdatedAt(event.occurredAt);
+              yield* sql`
+              UPDATE orchestration_v2_projection_threads
+              SET payload_json = json_set(payload_json, '$.space.revision', ${revision})
+              WHERE thread_id = ${event.threadId}
+                AND json_extract(payload_json, '$.space.kind') = 'room'
+            `;
+              break;
+            }
             case "context-transfer.created":
             case "context-transfer.updated": {
               const payloadJson = yield* encodeContextTransferPayload(event.payload);
@@ -3317,7 +3365,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "sandbox.access-changed" &&
             event.type !== "space.updated" &&
             event.type !== "space.action.updated" &&
-            event.type !== "space.notes.changed"
+            event.type !== "space.notes.changed" &&
+            event.type !== "space.task.updated"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
@@ -8265,6 +8314,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((ids) => ids.map((id) => ThreadId.make(id))),
         Effect.mapError(spaceReadError(spaceId)),
       );
+    const getSpaceTask: ProjectionStoreV2Shape["getSpaceTask"] = (taskId) =>
+      withSql(SpaceProjection.getSpaceTask(taskId)).pipe(Effect.mapError(spaceReadError(taskId)));
+    const listSpaceTasks: ProjectionStoreV2Shape["listSpaceTasks"] = (spaceId) =>
+      withSql(SpaceProjection.listSpaceTasks(spaceId)).pipe(
+        Effect.mapError(spaceReadError(spaceId)),
+      );
+    const listOpenSpaceTasks: ProjectionStoreV2Shape["listOpenSpaceTasks"] = (spaceIds) =>
+      withSql(SpaceProjection.listOpenSpaceTasks(spaceIds)).pipe(
+        Effect.mapError(spaceReadError("open-tasks")),
+      );
+    const listSpaceTaskThreadIdsFor: ProjectionStoreV2Shape["listSpaceTaskThreadIdsFor"] = (
+      taskId,
+    ) =>
+      withSql(SpaceProjection.listTaskThreadIds(taskId)).pipe(
+        Effect.map((ids) => ids.map((id) => ThreadId.make(id))),
+        Effect.mapError(spaceReadError(taskId)),
+      );
+    const listSpaceTaskEntries: ProjectionStoreV2Shape["listSpaceTaskEntries"] = (input) =>
+      withSql(SpaceProjection.listTaskEntries(input)).pipe(
+        Effect.mapError(spaceReadError(input.taskId)),
+      );
     const listSandboxThreads: ProjectionStoreV2Shape["listSandboxThreads"] = (sandboxId) =>
       withSql(SandboxProjection.listSandboxThreads(sandboxId)).pipe(
         Effect.mapError(sandboxReadError(sandboxId)),
@@ -8334,6 +8404,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listSpaceRoomEntries: readOnReader(listSpaceRoomEntries),
       getSpaceRoomEntry: readOnReader(getSpaceRoomEntry),
       listSpaceTaskThreadIds: readOnReader(listSpaceTaskThreadIds),
+      getSpaceTask: readOnReader(getSpaceTask),
+      listSpaceTasks: readOnReader(listSpaceTasks),
+      listOpenSpaceTasks: readOnReader(listOpenSpaceTasks),
+      listSpaceTaskThreadIdsFor: readOnReader(listSpaceTaskThreadIdsFor),
+      listSpaceTaskEntries: readOnReader(listSpaceTaskEntries),
       getSpaceAction: readOnReader(getSpaceAction),
       listSpaceActions: readOnReader(listSpaceActions),
       listSpaceRoomReplies: readOnReader(listSpaceRoomReplies),

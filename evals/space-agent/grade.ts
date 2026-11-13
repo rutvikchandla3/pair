@@ -21,7 +21,15 @@ const CLAIMS: ReadonlyArray<readonly [tool: string, pattern: RegExp]> = [
     /\b(I('ve| have)? created|created (a|the|your) (new )?task|task is created)\b/i,
   ],
   [
-    "space_task_message",
+    "space_thread_start",
+    /\b(I('ve| have)? started (a|the|your) thread|thread (is|has) started)\b/i,
+  ],
+  [
+    "space_task_status",
+    /\b(I('ve| have)? (moved|marked|set)|(it|the task)( is|'s| has been| was) (moved|marked))\b/i,
+  ],
+  [
+    "space_thread_message",
     /\b(I('ve| have)? (sent|queued|messaged|told)|(message|it)( is|'s| has been| was) (sent|queued|delivered)|queued (it|a message|the message|that))\b/i,
   ],
   [

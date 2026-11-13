@@ -1,4 +1,5 @@
 import {
+  isListedThreadLineage,
   isSpaceActiveMember,
   type MemberId,
   MessageId,
@@ -6,19 +7,21 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2SpaceCommand,
-  type ProjectId,
+  type OrchestrationV2SpaceTaskChange,
   type Space,
   SPACE_AGENT_DEFAULT_MODEL,
   SPACE_AGENT_INSTANCE_ID,
   SPACE_QUOTE_MAX_LENGTH,
+  type SpaceAction,
   type SpaceMention,
   type SpaceMember,
   type SpaceRoomEntry,
   type SpaceSystemLine,
+  type SpaceTask,
   type ThreadId,
   SpaceError,
   type SpaceId,
-  type ThreadSpace,
+  spaceTaskIsOpen,
   type ThreadSpaceTask,
 } from "@t3tools/contracts";
 
@@ -48,7 +51,7 @@ export function spaceMessageRefusal(
     return "A message @pair sends only queues; it never steers or restarts a turn.";
   }
   if (command.via !== undefined && thread.space?.kind !== "task") {
-    return "@pair only messages the tasks of a space.";
+    return "@pair only messages the threads on a space's tasks.";
   }
   const onSpaceAgent = command.modelSelection?.instanceId === SPACE_AGENT_INSTANCE_ID;
   const isRoom = thread.space?.kind === "room";
@@ -63,11 +66,25 @@ export function spaceMessageRefusal(
 export type SpaceRefusal = Exclude<SpaceError["reason"], "failed">;
 
 /** The cause an `OrchestratorDispatchError` carries, which `SpaceService` hands to the client. */
-export const spaceRefusal = (spaceId: SpaceId, action: string, reason: SpaceRefusal) =>
-  new SpaceError({ reason, message: `Space ${spaceId} refused ${action}: ${reason}.` });
+export const spaceRefusal = (
+  spaceId: SpaceId,
+  action: string,
+  reason: SpaceRefusal,
+  message?: string,
+) =>
+  new SpaceError({
+    reason,
+    message: message ?? `Space ${spaceId} refused ${action}: ${reason}.`,
+  });
+
+interface Refused {
+  readonly _tag: "Refuse";
+  readonly reason: SpaceRefusal;
+  readonly message?: string;
+}
 
 export type SpaceDecision =
-  | { readonly _tag: "Refuse"; readonly reason: SpaceRefusal }
+  | Refused
   | { readonly _tag: "NoOp" }
   | {
       readonly _tag: "Accept";
@@ -76,10 +93,17 @@ export type SpaceDecision =
       readonly entries: ReadonlyArray<SpaceRoomEntry>;
       /** Set when a human post tagged `@pair`: the reply to queue. */
       readonly pairReply: { readonly postId: MessageId; readonly taggerId: MemberId } | null;
+      /** Every task the command wrote, whole. */
+      readonly tasks: ReadonlyArray<SpaceTask>;
+      /** `@pair`'s record of what it did, in the same commit. */
+      readonly actions: ReadonlyArray<SpaceAction>;
+      /** Threads to take off their task and archive: the one `@pair`'s created-task Undo started. */
+      readonly archiveThreadIds: ReadonlyArray<ThreadId>;
     };
 
-const refuse = (reason: SpaceRefusal): SpaceDecision => ({ _tag: "Refuse", reason });
-const NO_OP: SpaceDecision = { _tag: "NoOp" };
+const refuse = (reason: SpaceRefusal, message?: string): Refused =>
+  message === undefined ? { _tag: "Refuse", reason } : { _tag: "Refuse", reason, message };
+const NO_OP = { _tag: "NoOp" } as const;
 
 const systemEntryId = (commandId: string, index = 0) =>
   MessageId.make(index === 0 ? `space-line:${commandId}` : `space-line:${commandId}:${index}`);
@@ -103,8 +127,21 @@ const systemEntry = (
 const accept = (
   space: Space | null,
   entries: ReadonlyArray<SpaceRoomEntry>,
-  pairReply: { readonly postId: MessageId; readonly taggerId: MemberId } | null = null,
-): SpaceDecision => ({ _tag: "Accept", space, entries, pairReply });
+  more: {
+    readonly pairReply?: { readonly postId: MessageId; readonly taggerId: MemberId } | null;
+    readonly tasks?: ReadonlyArray<SpaceTask>;
+    readonly actions?: ReadonlyArray<SpaceAction>;
+    readonly archiveThreadIds?: ReadonlyArray<ThreadId>;
+  } = {},
+): SpaceDecision => ({
+  _tag: "Accept",
+  space,
+  entries,
+  pairReply: more.pairReply ?? null,
+  tasks: more.tasks ?? [],
+  actions: more.actions ?? [],
+  archiveThreadIds: more.archiveThreadIds ?? [],
+});
 
 const uniqueIds = (ids: ReadonlyArray<MemberId>) => [...new Set(ids)];
 
@@ -125,19 +162,39 @@ const normalizeMentions = (
   return kept;
 };
 
-/** The Spaces core commands; `@pair`'s are decided in `SpaceAgentDecisions`. */
-export type SpaceCoreCommand = Exclude<OrchestrationV2SpaceCommand, SpaceAgentCommand>;
+export type SpaceThreadLinkCommand = Extract<
+  OrchestrationV2SpaceCommand,
+  { readonly type: "space.thread.link" }
+>;
+
+/** The Spaces core commands; `@pair`'s are decided in `SpaceAgentDecisions`, links below. */
+export type SpaceCoreCommand = Exclude<
+  OrchestrationV2SpaceCommand,
+  SpaceAgentCommand | SpaceThreadLinkCommand
+>;
+
+type TaskCreateCommand = Extract<SpaceCoreCommand, { readonly type: "space.task.create" }>;
+type TaskUpdateCommand = Extract<SpaceCoreCommand, { readonly type: "space.task.update" }>;
 
 export interface SpaceCommandInput {
   readonly command: SpaceCoreCommand;
   readonly space: Space | null;
   /** The entry a `space.post` quotes, read by the caller. */
   readonly quoted?: SpaceRoomEntry | null;
-  /** The task thread a `space.task.update` targets, and whether any run has been requested. */
-  readonly task?: {
-    readonly thread: OrchestrationV2AppThread;
-    readonly started: boolean;
-  } | null;
+  /** The task a `space.task.*` command names (null when there is none yet). */
+  readonly task?: SpaceTask | null;
+  /** `space.member.remove` / `space.leave`: the leaving member's tasks in this space. */
+  readonly memberTasks?: ReadonlyArray<SpaceTask>;
+  /** `space.task.create` via `@pair`: tasks it already created for this reply's post. */
+  readonly othersThisReply?: number;
+  /** `status` by an agent: whether that thread is on this task. */
+  readonly agentThreadOnTask?: boolean;
+  /** `status-undo`: the line it names, and `@pair`'s record of that move when it was Pair's. */
+  readonly undoLine?: SpaceRoomEntry | null;
+  readonly undoAction?: SpaceAction | null;
+  /** `delete`: the threads on the task, and `@pair`'s record of creating it. */
+  readonly taskThreadIds?: ReadonlyArray<ThreadId>;
+  readonly createdAction?: SpaceAction | null;
   readonly now: string;
 }
 
@@ -158,11 +215,11 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
       roomThreadId: command.threadId,
       name: command.name,
       brief: command.brief,
+      repositoryIds: command.repositoryIds,
       projectId: command.projectId,
       ownerId: actor,
       members,
       joinRequests: [],
-      pairBilling: command.pairBilling,
       createdBy: actor,
       createdAt: now,
       updatedAt: now,
@@ -173,9 +230,7 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
   }
 
   const space = input.space;
-  if (space === null || space.roomThreadId !== roomThreadOf(command, input)) {
-    return refuse("not-found");
-  }
+  if (space === null || space.roomThreadId !== command.threadId) return refuse("not-found");
   const isOwner = space.ownerId === actor;
   const isMember = isSpaceActiveMember(space, actor);
   const changed = (patch: Partial<Space>): Space => ({ ...space, ...patch, updatedAt: now });
@@ -186,15 +241,19 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
     case "space.update": {
       if (!isMember) return refuse("not-member");
       if (space.archivedAt !== null) return refuse("archived");
-      const ownerOnly =
-        (command.name !== undefined && command.name !== space.name) ||
-        (command.projectId !== undefined && command.projectId !== space.projectId) ||
-        (command.pairBilling !== undefined &&
-          !samePairBilling(command.pairBilling, space.pairBilling));
-      if (ownerOnly && !isOwner) return refuse("not-owner");
+      if ((command.repositoryIds === undefined) !== (command.projectId === undefined)) {
+        return refuse("not-allowed");
+      }
+      const repositoriesChanged =
+        command.repositoryIds !== undefined &&
+        command.projectId !== undefined &&
+        (command.projectId !== space.projectId ||
+          !sameIds(command.repositoryIds, space.repositoryIds));
+      const renamed = command.name !== undefined && command.name !== space.name;
+      if ((renamed || repositoriesChanged) && !isOwner) return refuse("not-owner");
       const lines: Array<SpaceSystemLine> = [];
       const patch: { -readonly [K in keyof Space]?: Space[K] } = {};
-      if (command.name !== undefined && command.name !== space.name) {
+      if (renamed && command.name !== undefined) {
         patch.name = command.name;
         lines.push({ type: "renamed", name: command.name });
       }
@@ -202,16 +261,18 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
         patch.brief = command.brief;
         lines.push({ type: "brief-edited" });
       }
-      if (command.projectId !== undefined && command.projectId !== space.projectId) {
-        patch.projectId = command.projectId as ProjectId;
-        lines.push({ type: "project-changed", projectId: command.projectId });
-      }
       if (
-        command.pairBilling !== undefined &&
-        !samePairBilling(command.pairBilling, space.pairBilling)
+        repositoriesChanged &&
+        command.repositoryIds !== undefined &&
+        command.projectId !== undefined
       ) {
-        patch.pairBilling = command.pairBilling;
-        lines.push({ type: "billing-changed", pairBilling: command.pairBilling });
+        patch.repositoryIds = command.repositoryIds;
+        patch.projectId = command.projectId;
+        lines.push({
+          type: "repositories-changed",
+          repositoryIds: command.repositoryIds,
+          projectId: command.projectId,
+        });
       }
       if (lines.length === 0) return NO_OP;
       return accept(
@@ -270,9 +331,20 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
       if (!isOwner) return refuse("not-owner");
       if (command.memberId === space.ownerId) return refuse("owner-cannot-leave");
       if (!isSpaceActiveMember(space, command.memberId)) return NO_OP;
-      return accept(changed({ members: withRemoved(space.members, command.memberId, now) }), [
-        line({ type: "member-removed", memberId: command.memberId }),
-      ]);
+      const handover = reassignTasks(space, command.memberId, command.reassignTo, input, actor);
+      if (handover === null) return refuse("not-a-target-member");
+      return accept(
+        changed({ members: withRemoved(space.members, command.memberId, now) }),
+        [
+          line({
+            type: "member-removed",
+            memberId: command.memberId,
+            reassignedTo: command.reassignTo ?? null,
+            tasks: handover.length,
+          }),
+        ],
+        { tasks: handover },
+      );
     }
     case "space.owner.transfer":
       if (!isOwner) return refuse("not-owner");
@@ -281,12 +353,23 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
       return accept(changed({ ownerId: command.ownerId }), [
         line({ type: "owner-transferred", ownerId: command.ownerId }),
       ]);
-    case "space.leave":
+    case "space.leave": {
       if (!isMember) return NO_OP;
       if (isOwner) return refuse("owner-cannot-leave");
-      return accept(changed({ members: withRemoved(space.members, actor, now) }), [
-        line({ type: "left" }),
-      ]);
+      const handover = reassignTasks(space, actor, command.reassignTo, input, actor);
+      if (handover === null) return refuse("not-a-target-member");
+      return accept(
+        changed({ members: withRemoved(space.members, actor, now) }),
+        [
+          line({
+            type: "left",
+            reassignedTo: command.reassignTo ?? null,
+            tasks: handover.length,
+          }),
+        ],
+        { tasks: handover },
+      );
+    }
     case "space.join.request":
       if (isMember) return NO_OP;
       if (space.joinRequests.some((request) => request.memberId === actor)) {
@@ -339,111 +422,455 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
         pairRequested,
         createdAt: now,
       };
-      return accept(
-        null,
-        [post],
-        pairRequested ? { postId: command.messageId, taggerId: actor } : null,
-      );
+      return accept(null, [post], {
+        pairReply: pairRequested ? { postId: command.messageId, taggerId: actor } : null,
+      });
     }
+    case "space.task.create":
+      return decideTaskCreate(command, space, input, now);
     case "space.task.update":
       return decideTaskUpdate(command, space, input, now);
   }
 }
 
+/** The leaver's open tasks, now `reassignTo`'s; null when `reassignTo` can't take them. */
+function reassignTasks(
+  space: Space,
+  leaving: MemberId,
+  reassignTo: MemberId | undefined,
+  input: SpaceCommandInput,
+  actor: MemberId,
+): ReadonlyArray<SpaceTask> | null {
+  if (reassignTo === undefined) return [];
+  if (reassignTo === leaving || !isSpaceActiveMember(space, reassignTo)) return null;
+  return (input.memberTasks ?? [])
+    .filter(
+      (task) =>
+        task.spaceId === space.id &&
+        task.ownerId === leaving &&
+        task.deletedAt === null &&
+        spaceTaskIsOpen(task.status),
+    )
+    .map((task) => ({
+      ...task,
+      ownerId: reassignTo,
+      assignedBy: reassignTo === actor ? null : actor,
+      handedBack: null,
+      remindedAt: null,
+      updatedAt: input.now,
+    }));
+}
+
+function decideTaskCreate(
+  command: TaskCreateCommand,
+  space: Space,
+  input: SpaceCommandInput,
+  now: string,
+): SpaceDecision {
+  const actor = command.actorId;
+  if (input.task != null) return refuse("already-exists");
+  if (!isSpaceActiveMember(space, actor)) return refuse("not-member");
+  if (space.archivedAt !== null) return refuse("archived");
+  if (!isSpaceActiveMember(space, command.ownerId)) return refuse("not-a-target-member");
+  const byPair = command.via !== undefined;
+  if (byPair && command.spaceActionId === undefined) return refuse("not-allowed");
+  if (byPair && (input.othersThisReply ?? 0) > 0) return refuse("over-limit");
+  const task: SpaceTask = {
+    id: command.taskId,
+    spaceId: space.id,
+    title: command.title,
+    description: command.description,
+    ownerId: command.ownerId,
+    createdBy: actor,
+    createdAt: now,
+    assignedBy: command.ownerId === actor ? null : actor,
+    status: command.status,
+    statusVersion: 1,
+    statusChangedAt: now,
+    statusChangedBy: { type: "member", memberId: actor },
+    handedBack: null,
+    remindedAt: null,
+    via: command.via ?? null,
+    updatedAt: now,
+    deletedAt: null,
+  };
+  const entry = (value: SpaceSystemLine, index: number) =>
+    systemEntry(space, actor, value, command.commandId, now, index);
+  const entries = [entry({ type: "task-created", taskId: task.id, ownerId: task.ownerId }, 0)];
+  if (task.status !== "todo") {
+    entries.push(
+      entry(
+        {
+          type: "task-status",
+          taskId: task.id,
+          from: "todo",
+          to: task.status,
+          by: task.statusChangedBy,
+          askedBy: null,
+          version: 1,
+          undoOf: null,
+        },
+        1,
+      ),
+    );
+  }
+  const actions: Array<SpaceAction> = [];
+  if (command.via !== undefined && command.spaceActionId !== undefined) {
+    actions.push({
+      id: command.spaceActionId,
+      spaceId: space.id,
+      request: {
+        type: "task.create",
+        title: task.title,
+        description: task.description,
+        ownerId: task.ownerId,
+        ...(task.ownerId === actor ? { start: true } : {}),
+      },
+      actorId: actor,
+      via: command.via,
+      state: "done",
+      outcome: {
+        type: "task.created",
+        taskId: task.id,
+        threadId: null,
+        ownerId: task.ownerId,
+        title: task.title,
+        // `space.action.started` sets it once a thread is on the task.
+        started: false,
+      },
+      proposal: null,
+      undo: null,
+      resolvedBy: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  return accept(null, entries, { tasks: [task], actions });
+}
+
 function decideTaskUpdate(
-  command: Extract<OrchestrationV2SpaceCommand, { readonly type: "space.task.update" }>,
+  command: TaskUpdateCommand,
   space: Space,
   input: SpaceCommandInput,
   now: string,
 ): SpaceDecision {
   const task = input.task;
-  const placement = task?.thread.space;
-  if (task == null || placement?.kind !== "task" || placement.spaceId !== space.id) {
+  const actor = command.actorId;
+  if (task == null || task.spaceId !== space.id || task.deletedAt !== null) {
     return refuse("not-a-task");
   }
-  if (!isSpaceActiveMember(space, command.actorId)) return refuse("not-member");
+  if (!isSpaceActiveMember(space, actor)) return refuse("not-member");
   if (space.archivedAt !== null) return refuse("archived");
-  if (task.started) return refuse("task-started");
-  switch (command.change.type) {
-    case "edit":
-    case "remind":
-      return placement.createdBy === command.actorId
-        ? accept(null, [])
-        : refuse("not-task-creator");
-    case "hand-back":
-      if (task.thread.ownerId !== command.actorId) return refuse("not-task-owner");
-      if (placement.createdBy === command.actorId) return refuse("own-task");
-      return accept(null, [
-        systemEntry(
-          space,
-          command.actorId,
-          { type: "task-handed-back", threadId: task.thread.id, reason: command.change.reason },
-          command.commandId,
-          now,
-        ),
-      ]);
-  }
-}
-
-/** The task's placement after an accepted `space.task.update`. */
-export function nextTaskPlacement(
-  placement: ThreadSpaceTask,
-  change: Extract<OrchestrationV2SpaceCommand, { readonly type: "space.task.update" }>["change"],
-  actorId: MemberId,
-  now: string,
-): ThreadSpaceTask {
+  const write = (patch: Partial<SpaceTask>): SpaceTask => ({ ...task, ...patch, updatedAt: now });
+  const entry = (value: SpaceSystemLine, actorId: MemberId = actor) =>
+    systemEntry(space, actorId, value, command.commandId, now);
+  const change: OrchestrationV2SpaceTaskChange = command.change;
+  const mayEdit = actor === task.createdBy || actor === task.ownerId;
   switch (change.type) {
-    case "edit":
-      return {
-        ...placement,
-        ...(change.description === undefined ? {} : { description: change.description }),
-        ...(change.base === undefined ? {} : { base: change.base }),
-      };
+    case "edit": {
+      if (!mayEdit) return refuse("not-task-creator");
+      const title = change.title ?? task.title;
+      const description = change.description ?? task.description;
+      if (title === task.title && description === task.description) return NO_OP;
+      return accept(null, [entry({ type: "task-edited", taskId: task.id })], {
+        tasks: [write({ title, description })],
+      });
+    }
+    case "reassign": {
+      if (!mayEdit) return refuse("not-task-creator");
+      if (!isSpaceActiveMember(space, change.ownerId)) return refuse("not-a-target-member");
+      if (change.ownerId === task.ownerId) return NO_OP;
+      return accept(
+        null,
+        [entry({ type: "task-assigned", taskId: task.id, from: task.ownerId, to: change.ownerId })],
+        {
+          tasks: [
+            write({
+              ownerId: change.ownerId,
+              assignedBy: change.ownerId === actor ? null : actor,
+              handedBack: null,
+              remindedAt: null,
+            }),
+          ],
+        },
+      );
+    }
+    case "hand-back": {
+      if (actor !== task.ownerId) return refuse("not-task-owner");
+      if (task.assignedBy === null || task.assignedBy === actor) return refuse("own-task");
+      return accept(
+        null,
+        [entry({ type: "task-handed-back", taskId: task.id, reason: change.reason })],
+        {
+          tasks: [
+            write({
+              ownerId: task.assignedBy,
+              assignedBy: null,
+              handedBack: { by: actor, reason: change.reason, at: now },
+              remindedAt: null,
+            }),
+          ],
+        },
+      );
+    }
     case "remind":
-      return { ...placement, remindedAt: now };
-    case "hand-back":
-      return { ...placement, handedBack: { by: actorId, reason: change.reason, at: now } };
+      if (actor !== (task.assignedBy ?? task.createdBy)) return refuse("not-task-creator");
+      if (actor === task.ownerId) return refuse("own-task");
+      return accept(null, [], { tasks: [write({ remindedAt: now })] });
+    case "status": {
+      if (change.by.type === "agent" && input.agentThreadOnTask !== true) {
+        return refuse("not-a-task");
+      }
+      const byPair = change.by.type === "pair";
+      if (
+        byPair !== (command.via !== undefined) ||
+        (byPair && command.spaceActionId === undefined)
+      ) {
+        return refuse("not-allowed");
+      }
+      if (change.status === task.status) return NO_OP;
+      const version = task.statusVersion + 1;
+      const line = entry(
+        {
+          type: "task-status",
+          taskId: task.id,
+          from: task.status,
+          to: change.status,
+          by: change.by,
+          askedBy: change.askedBy,
+          version,
+          undoOf: null,
+        },
+        change.askedBy ?? actor,
+      );
+      const moved = write({
+        status: change.status,
+        statusVersion: version,
+        statusChangedAt: now,
+        statusChangedBy: change.by,
+      });
+      const actions: Array<SpaceAction> = [];
+      if (command.via !== undefined && command.spaceActionId !== undefined) {
+        actions.push({
+          id: command.spaceActionId,
+          spaceId: space.id,
+          request: { type: "task.status", taskId: task.id, status: change.status },
+          actorId: actor,
+          via: command.via,
+          state: "done",
+          outcome: {
+            type: "task.status.moved",
+            taskId: task.id,
+            title: task.title,
+            from: task.status,
+            to: change.status,
+            entryId: line.id,
+          },
+          proposal: null,
+          undo: null,
+          resolvedBy: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return accept(null, [line], { tasks: [moved], actions });
+    }
+    case "status-undo": {
+      const undone = input.undoLine;
+      const moved =
+        undone?.type === "system" &&
+        undone.spaceId === space.id &&
+        undone.line.type === "task-status" &&
+        undone.line.taskId === task.id
+          ? undone.line
+          : null;
+      // An Undo bumps the version too, so a line undone once never matches again.
+      if (
+        moved === null ||
+        moved.by.type === "member" ||
+        moved.undoOf !== null ||
+        moved.version !== task.statusVersion
+      ) {
+        return refuse("not-undoable", "Status changed since");
+      }
+      const version = task.statusVersion + 1;
+      const by = { type: "member" as const, memberId: actor };
+      const action = input.undoAction;
+      return accept(
+        null,
+        [
+          entry({
+            type: "task-status",
+            taskId: task.id,
+            from: task.status,
+            to: moved.from,
+            by,
+            askedBy: null,
+            version,
+            undoOf: change.entryId,
+          }),
+        ],
+        {
+          tasks: [
+            write({
+              status: moved.from,
+              statusVersion: version,
+              statusChangedAt: now,
+              statusChangedBy: by,
+            }),
+          ],
+          actions:
+            moved.by.type === "pair" && action != null && action.state === "done"
+              ? [
+                  {
+                    ...action,
+                    state: "undone",
+                    undo: { by: actor, at: now, notUndone: [] },
+                    updatedAt: now,
+                  },
+                ]
+              : [],
+        },
+      );
+    }
+    case "delete": {
+      const created = input.createdAction;
+      const started =
+        created?.outcome?.type === "task.created" && created.outcome.taskId === task.id
+          ? created.outcome.threadId
+          : null;
+      const threads = input.taskThreadIds ?? [];
+      if (
+        task.via === null ||
+        task.statusVersion !== 1 ||
+        task.updatedAt !== task.createdAt ||
+        threads.some((threadId) => threadId !== started)
+      ) {
+        return refuse("not-undoable");
+      }
+      return accept(null, [], {
+        tasks: [write({ deletedAt: now })],
+        archiveThreadIds: threads,
+      });
+    }
   }
 }
 
-/** Until its first turn, a task's description is its owner's to send; nobody else starts it. */
-export function decideTaskMessage(input: {
-  readonly thread: Pick<OrchestrationV2AppThread, "ownerId" | "space">;
-  readonly started: boolean;
-  readonly actorId: MemberId | undefined;
-}): SpaceRefusal | null {
-  if (input.thread.space?.kind !== "task" || input.started) return null;
-  return input.actorId === input.thread.ownerId ? null : "not-task-owner";
-}
+export type SpaceThreadLinkDecision =
+  | Refused
+  | { readonly _tag: "NoOp" }
+  | {
+      readonly _tag: "Accept";
+      /** The thread's new `space`, or null to remove the key. */
+      readonly link: ThreadSpaceTask | null;
+      /** Each line with the room whose stream it goes on. */
+      readonly entries: ReadonlyArray<{
+        readonly roomThreadId: ThreadId;
+        readonly entry: SpaceRoomEntry;
+      }>;
+    };
 
-/** A new task: its creator must be a member of a live space, and so must its owner. */
-export function decideTaskCreate(input: {
-  readonly space: Space | null;
-  readonly placement: ThreadSpace;
-  readonly threadId: ThreadId;
-  readonly ownerId: MemberId;
-  readonly commandId: string;
+export interface SpaceThreadLinkInput {
+  readonly command: SpaceThreadLinkCommand;
+  readonly thread: OrchestrationV2AppThread | null;
+  /** The task the thread is on now, with its space; null when it is on none. */
+  readonly current: { readonly space: Space | null; readonly task: SpaceTask | null } | null;
+  readonly target: { readonly space: Space | null; readonly task: SpaceTask | null } | null;
   readonly now: string;
-}): SpaceDecision {
-  const { space, placement } = input;
-  if (placement.kind !== "task") return refuse("not-a-task");
-  if (space === null || space.id !== placement.spaceId) return refuse("not-found");
-  if (!isSpaceActiveMember(space, placement.createdBy)) return refuse("not-member");
-  if (space.archivedAt !== null) return refuse("archived");
-  if (!isSpaceActiveMember(space, input.ownerId)) return refuse("not-a-target-member");
-  return accept(null, [
-    systemEntry(
-      space,
-      placement.createdBy,
-      { type: "task-created", threadId: input.threadId, ownerId: input.ownerId },
-      input.commandId,
-      input.now,
-    ),
-  ]);
 }
 
-const roomThreadOf = (command: SpaceCoreCommand, input: SpaceCommandInput) =>
-  command.type === "space.task.update" ? (input.space?.roomThreadId ?? null) : command.threadId;
+/**
+ * Attach, move and remove are one rewrite of a thread's `space`. Only the thread's owner attaches
+ * or moves; removing is also the task's or the space's owner's, and the thread owner's even on an
+ * archived space, so the way out of sharing always exists.
+ */
+export function decideThreadLink(input: SpaceThreadLinkInput): SpaceThreadLinkDecision {
+  const { command, thread, current, target, now } = input;
+  const actor = command.actorId;
+  if (thread === null || thread.deletedAt !== null || thread.space?.kind === "room") {
+    return refuse("not-linkable");
+  }
+  const isThreadOwner = thread.ownerId === actor;
+  const placement = thread.space?.kind === "task" ? thread.space : null;
+  if (command.target === null) {
+    if (placement === null) return NO_OP;
+    const currentSpace = current?.space ?? null;
+    const isTaskOwner = current?.task?.ownerId === actor;
+    const isSpaceOwner = currentSpace?.ownerId === actor;
+    if (!isThreadOwner && !isTaskOwner && !isSpaceOwner) return refuse("not-thread-owner");
+    if (!isThreadOwner && currentSpace?.archivedAt != null) return refuse("archived");
+    return {
+      _tag: "Accept",
+      link: null,
+      entries: removedLine(input, placement, actor),
+    };
+  }
+  if (!isThreadOwner) return refuse("not-thread-owner");
+  if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) {
+    return refuse("not-linkable");
+  }
+  const space = target?.space ?? null;
+  const task = target?.task ?? null;
+  if (space === null || space.id !== command.target.spaceId) return refuse("not-found");
+  if (!isSpaceActiveMember(space, actor)) return refuse("not-member");
+  if (task === null || task.spaceId !== space.id || task.deletedAt !== null) {
+    return refuse("not-a-task");
+  }
+  if (space.archivedAt !== null) return refuse("archived");
+  if (placement?.taskId === task.id) return NO_OP;
+  const added = systemEntry(
+    space,
+    actor,
+    {
+      type: "task-thread-added",
+      taskId: task.id,
+      threadId: thread.id,
+      threadOwnerId: actor,
+      via: placement === null ? command.via : "move",
+    },
+    command.commandId,
+    now,
+    1,
+  );
+  return {
+    _tag: "Accept",
+    link: {
+      kind: "task",
+      spaceId: space.id,
+      taskId: task.id,
+      linkedBy: actor,
+      linkedAt: now,
+      via: command.via,
+    },
+    entries: [
+      ...(placement === null ? [] : removedLine(input, placement, actor)),
+      { roomThreadId: space.roomThreadId, entry: added },
+    ],
+  };
+}
+
+const removedLine = (input: SpaceThreadLinkInput, placement: ThreadSpaceTask, actor: MemberId) => {
+  const space = input.current?.space ?? null;
+  const owner = input.thread?.ownerId ?? actor;
+  if (space === null) return [];
+  return [
+    {
+      roomThreadId: space.roomThreadId,
+      entry: systemEntry(
+        space,
+        actor,
+        {
+          type: "task-thread-removed",
+          taskId: placement.taskId,
+          threadId: input.command.threadId,
+          threadOwnerId: owner,
+        },
+        input.command.commandId,
+        input.now,
+      ),
+    },
+  ];
+};
 
 const withRemoved = (
   members: ReadonlyArray<SpaceMember>,
@@ -456,6 +883,5 @@ const withRemoved = (
       : member,
   );
 
-const samePairBilling = (left: Space["pairBilling"], right: Space["pairBilling"]) =>
-  left.type === right.type &&
-  (left.type === "team" || (right.type === "member" && left.memberId === right.memberId));
+const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
+  left.length === right.length && left.every((id, index) => id === right[index]);

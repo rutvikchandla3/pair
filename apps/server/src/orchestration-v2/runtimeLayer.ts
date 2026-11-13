@@ -68,6 +68,7 @@ import * as TeamImageEffectsLive from "../sandbox/image/TeamImageEffectsLive.ts"
 import * as TeamImageService from "../sandbox/image/TeamImageService.ts";
 import * as TeamImageStore from "../sandbox/image/TeamImageStore.ts";
 import * as TeamImageWorker from "../sandbox/image/TeamImageWorker.ts";
+import * as TeamClaudeKey from "../team/TeamClaudeKey.ts";
 import * as SandboxAdmission from "../sandbox/lifecycle/SandboxAdmission.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "../sandbox/lifecycle/SandboxLifecycleWorker.ts";
@@ -533,6 +534,7 @@ export const layerProduction = Layer.mergeAll(
       ),
     ),
   ),
+  TeamClaudeKey.layer,
   SandboxReconciler.layer.pipe(
     Layer.provide(
       Layer.mergeAll(

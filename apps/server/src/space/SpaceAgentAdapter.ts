@@ -20,7 +20,6 @@ import {
   makeProviderFailureTurnItem,
   makeProviderRetryTurnItem,
 } from "@t3tools/provider-core/server/failure";
-import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -38,7 +37,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import { TeamClaudeKey } from "../team/TeamClaudeKey.ts";
 import { SpaceAgentAdapterSlot } from "./SpaceAgentAdapterSlot.ts";
 import { spaceReplyTrigger } from "./SpaceAgentDecisions.ts";
 import {
@@ -66,7 +65,6 @@ export const SPACE_AGENT_REQUEST_OPTIONS = {
   fallbacks: "default",
 } as const;
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
-const DEFAULT_BASE_URL = "https://api.anthropic.com";
 const ERROR_BODY_LIMIT = 4_096;
 
 const SpaceAgentCapabilities: OrchestrationV2ProviderCapabilities = {
@@ -342,50 +340,6 @@ const streamMessages = (
     }),
   );
 
-// ── The Team Claude key ────────────────────────────────────────────────
-
-export class SpaceAgentKeyMissingError extends Schema.TaggedError<SpaceAgentKeyMissingError>()(
-  "SpaceAgentKeyMissingError",
-  {},
-) {}
-
-/**
- * The first enabled server-owned `claudeAgent` instance (no `ownerMemberId`) with an
- * `ANTHROPIC_API_KEY` in its environment, and its `ANTHROPIC_BASE_URL` if set. Never the process
- * environment: replies are the team's, not whoever started the server.
- */
-const readTeamClaudeEndpoint = Effect.fn("SpaceAgentAdapter.readTeamClaudeEndpoint")(function* (
-  settingsService: ServerSettings.ServerSettingsService["Service"],
-  resolver: Option.Option<SecretResolver.SecretResolver["Service"]>,
-) {
-  const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => undefined));
-  const instances = Object.entries(settings?.providerInstances ?? {}).toSorted(([a], [b]) =>
-    a.localeCompare(b),
-  );
-  for (const [, instance] of instances) {
-    if (instance.driver !== "claudeAgent") continue;
-    if (instance.ownerMemberId !== undefined || instance.enabled === false) continue;
-    const variable = instance.environment?.find((entry) => entry.name === "ANTHROPIC_API_KEY");
-    if (variable === undefined) continue;
-    let apiKey: string | undefined;
-    if (typeof variable.value === "string") {
-      apiKey = variable.value;
-    } else if (Option.isSome(resolver)) {
-      [apiKey] = yield* resolver.value.read([variable.value]);
-    }
-    if (apiKey === undefined || apiKey.trim().length === 0) continue;
-    const baseUrl = instance.environment?.find((entry) => entry.name === "ANTHROPIC_BASE_URL");
-    return {
-      apiKey: Redacted.make(apiKey.trim()),
-      baseUrl:
-        typeof baseUrl?.value === "string" && baseUrl.value.trim().length > 0
-          ? baseUrl.value.trim()
-          : DEFAULT_BASE_URL,
-    } satisfies SpaceAgentEndpoint;
-  }
-  return yield* new SpaceAgentKeyMissingError();
-});
-
 // ── Failures (spaces-agent §8) ─────────────────────────────────────────
 
 const failureFor = (error: SpaceAgentCallError): OrchestrationV2ProviderFailure => {
@@ -400,7 +354,7 @@ const failureFor = (error: SpaceAgentCallError): OrchestrationV2ProviderFailure 
     case "rejected":
       return makeProviderFailure({
         class: "permission_error",
-        message: "The Team Claude key was rejected. An admin can replace it in Settings.",
+        message: "The Team Claude key was rejected. An admin can replace it in Settings → Team.",
         code: `http_${error.status ?? 401}`,
         retryable: false,
       });
@@ -430,7 +384,7 @@ const failureFor = (error: SpaceAgentCallError): OrchestrationV2ProviderFailure 
 
 const MISSING_KEY_FAILURE = makeProviderFailure({
   class: "permission_error",
-  message: "@pair needs a Team Claude key. An admin can add one in Settings.",
+  message: "@pair needs a Team Claude key. An admin can add one in Settings → Team.",
   code: "missing_key",
   retryable: false,
 });
@@ -545,9 +499,7 @@ export const make = Effect.gen(function* () {
   const context = yield* SpaceContext;
   const tools = yield* SpaceAgentTools;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const settings = yield* ServerSettings.ServerSettingsService;
-  const secrets = yield* Effect.serviceOption(SecretResolver.SecretResolver);
-  const readEndpoint = Effect.suspend(() => readTeamClaudeEndpoint(settings, secrets));
+  const readEndpoint = (yield* TeamClaudeKey).endpoint;
 
   const openSession = Effect.fn("SpaceAgentAdapter.openSession")(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,

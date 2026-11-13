@@ -12,12 +12,14 @@ import {
   SpaceActionId,
   SpaceId,
   SpaceNoteId,
+  type SpaceTaskId,
   ThreadId,
   type OrchestrationV2ThreadShell,
   type Space,
   type SpaceAction,
   type SpaceNoteItem,
   type SpaceRoomEntry,
+  type SpaceTask,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -79,6 +81,7 @@ const world = (entry: Case, now: DateTime.Utc) => {
     roomThreadId,
     name: "Data export" as Space["name"],
     brief: entry.brief as Space["brief"],
+    repositoryIds: [ProjectId.make("project-acme-app")] as unknown as Space["repositoryIds"],
     projectId: ProjectId.make("project-acme-app"),
     ownerId: members[0]!,
     members: members.map((memberId) => ({
@@ -88,7 +91,6 @@ const world = (entry: Case, now: DateTime.Utc) => {
       removedAt: null,
     })) as unknown as Space["members"],
     joinRequests: [],
-    pairBilling: { type: "team" },
     createdBy: members[0]!,
     createdAt: iso(60 * 24 * 7),
     updatedAt: iso(60),
@@ -106,34 +108,71 @@ const world = (entry: Case, now: DateTime.Utc) => {
     pairRequested: post.text.includes("@pair"),
     createdAt: iso(post.minutesAgo),
   }));
-  const shells = entry.tasks.map(
+  const tasks = entry.tasks.map(
     (task) =>
       ({
-        id: ThreadId.make(task.id),
+        id: task.id as SpaceTaskId,
+        spaceId,
         title: task.title,
+        description: task.description,
         ownerId: MemberId.make(task.owner),
-        latestRunId: task.state === "not-started" ? null : RunId.make(`run-${task.id}`),
-        activeRunId: task.state === "working" ? RunId.make(`run-${task.id}`) : null,
-        status: task.state === "done" ? "completed" : task.state === "working" ? "running" : "idle",
-        pendingRuntimeRequest:
-          task.state === "needs-approval" ? { kind: "command", blocking: true } : null,
-        lastErrorClass: null,
-        limitRecovery: null,
-        linkedPullRequest: null,
-        branchPullRequest: null,
-        pullRequests: [],
-        settledAt: null,
+        createdBy: members[0]!,
+        createdAt: iso(task.minutesAgo + 60),
+        assignedBy: members[0]!,
+        status: task.status,
+        statusVersion: 1,
+        statusChangedAt: iso(task.minutesAgo),
+        statusChangedBy: { type: "member", memberId: MemberId.make(task.owner) },
+        handedBack: null,
+        remindedAt: null,
+        via: null,
+        updatedAt: iso(task.minutesAgo),
         deletedAt: null,
-        updatedAt: ago(task.minutesAgo),
-        modelSelection: { instanceId: "codex", model: "gpt-5.1-codex" },
-        space: {
-          kind: "task",
-          spaceId,
-          createdBy: MemberId.make(task.owner),
-          description: task.description,
-          base: { baseRef: "main" },
-        },
-      }) as unknown as OrchestrationV2ThreadShell,
+      }) as unknown as SpaceTask,
+  );
+  const shells = entry.tasks.flatMap((task) =>
+    task.threads.map(
+      (thread) =>
+        ({
+          id: ThreadId.make(thread.id),
+          title: task.title,
+          ownerId: MemberId.make(thread.owner),
+          latestRunId: RunId.make(`run-${thread.id}`),
+          activeRunId: thread.activity === "working" ? RunId.make(`run-${thread.id}`) : null,
+          status:
+            thread.activity === "working"
+              ? "running"
+              : thread.activity === "failed"
+                ? "failed"
+                : "idle",
+          pendingRuntimeRequest:
+            thread.activity === "needs-approval"
+              ? { kind: "command", blocking: true }
+              : thread.activity === "needs-answer"
+                ? { kind: "user_input", blocking: true }
+                : null,
+          lastError: thread.activity === "failed" ? "Tests failed." : null,
+          lastErrorClass: null,
+          limitRecovery: null,
+          linkedPullRequest: null,
+          branchPullRequest: null,
+          pullRequests:
+            thread.pr === undefined ? [] : [{ number: 42, snapshot: { state: thread.pr } }],
+          settledAt: null,
+          deletedAt: null,
+          createdAt: ago(thread.minutesAgo + 30),
+          updatedAt: ago(thread.minutesAgo),
+          modelSelection: { instanceId: "codex", model: "gpt-5.1-codex" },
+          space: {
+            kind: "task",
+            spaceId,
+            taskId: task.id as SpaceTaskId,
+            linkedBy: MemberId.make(thread.owner),
+            linkedAt: iso(thread.minutesAgo + 30),
+            via: "start",
+          },
+        }) as unknown as OrchestrationV2ThreadShell,
+    ),
   );
   const notes: ReadonlyArray<SpaceNoteItem> = (entry.notes ?? []).map((note) => {
     const writer =
@@ -175,7 +214,8 @@ const world = (entry: Case, now: DateTime.Utc) => {
     state: "done",
     outcome: {
       type: "task.created",
-      threadId: ThreadId.make(action.outcome.threadId),
+      taskId: action.outcome.taskId as SpaceTaskId,
+      threadId: action.outcome.threadId === null ? null : ThreadId.make(action.outcome.threadId),
       ownerId: MemberId.make(action.outcome.ownerId),
       title: action.outcome.title as never,
       started: true,
@@ -194,6 +234,7 @@ const world = (entry: Case, now: DateTime.Utc) => {
       Effect.succeed(entries.find((candidate) => candidate.id === id) ?? null),
     listSpaceRoomReplies: () => Effect.succeed([]),
     listSpaceActions: () => Effect.succeed(actions),
+    listSpaceTasks: () => Effect.succeed(tasks),
     listSpaceTaskThreadIds: () => Effect.succeed(shells.map((shell) => shell.id)),
     getThreadShell: (id: ThreadId) =>
       Effect.succeed(shells.find((shell) => shell.id === id) ?? null),
@@ -258,6 +299,14 @@ const contextReport = (request: SpaceAgentRequest) => {
   return rows.map(([name, tokens]) => `${name.padEnd(16)} ~${tokens}`).join("\n");
 };
 
+const STATUS_LABELS = {
+  todo: "To do",
+  "in-progress": "In progress",
+  "in-review": "In review",
+  done: "Done",
+  canceled: "Canceled",
+} as const;
+
 /** Default results for tools a case doesn't mock: plausible reads, and writes that succeed. */
 const defaultTool = (entry: Case, name: string, input: Record<string, unknown>): unknown => {
   switch (name) {
@@ -270,28 +319,32 @@ const defaultTool = (entry: Case, name: string, input: Record<string, unknown>):
           message: `${String(input.taskId)} is not a task in this space.`,
         };
       }
-      const owner = MEMBERS.find((member) => member.id === task.owner)!.name;
+      const name = (id: string) => MEMBERS.find((member) => member.id === id)!.name;
       return {
         taskId: task.id,
         title: task.title,
+        status: STATUS_LABELS[task.status],
         owner: task.owner,
-        ownerName: owner,
-        status: {
-          "not-started": `Not started, waiting for ${owner}`,
-          working: "Working",
-          "needs-approval": `Needs ${owner}: approval`,
-          done: "Done",
-        }[task.state],
+        ownerName: name(task.owner),
+        createdBy: "Ana",
         description: task.description,
-        pendingRequest:
-          task.state === "needs-approval"
+        threads: task.threads.map((thread) => ({
+          threadId: thread.id,
+          title: task.title,
+          owner: thread.owner,
+          ownerName: name(thread.owner),
+          activity: thread.activity.replace("needs-", `needs ${name(thread.owner)}: `),
+          account: "codex · gpt-5.1-codex",
+          pullRequests: thread.pr === undefined ? [] : [{ number: 42, state: thread.pr }],
+          pendingRequest: thread.activity.startsWith("needs-")
             ? {
-                kind: "command",
-                note: "Only people who can open the task answer it, in the task. Pair can't.",
+                kind: thread.activity === "needs-approval" ? "command" : "user_input",
+                note: "Only people who can open the thread answer it, in the thread. Pair can't.",
               }
             : null,
-        queue: [],
-        latestTurn: null,
+          queue: [],
+          latestTurn: null,
+        })),
       };
     }
     case "space_search":
@@ -299,9 +352,32 @@ const defaultTool = (entry: Case, name: string, input: Record<string, unknown>):
     case "space_message_read":
       return { messageId: input.messageId, page: 1, pages: 1, text: "(no more text)" };
     case "space_task_create":
-      return { status: "done", taskId: "t_new", title: input.title, started: true };
-    case "space_task_message":
-      return { status: "done", note: "Queued after the task's current turn." };
+      return {
+        status: "done",
+        taskId: "t_new",
+        title: input.title,
+        started: input.startThread === true,
+      };
+    case "space_thread_start":
+      return {
+        status: "done",
+        taskId: input.taskId,
+        threadId: "th_new",
+        note: "It runs on the tagger's own account. The task's status didn't change.",
+      };
+    case "space_task_status": {
+      const task = entry.tasks.find((candidate) => candidate.id === input.taskId);
+      return {
+        status: "done",
+        taskId: input.taskId,
+        title: task?.title,
+        from: task?.status,
+        to: input.status,
+        note: "Shown in the room with Undo.",
+      };
+    }
+    case "space_thread_message":
+      return { status: "done", note: "Queued after the thread's current turn." };
     case "space_notes_edit":
       return { status: "done", note: "Shown to the room in this reply's receipt, with Undo." };
     default:
