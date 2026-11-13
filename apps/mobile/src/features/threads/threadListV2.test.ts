@@ -24,6 +24,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  SpaceId,
   ThreadId,
   type TeamMember,
 } from "@t3tools/contracts";
@@ -1356,8 +1357,16 @@ describe("cross-section thread drops", () => {
   });
 });
 
-it("excludes subagents from navigation, search and ordering while retaining user forks", () => {
+it("excludes subagents and space rooms from navigation, search and ordering while retaining user forks", () => {
   const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
+  const room = makeThread({
+    id: ThreadId.make("room"),
+    title: "Child room",
+    source: {
+      ...root.source,
+      space: { kind: "room", spaceId: SpaceId.make("spc_0a5f802f033aef633fa4") },
+    },
+  });
   const child = makeThread({
     id: ThreadId.make("child"),
     title: "Child",
@@ -1368,7 +1377,7 @@ it("excludes subagents from navigation, search and ordering while retaining user
     title: "Fork",
     lineage: { parentThreadId: root.id, rootThreadId: root.id, relationshipToParent: "fork" },
   });
-  const threads = [root, child, fork];
+  const threads = [root, child, fork, room];
   expect(
     buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW }).items.map(
       (item) => item.thread.id,

@@ -323,6 +323,15 @@ export function sortThreadsForListV2<
   return sortActiveThreadsByOrderKey(threads);
 }
 
+// Rooms and their tasks are listed under Spaces, not with ordinary threads, as on web.
+function isHomeListedThread(thread: EnvironmentThreadShell): boolean {
+  return (
+    thread.archivedAt === null &&
+    isListedThreadLineage(thread.lineage) &&
+    thread.source.space === undefined
+  );
+}
+
 export function getThreadListV2OrderedSection(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly section: "pinned" | "active";
@@ -335,7 +344,7 @@ export function getThreadListV2OrderedSection(input: {
 }): EnvironmentThreadShell[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threads = input.threads.filter((thread) => {
-    if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
+    if (!isHomeListedThread(thread)) return false;
     const settled =
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       thread.settledOverride === "settled" &&
@@ -764,8 +773,7 @@ export function buildThreadListV2Items(input: {
   const teamThreads = new Set<EnvironmentThreadShell>();
   const listedThreads = input.threads.filter((thread) => {
     if (
-      thread.archivedAt !== null ||
-      !isListedThreadLineage(thread.lineage) ||
+      !isHomeListedThread(thread) ||
       (input.environmentId !== null && thread.environmentId !== input.environmentId) ||
       (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`))
     ) {
