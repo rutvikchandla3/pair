@@ -1,6 +1,6 @@
 import { type StaticScreenProps, StackActions, useNavigation } from "@react-navigation/native";
 import { isSpaceOwner, orderSpaceMembers } from "@t3tools/client-runtime/spaces";
-import type { MemberId, ProjectId, SpacePairBilling } from "@t3tools/contracts";
+import type { MemberId, ProjectId } from "@t3tools/contracts";
 import { useState } from "react";
 import { View } from "react-native";
 
@@ -11,10 +11,10 @@ import { reportSpaceResult, spaceEnvironment } from "../../state/spaces";
 import { useTeamRoster } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
-  SpaceBillingRow,
   SpaceField,
   SpaceMemberChecklist,
-  SpaceProjectRow,
+  SpacePairKeyField,
+  SpaceRepositoriesField,
   SpaceTextField,
 } from "./SpaceFields";
 import { SpaceSheetFrame } from "./SpaceSheetFrame";
@@ -26,6 +26,7 @@ export function SpaceSettingsSheet(props: StaticScreenProps<SpaceSheetParams>) {
   const { members: roster } = useTeamRoster(environmentId);
   const mutate = useAtomCommand(spaceEnvironment.mutate, { reportFailure: false });
   const [name, setName] = useState<string | null>(null);
+  const [repositories, setRepositories] = useState<ReadonlyArray<ProjectId> | null>(null);
   const [adding, setAdding] = useState<ReadonlySet<MemberId>>(new Set());
   const [busy, setBusy] = useState(false);
   const close = () => navigation.goBack();
@@ -43,11 +44,16 @@ export function SpaceSettingsSheet(props: StaticScreenProps<SpaceSheetParams>) {
     setBusy(false);
     return reportSpaceResult(failure, result);
   };
-  const update = (patch: {
-    name?: string;
-    projectId?: ProjectId;
-    pairBilling?: SpacePairBilling;
-  }) => apply({ type: "update", spaceId: space.id, ...patch }, "Could not update the space");
+  const update = (patch: { name?: string; repositoryIds?: ReadonlyArray<ProjectId> }) =>
+    apply({ type: "update", spaceId: space.id, ...patch }, "Could not update the space");
+  const repositoriesChanged =
+    repositories !== null &&
+    (repositories.length !== space.repositoryIds.length ||
+      repositories.some((id, index) => id !== space.repositoryIds[index]));
+  const saveRepositories = async () => {
+    if (repositories === null || repositories.length === 0) return;
+    if (await update({ repositoryIds: repositories })) setRepositories(null);
+  };
   const addMembers = async (memberIds: ReadonlyArray<MemberId>) => {
     const added = await apply(
       { type: "member.add", spaceId: space.id, memberIds: [...memberIds] },
@@ -87,18 +93,28 @@ export function SpaceSettingsSheet(props: StaticScreenProps<SpaceSheetParams>) {
         onChangeText={setName}
         onBlur={saveName}
       />
-      <SpaceProjectRow
+      <SpaceRepositoriesField
         environmentId={environmentId}
-        value={space.projectId}
-        disabled={!controls.canManage}
-        onChange={(projectId) => void update({ projectId })}
+        value={repositories ?? space.repositoryIds}
+        spaceName={space.name}
+        spaceId={space.id}
+        disabled={!controls.canManage || busy}
+        note="New threads use the new set. Existing threads keep theirs."
+        onChange={setRepositories}
       />
-      <SpaceBillingRow
-        value={space.pairBilling}
-        viewer={viewer}
-        disabled={!controls.canManage}
-        onChange={(pairBilling) => void update({ pairBilling })}
-      />
+      {repositoriesChanged ? (
+        <View className="flex-row justify-end gap-2">
+          <Button label="Cancel" tone="text" onPress={() => setRepositories(null)} />
+          <Button
+            label="Save repositories"
+            tone="primary"
+            loading={busy}
+            disabled={repositories.length === 0}
+            onPress={() => void saveRepositories()}
+          />
+        </View>
+      ) : null}
+      <SpacePairKeyField environmentId={environmentId} />
       <SpaceField label={`Members (${members.length})`}>
         {members.map((member) => {
           const isOwner = isSpaceOwner(space, member.memberId);
@@ -182,13 +198,20 @@ export function SpaceSettingsSheet(props: StaticScreenProps<SpaceSheetParams>) {
           ) : null}
         </SpaceField>
       ) : null}
-      {controls.canLeave || controls.canArchive ? (
+      {controls.isMember ? (
         <View className="gap-3 pt-2">
           {controls.canArchive ? (
             <Button label="Archive space" icon="archivebox" onPress={() => confirm("archive")} />
           ) : null}
           {controls.canLeave ? (
-            <Button label="Leave space" tone="danger" onPress={() => confirm("leave")} />
+            <Button label="Leave space…" tone="danger" onPress={() => confirm("leave")} />
+          ) : controls.isOwner ? (
+            <View className="gap-1">
+              <Button label="Leave space" tone="danger" disabled onPress={() => undefined} />
+              <Text className="text-center text-xs text-foreground-muted">
+                Transfer ownership first
+              </Text>
+            </View>
           ) : null}
         </View>
       ) : null}

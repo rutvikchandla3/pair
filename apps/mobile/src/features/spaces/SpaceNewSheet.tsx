@@ -1,19 +1,14 @@
 import { type StaticScreenProps, StackActions, useNavigation } from "@react-navigation/native";
-import {
-  EnvironmentId,
-  type MemberId,
-  type ProjectId,
-  type SpacePairBilling,
-} from "@t3tools/contracts";
+import { EnvironmentId, type MemberId, type ProjectId } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { reportSpaceResult, spaceEnvironment, useSpaceViewer } from "../../state/spaces";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
-  SpaceBillingRow,
   SpaceField,
   SpaceMemberChecklist,
-  SpaceProjectRow,
+  SpacePairKeyField,
+  SpaceRepositoriesField,
   SpaceTextField,
   useSpaceModel,
 } from "./SpaceFields";
@@ -25,17 +20,16 @@ export function SpaceNewSheet(props: StaticScreenProps<{ readonly environmentId:
   const viewer = useSpaceViewer(environmentId);
   const mutate = useAtomCommand(spaceEnvironment.mutate, { reportFailure: false });
   const [name, setName] = useState("");
-  const [projectId, setProjectId] = useState<ProjectId | null>(null);
+  const [repositoryIds, setRepositoryIds] = useState<ReadonlyArray<ProjectId>>([]);
   const [brief, setBrief] = useState("");
   const [memberIds, setMemberIds] = useState<ReadonlySet<MemberId>>(new Set());
-  const [billing, setBilling] = useState<SpacePairBilling>({ type: "team" });
   const [busy, setBusy] = useState(false);
-  const model = useSpaceModel(environmentId, projectId, null).selection;
-  const ready = name.trim().length > 0 && projectId !== null && model !== null && !busy;
+  const model = useSpaceModel(environmentId, repositoryIds[0] ?? null, null).selection;
+  const ready = name.trim().length > 0 && repositoryIds.length > 0 && model !== null && !busy;
   const close = () => navigation.goBack();
 
   const create = async () => {
-    if (!ready || projectId === null || model === null) return;
+    if (!ready || model === null) return;
     setBusy(true);
     const result = await mutate({
       environmentId,
@@ -43,9 +37,8 @@ export function SpaceNewSheet(props: StaticScreenProps<{ readonly environmentId:
         type: "create",
         name: name.trim(),
         brief: brief.trim(),
-        projectId,
+        repositoryIds,
         memberIds: [...memberIds],
-        pairBilling: billing,
         modelSelection: model,
       },
     });
@@ -62,7 +55,7 @@ export function SpaceNewSheet(props: StaticScreenProps<{ readonly environmentId:
     <SpaceSheetFrame
       header={{
         title: "New space",
-        subtitle: "A room for your team and Pair, with its own tasks.",
+        subtitle: "Only members see this space. A thread runs on the account of whoever starts it.",
         onCancel: close,
         dismissDisabled: busy,
         confirm: {
@@ -80,7 +73,6 @@ export function SpaceNewSheet(props: StaticScreenProps<{ readonly environmentId:
         placeholder="Question creation"
         onChangeText={setName}
       />
-      <SpaceProjectRow environmentId={environmentId} value={projectId} onChange={setProjectId} />
       <SpaceField label="Members">
         <SpaceMemberChecklist
           environmentId={environmentId}
@@ -89,14 +81,21 @@ export function SpaceNewSheet(props: StaticScreenProps<{ readonly environmentId:
           onChange={setMemberIds}
         />
       </SpaceField>
+      <SpaceRepositoriesField
+        environmentId={environmentId}
+        value={repositoryIds}
+        spaceName={name}
+        note="New threads start here by default. You can pick another when you start one."
+        onChange={setRepositoryIds}
+      />
       <SpaceTextField
-        label="Brief"
+        label="Brief (optional)"
         multiline
         value={brief}
         placeholder="What this space is for. Pair reads it before every reply."
         onChangeText={setBrief}
       />
-      <SpaceBillingRow value={billing} viewer={viewer} onChange={setBilling} />
+      <SpacePairKeyField environmentId={environmentId} />
     </SpaceSheetFrame>
   );
 }

@@ -1,5 +1,6 @@
 import { activeTeamMembers, type TeamViewer } from "@t3tools/client-runtime/state/team";
 import type { EnvironmentId, TeamMember } from "@t3tools/contracts";
+import { Fragment } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -11,6 +12,7 @@ import { useTeamViewers } from "../../state/team";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { TeamClaudeKeyCard } from "./TeamClaudeKeyCard";
 import { OwnGitHubConnection } from "./TeamMemberGitHub";
 
 const STATUS_LABELS = { online: "Online", away: "Away" } as const;
@@ -98,17 +100,19 @@ export function SettingsTeamRouteScreen() {
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
     >
       {viewers.map(([environmentId, viewer], index) => (
-        <TeamSection
-          key={environmentId}
-          environmentId={environmentId}
-          viewer={viewer}
-          title={
-            viewers.length > 1
-              ? (savedConnectionsById[environmentId]?.environmentLabel ?? "Team server")
-              : undefined
-          }
-          footer={index === viewers.length - 1 ? "Manage members on the web." : undefined}
-        />
+        <Fragment key={environmentId}>
+          <TeamSection
+            environmentId={environmentId}
+            viewer={viewer}
+            title={
+              viewers.length > 1
+                ? (savedConnectionsById[environmentId]?.environmentLabel ?? "Team server")
+                : undefined
+            }
+            footer={index === viewers.length - 1 ? "Manage members on the web." : undefined}
+          />
+          <TeamClaudeKeyCard environmentId={environmentId} />
+        </Fragment>
       ))}
     </ScrollView>
   );

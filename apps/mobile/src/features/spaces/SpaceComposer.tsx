@@ -1,9 +1,12 @@
 import {
+  SPACE_PAIR_OFF_REASON,
   type SpaceMentionToken,
   type SpaceViewer,
   insertSpaceMention,
   resolveSpaceMentions,
+  spaceAskAdmin,
   spaceComposerHint,
+  spacePairOffHint,
   spaceMentionCandidates,
   spaceMentionQuery,
 } from "@t3tools/client-runtime/spaces";
@@ -14,6 +17,7 @@ import {
   type Space,
   type SpaceRoomEntry,
 } from "@t3tools/contracts";
+import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -21,10 +25,17 @@ import { MemberAvatar } from "../../components/MemberAvatar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { IconButton } from "../../components/ui/IconButton";
+import { cn } from "../../lib/cn";
 import { uuidv4 } from "../../lib/uuid";
-import { reportSpaceResult, spaceEnvironment } from "../../state/spaces";
+import {
+  reportSpaceResult,
+  spaceEnvironment,
+  useCanManageTeamClaudeKey,
+  useTeamClaudeKeyStatus,
+} from "../../state/spaces";
 import { useTeamRoster } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { openSettings } from "../settings/settings-navigation";
 
 export type SpacePost = Extract<SpaceRoomEntry, { type: "post" }>;
 
@@ -35,12 +46,23 @@ export function SpaceComposer(props: {
   readonly quote: SpacePost | null;
   readonly onQuoteChange: (quote: SpacePost | null) => void;
   readonly bottomInset: number;
+  /** "Ask again" fills it; the room remounts the composer with each new draft. */
+  readonly initialText?: string;
 }) {
+  const navigation = useNavigation();
   const { members } = useTeamRoster(props.environmentId);
+  const keyStatus = useTeamClaudeKeyStatus(props.environmentId);
+  const canManageKey = useCanManageTeamClaudeKey(props.environmentId);
+  const pairOff = spacePairOffHint(
+    keyStatus,
+    canManageKey,
+    spaceAskAdmin(props.space, members.values(), keyStatus),
+  );
+  const [drafted, setDrafted] = useState(false);
   const post = useAtomCommand(spaceEnvironment.post, { reportFailure: false });
-  const [text, setText] = useState("");
+  const [text, setText] = useState(props.initialText ?? "");
   // The draft as typed, read after a failed send to tell whether a new one was started.
-  const textRef = useRef("");
+  const textRef = useRef(props.initialText ?? "");
   const [caret, setCaret] = useState(0);
   const [selection, setSelection] = useState<{ start: number; end: number } | undefined>();
   const [tokens, setTokens] = useState<ReadonlyArray<SpaceMentionToken>>([]);
@@ -48,11 +70,12 @@ export function SpaceComposer(props: {
   const candidates =
     query === null ? [] : spaceMentionCandidates(query.query, props.space, props.viewer);
   const mentions = resolveSpaceMentions(text, tokens);
-  const hint = spaceComposerHint(mentions, props.space, props.viewer);
+  const hint = spaceComposerHint(mentions, props.viewer);
   const canSend = text.trim().length > 0;
 
   const choose = (token: SpaceMentionToken) => {
     if (query === null) return;
+    if (token.mention.type === "pair" && pairOff !== null) return;
     const next = insertSpaceMention(text, query, token);
     textRef.current = next.text;
     setText(next.text);
@@ -70,6 +93,7 @@ export function SpaceComposer(props: {
     setText("");
     setCaret(0);
     setTokens([]);
+    setDrafted(false);
     props.onQuoteChange(null);
     const result = await post({
       environmentId: props.environmentId,
@@ -104,13 +128,19 @@ export function SpaceComposer(props: {
           {candidates.map((token) => {
             const member =
               token.mention.type === "member" ? members.get(token.mention.memberId) : undefined;
+            const off = token.mention.type === "pair" && pairOff !== null;
             return (
               <Pressable
                 key={token.mention.type === "pair" ? "pair" : token.mention.memberId}
                 accessibilityRole="button"
                 accessibilityLabel={`Mention ${token.label}`}
+                accessibilityState={{ disabled: off }}
+                disabled={off}
                 onPress={() => choose(token)}
-                className="min-h-11 flex-row items-center gap-3 px-3 active:opacity-70"
+                className={cn(
+                  "min-h-11 flex-row items-center gap-3 px-3 active:opacity-70",
+                  off && "opacity-50",
+                )}
               >
                 {token.mention.type === "pair" ? (
                   <SymbolView name="sparkles" size={18} tintColorClassName="accent-icon" />
@@ -124,7 +154,9 @@ export function SpaceComposer(props: {
                   {token.label}
                 </Text>
                 {token.mention.type === "pair" ? (
-                  <Text className="text-xs text-foreground-muted">agent</Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {off ? SPACE_PAIR_OFF_REASON : "agent"}
+                  </Text>
                 ) : null}
               </Pressable>
             );
@@ -177,6 +209,42 @@ export function SpaceComposer(props: {
           {hint}
         </Text>
       )}
+      {pairOff === null ? null : (
+        <View className="flex-row items-center gap-2 px-2 pt-1">
+          <Text numberOfLines={1} className="min-w-0 flex-1 text-xs text-foreground-muted">
+            {drafted ? "Request drafted" : pairOff.text}
+          </Text>
+          {pairOff.action?.type === "add-key" ? (
+            <HintLink label="Add key" onPress={() => openSettings(navigation, "SettingsTeam")} />
+          ) : pairOff.action?.type === "ask" && !drafted ? (
+            <HintLink
+              label={pairOff.action.ask.label}
+              onPress={() => {
+                if (pairOff.action?.type !== "ask") return;
+                const { draft } = pairOff.action.ask;
+                textRef.current = draft.text;
+                setText(draft.text);
+                setCaret(draft.text.length);
+                setSelection({ start: draft.text.length, end: draft.text.length });
+                setTokens(draft.tokens);
+                setDrafted(true);
+              }}
+            />
+          ) : null}
+        </View>
+      )}
     </View>
+  );
+}
+
+function HintLink(props: { readonly label: string; readonly onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={props.onPress}
+      className="min-h-8 justify-center active:opacity-70"
+    >
+      <Text className="text-xs font-t3-medium text-primary-text">{props.label}</Text>
+    </Pressable>
   );
 }

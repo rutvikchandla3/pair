@@ -4,13 +4,13 @@ import { EnvironmentId, SpaceId } from "@t3tools/contracts";
 import {
   useCanOperateSpaces,
   useSpaceRoom,
-  useSpaceTasks,
+  useSpaceThreads,
   useSpaceViewer,
 } from "../../state/spaces";
 
 export type SpaceSheetParams = { readonly environmentId: string; readonly spaceId: string };
 
-const NO_TASKS: never[] = [];
+const NONE: never[] = [];
 
 /** The open space a sheet over the room acts on; `space` is null until the room is a member's. */
 export function useSheetSpace(params: SpaceSheetParams) {
@@ -20,7 +20,7 @@ export function useSheetSpace(params: SpaceSheetParams) {
   const viewer = useSpaceViewer(environmentId);
   const canOperate = useCanOperateSpaces(environmentId);
   const room = result.type === "ready" && result.room.type === "member" ? result.room : null;
-  const tasks = useSpaceTasks(environmentId, spaceId, room?.tasks ?? NO_TASKS);
+  const threads = useSpaceThreads(environmentId, spaceId, room?.threads ?? NONE);
   const space = room?.space ?? null;
   return {
     environmentId,
@@ -28,7 +28,9 @@ export function useSheetSpace(params: SpaceSheetParams) {
     viewer,
     canOperate,
     space,
-    tasks,
+    room,
+    tasks: room?.tasks ?? NONE,
+    threads,
     controls: space === null ? null : spaceControls(space, viewer.memberId, canOperate),
   };
 }

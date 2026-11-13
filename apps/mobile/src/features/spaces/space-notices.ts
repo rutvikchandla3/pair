@@ -2,8 +2,8 @@ import { useSyncExternalStore } from "react";
 
 export interface SpaceUndoNotice {
   readonly title: string;
-  readonly label: string;
-  readonly undo: () => void;
+  /** Without an action it is a plain toast, such as Undo's "Hanad is back." */
+  readonly action?: { readonly label: string; readonly run: () => void };
 }
 
 let notice: SpaceUndoNotice | null = null;

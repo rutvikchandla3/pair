@@ -1,5 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { useSpaceTaskComposerLock } from "../spaces/SpaceTask";
+import { useSpaceThreadHeader } from "../spaces/SpaceTask";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -423,10 +423,11 @@ function ThreadRouteContent(
     selectedEnvironmentConnection,
   } = useThreadSelection();
   useRememberThreadProject(selectedThreadProject);
-  const spaceTaskLock = useSpaceTaskComposerLock(
+  const spaceHeader = useSpaceThreadHeader(
     selectedThread?.environmentId ?? null,
     selectedThread?.id ?? null,
   );
+  const spaceTaskLock = spaceHeader?.lock ?? null;
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -638,6 +639,7 @@ function ThreadRouteContent(
           }),
         );
   const headerSubtitle = [
+    spaceHeader?.subtitle ?? null,
     threadMachine?.presentation.label ?? null,
     threadOwner === null ? null : `${threadOwner.name}'s thread`,
     selectedThreadProject?.title ?? null,
@@ -1142,6 +1144,7 @@ function ThreadRouteContent(
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
                 teamMenu={teamHeaderMenu}
+                spaceMenu={spaceHeader?.menu ?? null}
                 machineMenu={machineHeaderMenu ?? cloudHeaderMenu}
                 viewers={threadViewers}
                 accessChip={threadShare?.access.chip ?? null}

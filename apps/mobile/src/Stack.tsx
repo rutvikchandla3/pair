@@ -62,12 +62,16 @@ import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ContinueInCloudSheet } from "./features/threads/ContinueInCloudSheet";
 import { ShareThreadSheet } from "./features/threads/ShareThreadSheet";
+import { SpaceAttachThreadSheet } from "./features/spaces/SpaceAttachThreadSheet";
 import { SpaceConfirmSheet } from "./features/spaces/SpaceConfirmSheet";
 import { SpaceMembersSheet } from "./features/spaces/SpaceMembersSheet";
 import { SpaceNewSheet } from "./features/spaces/SpaceNewSheet";
 import { SpaceNewTaskSheet } from "./features/spaces/SpaceNewTaskSheet";
 import { SpaceRoomScreen } from "./features/spaces/SpaceRoomScreen";
 import { SpaceSettingsSheet } from "./features/spaces/SpaceSettingsSheet";
+import { SpaceStartThreadSheet } from "./features/spaces/SpaceStartThreadSheet";
+import { SpaceStatusSheet } from "./features/spaces/SpaceStatusSheet";
+import { SpaceTaskScreen } from "./features/spaces/SpaceTaskScreen";
 import { SpaceTasksSheet } from "./features/spaces/SpaceTasksSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
@@ -736,7 +740,24 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: "spaces/:environmentId/:spaceId",
       options: { headerShown: false },
     }),
+    SpaceTask: createNativeStackScreen({
+      screen: SpaceTaskScreen,
+      linking: "spaces/:environmentId/:spaceId/tasks/:taskId",
+      options: { headerShown: false },
+    }),
     SpaceTasks: createNativeStackScreen({ screen: SpaceTasksSheet, options: SPACE_SHEET_OPTIONS }),
+    SpaceTaskStatus: createNativeStackScreen({
+      screen: SpaceStatusSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
+    SpaceStartThread: createNativeStackScreen({
+      screen: SpaceStartThreadSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
+    SpaceAttachThread: createNativeStackScreen({
+      screen: SpaceAttachThreadSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
     SpaceMembers: createNativeStackScreen({
       screen: SpaceMembersSheet,
       options: SPACE_SHEET_OPTIONS,

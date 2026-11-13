@@ -65,24 +65,36 @@ function normalizeThreadDeepLink(value: string): string | null {
 
   const parts = value.split("/");
   const root = parts[1];
-  if (parts.length !== 4 || parts[0] !== "" || (root !== "threads" && root !== "spaces")) {
+  if (parts[0] !== "" || (root !== "threads" && root !== "spaces")) {
+    return null;
+  }
+  const isTask = root === "spaces" && parts.length === 6 && parts[4] === "tasks";
+  if (parts.length !== 4 && !isTask) {
     return null;
   }
 
   try {
-    return encodeThreadDeepLink(
+    const link = encodeThreadDeepLink(
       {
         environmentId: decodeURIComponent(parts[2] ?? ""),
         threadId: decodeURIComponent(parts[3] ?? ""),
       },
       root,
     );
+    if (link === null || !isTask) return link;
+    const taskId = decodeURIComponent(parts[5] ?? "");
+    return taskId.length === 0 ? null : `${link}/tasks/${encodeURIComponent(taskId)}`;
   } catch {
     return null;
   }
 }
 
+/** The thread, room or space task the pathname shows, as its notification deep link. */
 export function threadDeepLinkOnScreen(pathname: string): string | null {
+  const task = /^\/spaces\/([^/]+)\/([^/]+)\/tasks\/([^/]+)(?:\/|$)/.exec(pathname);
+  if (task?.[1] && task[2] && task[3]) {
+    return `/spaces/${task[1]}/${task[2]}/tasks/${task[3]}`;
+  }
   const match = /^\/(threads|spaces)\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
   if (!match?.[2] || !match[3]) {
     return null;

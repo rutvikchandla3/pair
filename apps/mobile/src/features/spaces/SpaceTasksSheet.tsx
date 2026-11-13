@@ -1,9 +1,8 @@
 import { type StaticScreenProps, StackActions, useNavigation } from "@react-navigation/native";
 import {
-  SPACE_OVERVIEW_SECTIONS,
   type SpaceOverviewSectionId,
   groupSpaceOverview,
-  spaceTaskDetail,
+  spaceThreadsByTask,
 } from "@t3tools/client-runtime/spaces";
 import * as DateTime from "effect/DateTime";
 import { useState } from "react";
@@ -12,24 +11,28 @@ import { Pressable, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { MemberAvatar } from "../../components/MemberAvatar";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { relativeTime } from "../../lib/time";
 import { reportSpaceResult, spaceEnvironment } from "../../state/spaces";
+import { useTeamRoster } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SpaceSheetFrame } from "./SpaceSheetFrame";
-import { SpaceStatusIcon } from "./SpaceStatusIcon";
+import { SpaceActivityGlyph, SpaceTaskStatusIcon, spaceToneTextClass } from "./SpaceStatusIcon";
 import { type SpaceSheetParams, useSheetSpace } from "./useSheetSpace";
 
-type Tab = "overview" | "notes";
+type Tab = "tasks" | "notes";
 
 export function SpaceTasksSheet(props: StaticScreenProps<SpaceSheetParams>) {
   const navigation = useNavigation();
-  const { environmentId, space, controls, viewer, tasks } = useSheetSpace(props.route.params);
-  const mutate = useAtomCommand(spaceEnvironment.mutate, { reportFailure: false });
-  const [tab, setTab] = useState<Tab>("overview");
-  const [collapsed, setCollapsed] = useState<ReadonlySet<SpaceOverviewSectionId>>(
-    () => new Set(SPACE_OVERVIEW_SECTIONS.filter((s) => s.collapsedByDefault).map((s) => s.id)),
+  const { environmentId, space, controls, viewer, tasks, threads } = useSheetSpace(
+    props.route.params,
   );
+  const { members } = useTeamRoster(environmentId);
+  const mutate = useAtomCommand(spaceEnvironment.mutate, { reportFailure: false });
+  const [tab, setTab] = useState<Tab>("tasks");
+  // Toggled against each section's default, so Done and Canceled start collapsed.
+  const [toggled, setToggled] = useState<ReadonlySet<SpaceOverviewSectionId>>(new Set());
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const close = () => navigation.goBack();
@@ -40,11 +43,11 @@ export function SpaceTasksSheet(props: StaticScreenProps<SpaceSheetParams>) {
       </SpaceSheetFrame>
     );
   }
-  const sections = groupSpaceOverview(tasks, viewer);
+  const sections = groupSpaceOverview(tasks, spaceThreadsByTask(threads), viewer);
   const toggle = (id: SpaceOverviewSectionId) => {
-    const next = new Set(collapsed);
+    const next = new Set(toggled);
     if (!next.delete(id)) next.add(id);
-    setCollapsed(next);
+    setToggled(next);
   };
   const params = { environmentId, spaceId: space.id };
   const saveBrief = async () => {
@@ -68,13 +71,13 @@ export function SpaceTasksSheet(props: StaticScreenProps<SpaceSheetParams>) {
       <SegmentedControl
         role="tab"
         options={[
-          { value: "overview", label: "Overview" },
+          { value: "tasks", label: "Tasks" },
           { value: "notes", label: "Notes" },
         ]}
         selected={tab}
         onSelect={setTab}
       />
-      {tab === "overview" ? (
+      {tab === "tasks" ? (
         <View className="gap-3">
           {sections.length === 0 ? (
             <Text className="py-6 text-center text-sm text-foreground-muted">
@@ -82,7 +85,7 @@ export function SpaceTasksSheet(props: StaticScreenProps<SpaceSheetParams>) {
             </Text>
           ) : null}
           {sections.map((section) => {
-            const expanded = !collapsed.has(section.id);
+            const expanded = section.collapsedByDefault === toggled.has(section.id);
             return (
               <View key={section.id}>
                 <Pressable
@@ -108,40 +111,78 @@ export function SpaceTasksSheet(props: StaticScreenProps<SpaceSheetParams>) {
                   <Text className="text-xs text-foreground-muted">{section.rows.length}</Text>
                 </Pressable>
                 {expanded
-                  ? section.rows.map(({ thread, status }) => (
-                      <Pressable
-                        key={thread.id}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${thread.title}, ${status.label}`}
-                        onPress={() => {
-                          navigation.goBack();
-                          navigation.dispatch(
-                            StackActions.push("Thread", { environmentId, threadId: thread.id }),
-                          );
-                        }}
-                        className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle py-2 active:opacity-70"
-                      >
-                        <SpaceStatusIcon
-                          icon={status.icon}
-                          tone={status.tone}
-                          label={status.label}
-                          size={18}
-                        />
-                        <View className="min-w-0 flex-1">
-                          <Text numberOfLines={1} className="text-base text-foreground">
-                            {thread.title}
-                          </Text>
-                          <Text numberOfLines={1} className="text-xs text-foreground-muted">
-                            {[status.label, spaceTaskDetail(thread, status, space, viewer)]
-                              .filter((part) => part !== "")
-                              .join(" · ")}
-                          </Text>
-                        </View>
-                        <Text className="text-xs text-foreground-muted">
-                          {relativeTime(DateTime.formatIso(thread.updatedAt))}
-                        </Text>
-                      </Pressable>
-                    ))
+                  ? section.rows.map(({ task, status, activity, activityAt }) => {
+                      const owner =
+                        task.ownerId === viewer.memberId ? "You" : viewer.nameOf(task.ownerId);
+                      return (
+                        <Pressable
+                          key={task.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${task.title}, ${status.label}, ${activity.text}`}
+                          accessibilityHint="Long-press to change status"
+                          onPress={() => {
+                            navigation.goBack();
+                            navigation.dispatch(
+                              StackActions.push("SpaceTask", { ...params, taskId: task.id }),
+                            );
+                          }}
+                          onLongPress={
+                            controls.canCreateTask
+                              ? () =>
+                                  navigation.dispatch(
+                                    StackActions.push("SpaceTaskStatus", {
+                                      ...params,
+                                      taskId: task.id,
+                                    }),
+                                  )
+                              : undefined
+                          }
+                          className={
+                            section.band
+                              ? "min-h-14 gap-1 border-t border-border-subtle py-2 opacity-60 active:opacity-40"
+                              : "min-h-14 gap-1 border-t border-border-subtle py-2 active:opacity-70"
+                          }
+                        >
+                          <View className="flex-row items-center gap-2.5">
+                            <SpaceTaskStatusIcon
+                              icon={status.icon}
+                              tone={status.tone}
+                              label={status.label}
+                              size={16}
+                            />
+                            <Text
+                              numberOfLines={1}
+                              className="min-w-0 flex-1 text-base text-foreground"
+                            >
+                              {task.title}
+                            </Text>
+                            <Text className="text-xs text-foreground-muted">
+                              {relativeTime(DateTime.formatIso(DateTime.makeUnsafe(activityAt)))}
+                            </Text>
+                          </View>
+                          <View className="flex-row items-center gap-1.5 ps-[26px]">
+                            <MemberAvatar
+                              size="sm"
+                              member={{
+                                name: viewer.nameOf(task.ownerId),
+                                color: members.get(task.ownerId)?.color ?? "#71717a",
+                              }}
+                            />
+                            <Text className="text-xs text-foreground-secondary">{owner}</Text>
+                            <Text className="text-xs text-foreground-muted">·</Text>
+                            {activity.glyph === null ? null : (
+                              <SpaceActivityGlyph glyph={activity.glyph} tone={activity.tone} />
+                            )}
+                            <Text
+                              numberOfLines={1}
+                              className={`min-w-0 flex-1 text-xs ${spaceToneTextClass(activity.tone)}`}
+                            >
+                              {activity.text}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })
                   : null}
               </View>
             );
@@ -152,6 +193,11 @@ export function SpaceTasksSheet(props: StaticScreenProps<SpaceSheetParams>) {
               icon="plus"
               onPress={() => navigation.dispatch(StackActions.replace("SpaceNewTask", params))}
             />
+          ) : null}
+          {controls.canCreateTask && sections.length > 0 ? (
+            <Text className="text-center text-xs text-foreground-muted">
+              Long-press a task to change its status.
+            </Text>
           ) : null}
         </View>
       ) : (

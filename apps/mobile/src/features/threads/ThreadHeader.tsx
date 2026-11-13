@@ -115,7 +115,7 @@ export function ThreadHeader(
         trailing={trailing}
         onBack={layout.usesSplitView ? undefined : goBack}
         actions={androidHeaderActions}
-        menus={[props.machineMenu, props.teamMenu].filter((menu) => menu != null)}
+        menus={[props.machineMenu, props.teamMenu, props.spaceMenu].filter((menu) => menu != null)}
         hideBottomBorder
         compact={composerKeyboardActive}
       />

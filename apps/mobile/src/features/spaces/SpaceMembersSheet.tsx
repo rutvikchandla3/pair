@@ -7,6 +7,8 @@ import { View } from "react-native";
 import { MemberAvatar } from "../../components/MemberAvatar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { Menu } from "../../components/ui/Menu";
 import { reportSpaceResult, spaceEnvironment } from "../../state/spaces";
 import { useTeamRoster } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -51,6 +53,59 @@ export function SpaceMembersSheet(props: StaticScreenProps<SpaceSheetParams>) {
     setBusy(false);
     reportSpaceResult("Could not add", result);
   };
+  const confirm = (action: "leave" | "remove" | "transfer", memberId?: MemberId) =>
+    navigation.dispatch(
+      StackActions.replace("SpaceConfirm", {
+        environmentId,
+        spaceId: space.id,
+        action,
+        ...(memberId === undefined ? {} : { memberId }),
+      }),
+    );
+  const memberActions = (memberId: MemberId) => {
+    const name = viewer.nameOf(memberId);
+    if (memberId === viewer.memberId) {
+      return controls.canLeave
+        ? [{ id: "leave", title: "Leave space…", attributes: { destructive: true } }]
+        : controls.isOwner
+          ? [
+              {
+                id: "leave",
+                title: "Leave space",
+                subtitle: "Transfer ownership first",
+                attributes: { disabled: true },
+              },
+            ]
+          : [];
+    }
+    if (!controls.canManage) return [];
+    return [
+      { id: "transfer", title: `Make ${name} owner…` },
+      { id: "remove", title: `Remove ${name}…`, attributes: { destructive: true } },
+    ];
+  };
+  const memberMenu = (memberId: MemberId) => {
+    const actions = memberActions(memberId);
+    if (actions.length === 0) return null;
+    return (
+      <Menu
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={`Actions for ${viewer.nameOf(memberId)}`}
+        actions={actions}
+        onPressAction={({ nativeEvent }) => {
+          const id = nativeEvent.event;
+          if (id === "leave") confirm("leave");
+          else if (id === "remove" || id === "transfer") confirm(id, memberId);
+        }}
+      >
+        <ControlPill
+          icon="ellipsis"
+          accessibilityLabel={`Actions for ${viewer.nameOf(memberId)}`}
+        />
+      </Menu>
+    );
+  };
   const requests = controls.canManage ? space.joinRequests : [];
   const openSettings = () =>
     navigation.dispatch(
@@ -62,9 +117,12 @@ export function SpaceMembersSheet(props: StaticScreenProps<SpaceSheetParams>) {
         {orderSpaceMembers(space).map((member) =>
           row(
             member.memberId,
-            member.memberId === space.ownerId ? (
-              <Text className="text-xs text-foreground-muted">Owner</Text>
-            ) : null,
+            <>
+              {member.memberId === space.ownerId ? (
+                <Text className="text-xs text-foreground-muted">Owner</Text>
+              ) : null}
+              {memberMenu(member.memberId)}
+            </>,
           ),
         )}
       </View>

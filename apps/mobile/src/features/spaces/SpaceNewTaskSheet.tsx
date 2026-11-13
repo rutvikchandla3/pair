@@ -1,13 +1,18 @@
 import { type StaticScreenProps, StackActions, useNavigation } from "@react-navigation/native";
-import { orderSpaceMembers } from "@t3tools/client-runtime/spaces";
-import { MemberId, type ModelSelection } from "@t3tools/contracts";
+import {
+  SPACE_TASK_STATUSES,
+  orderSpaceMembers,
+  spaceTaskStatusInfo,
+} from "@t3tools/client-runtime/spaces";
+import { MemberId, type SpaceTaskStatus } from "@t3tools/contracts";
 import { useState } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { reportSpaceResult, spaceEnvironment } from "../../state/spaces";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SpaceModelRow, SpaceSelectRow, SpaceTextField, useSpaceModel } from "./SpaceFields";
+import { SpaceSelectRow, SpaceTextField, useSpaceThreadStart } from "./SpaceFields";
 import { SpaceSheetFrame } from "./SpaceSheetFrame";
 import { type SpaceSheetParams, useSheetSpace } from "./useSheetSpace";
 
@@ -17,12 +22,11 @@ export function SpaceNewTaskSheet(props: StaticScreenProps<SpaceSheetParams>) {
   const task = useAtomCommand(spaceEnvironment.task, { reportFailure: false });
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [status, setStatus] = useState<SpaceTaskStatus>("todo");
   const [ownerId, setOwnerId] = useState<MemberId | null>(viewer.memberId);
-  const [picked, setPicked] = useState<ModelSelection | null>(null);
-  const [baseRef, setBaseRef] = useState("main");
-  const [branch, setBranch] = useState("");
+  const [startNow, setStartNow] = useState(false);
   const [busy, setBusy] = useState(false);
-  const model = useSpaceModel(environmentId, space?.projectId ?? null, picked).selection;
+  const thread = useSpaceThreadStart(environmentId, space);
   const close = () => navigation.goBack();
   if (space === null) {
     return (
@@ -32,18 +36,18 @@ export function SpaceNewTaskSheet(props: StaticScreenProps<SpaceSheetParams>) {
     );
   }
   const mine = ownerId !== null && ownerId === viewer.memberId;
+  const starting = mine && startNow;
   const ready =
     title.trim().length > 0 &&
     description.trim().length > 0 &&
-    baseRef.trim().length > 0 &&
     ownerId !== null &&
-    model !== null &&
+    (!starting || thread.start !== null) &&
     !busy;
   const nameOf = (memberId: MemberId) =>
     memberId === viewer.memberId ? "You" : viewer.nameOf(memberId);
 
   const create = async () => {
-    if (!ready || ownerId === null || model === null) return;
+    if (!ready || ownerId === null) return;
     setBusy(true);
     const result = await task({
       environmentId,
@@ -53,35 +57,35 @@ export function SpaceNewTaskSheet(props: StaticScreenProps<SpaceSheetParams>) {
         title: title.trim(),
         description: description.trim(),
         ownerId,
-        modelSelection: model,
-        base: {
-          baseRef: baseRef.trim(),
-          ...(branch.trim() === "" ? {} : { branch: branch.trim() }),
-        },
+        status,
+        ...(starting && thread.start !== null ? { start: thread.start } : {}),
       },
     });
     setBusy(false);
     if (!reportSpaceResult("Could not create the task", result)) return;
-    if (result._tag !== "Success") return;
+    if (result._tag !== "Success" || result.value.task === null) return;
     close();
-    if (mine) {
-      navigation.dispatch(
-        StackActions.push("Thread", { environmentId, threadId: result.value.threadId }),
-      );
-    }
+    const threadId = result.value.threadId;
+    navigation.dispatch(
+      threadId === undefined
+        ? StackActions.push("SpaceTask", {
+            environmentId,
+            spaceId: space.id,
+            taskId: result.value.task.id,
+          })
+        : StackActions.push("Thread", { environmentId, threadId }),
+    );
   };
 
   return (
     <SpaceSheetFrame
       header={{
-        title: `New task in ${space.name}`,
-        subtitle: mine
-          ? "It starts at once on your account."
-          : "It waits for its owner to start it on their account.",
+        title: "New task",
+        subtitle: space.name,
         onCancel: close,
         dismissDisabled: busy,
         confirm: {
-          label: mine ? "Create and start" : "Create task",
+          label: starting ? "Create and start" : "Create task",
           onPress: () => void create(),
           disabled: !ready,
           loading: busy,
@@ -90,42 +94,60 @@ export function SpaceNewTaskSheet(props: StaticScreenProps<SpaceSheetParams>) {
     >
       <SpaceTextField label="Title" autoFocus value={title} onChangeText={setTitle} />
       <SpaceTextField
-        label="What to do"
+        label="Description"
         multiline
         value={description}
         onChangeText={setDescription}
       />
-      <SpaceSelectRow
-        label="Owner"
-        value={ownerId === null ? "Choose an owner" : nameOf(ownerId)}
-        actions={orderSpaceMembers(space).map((member) => ({
-          id: member.memberId,
-          title: nameOf(member.memberId),
-          state: member.memberId === ownerId ? "on" : "off",
-        }))}
-        onSelect={(id) => setOwnerId(MemberId.make(id))}
-      />
-      {mine ? (
-        <SpaceModelRow
-          environmentId={environmentId}
-          projectId={space.projectId}
-          value={picked}
-          onChange={setPicked}
-        />
-      ) : null}
       <View className="flex-row gap-3">
         <View className="flex-1">
-          <SpaceTextField label="Base" value={baseRef} onChangeText={setBaseRef} />
+          <SpaceSelectRow
+            label="Status"
+            value={spaceTaskStatusInfo(status).label}
+            actions={SPACE_TASK_STATUSES.map((info) => ({
+              id: info.status,
+              title: info.label,
+              state: info.status === status ? "on" : "off",
+            }))}
+            onSelect={(id) => setStatus(id as SpaceTaskStatus)}
+          />
         </View>
         <View className="flex-1">
-          <SpaceTextField
-            label="Branch (optional)"
-            value={branch}
-            placeholder="New from base"
-            onChangeText={setBranch}
+          <SpaceSelectRow
+            label="Owner"
+            value={ownerId === null ? "Choose an owner" : nameOf(ownerId)}
+            actions={orderSpaceMembers(space).map((member) => ({
+              id: member.memberId,
+              title: nameOf(member.memberId),
+              state: member.memberId === ownerId ? "on" : "off",
+            }))}
+            onSelect={(id) => setOwnerId(MemberId.make(id))}
           />
         </View>
       </View>
+      {mine ? (
+        <>
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: startNow }}
+            onPress={() => setStartNow(!startNow)}
+            className="min-h-11 flex-row items-center gap-3 active:opacity-70"
+          >
+            <SymbolView
+              name={startNow ? "checkmark.circle" : "circle"}
+              size={20}
+              tintColorClassName={startNow ? "accent-icon" : "accent-icon-muted"}
+            />
+            <Text className="min-w-0 flex-1 text-base text-foreground">Start a thread now</Text>
+          </Pressable>
+          {startNow ? thread.fields : null}
+        </>
+      ) : (
+        <Text className="text-sm text-foreground-muted">
+          Assigning runs nothing. {ownerId === null ? "The owner" : viewer.nameOf(ownerId)} starts a
+          thread when they are ready.
+        </Text>
+      )}
     </SpaceSheetFrame>
   );
 }

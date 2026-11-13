@@ -1,11 +1,11 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import {
-  type SpaceOverviewRow,
   isSpaceOwner,
-  spaceTasksNeedingViewer,
+  spaceSidebarTasks,
+  spaceTaskStatusInfo,
 } from "@t3tools/client-runtime/spaces";
-import type { EnvironmentId, OrchestrationV2ThreadShell, Space } from "@t3tools/contracts";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import type { EnvironmentId, Space, SpaceTask } from "@t3tools/contracts";
+import { type ReactNode, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -23,9 +23,8 @@ import {
   useSpaceViewer,
 } from "../../state/spaces";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SpaceStatusIcon } from "./SpaceStatusIcon";
+import { SpaceTaskStatusIcon } from "./SpaceStatusIcon";
 
-const SUB_ROWS = 2;
 const ROW = "min-h-11 flex-row items-center gap-3 px-4 active:opacity-70";
 
 /** Assigned to me and Spaces, above the thread list, for each environment that hosts spaces. */
@@ -75,24 +74,30 @@ function SectionHeader(props: {
 
 function TaskRow(props: {
   readonly environmentId: EnvironmentId;
-  readonly row: SpaceOverviewRow<OrchestrationV2ThreadShell>;
+  readonly task: SpaceTask;
+  readonly detail?: string;
 }) {
   const navigation = useNavigation();
-  const { thread, status } = props.row;
+  const { task } = props;
+  const status = spaceTaskStatusInfo(task.status);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${thread.title}, ${status.label}`}
+      accessibilityLabel={`${task.title}, ${props.detail ?? status.label}`}
       onPress={() =>
         navigation.dispatch(
-          StackActions.push("Thread", { environmentId: props.environmentId, threadId: thread.id }),
+          StackActions.push("SpaceTask", {
+            environmentId: props.environmentId,
+            spaceId: task.spaceId,
+            taskId: task.id,
+          }),
         )
       }
       className={cn(ROW, "ps-11")}
     >
-      <SpaceStatusIcon icon={status.icon} tone={status.tone} label={status.label} size={16} />
+      <SpaceTaskStatusIcon icon={status.icon} tone={status.tone} label={status.label} size={16} />
       <Text numberOfLines={1} className="min-w-0 flex-1 text-base text-foreground">
-        {thread.title}
+        {task.title}
       </Text>
     </Pressable>
   );
@@ -101,40 +106,33 @@ function TaskRow(props: {
 function HomeSpacesForEnvironment(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
   const navigation = useNavigation();
-  const { spaces, refresh } = useSpaceList(environmentId);
+  const { spaces, tasks } = useSpaceList(environmentId);
   const shells = useSpaceSidebarShells(environmentId);
   const viewer = useSpaceViewer(environmentId);
   const canOperate = useCanOperateSpaces(environmentId);
   const [assignedOpen, setAssignedOpen] = useState(false);
   const [spacesOpen, setSpacesOpen] = useState(true);
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const listedRooms = useRef(shells.roomsKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the server's space list when a room is shared with or taken from this member
-  useEffect(() => {
-    if (listedRooms.current === shells.roomsKey) return;
-    listedRooms.current = shells.roomsKey;
-    refresh();
-  }, [shells.roomsKey, refresh]);
 
   const activeSpaces = spaces.filter((space) => space.archivedAt === null);
   const archived = spaces.filter((space) => space.archivedAt !== null);
-  // From the shells, not the list: a removed member still sees the tasks they kept.
-  const needing = spaceTasksNeedingViewer(shells.tasks, viewer);
+  const sidebar = spaceSidebarTasks({ spaces, tasks }, shells.taskThreads, viewer);
+  const assigned = sidebar.assignedToMe;
 
   return (
     <View className="pb-2">
       <SectionHeader
         label="Assigned to me"
         expanded={assignedOpen}
-        count={needing.length}
+        count={assigned.length}
         onToggle={() => setAssignedOpen(!assignedOpen)}
       />
       {assignedOpen ? (
-        needing.length === 0 ? (
-          <Text className="px-11 pb-2 text-sm text-foreground-muted">Nothing needs you.</Text>
+        assigned.length === 0 ? (
+          <Text className="px-11 pb-2 text-sm text-foreground-muted">No open tasks.</Text>
         ) : (
-          needing.map((row) => (
-            <TaskRow key={row.thread.id} environmentId={environmentId} row={row} />
+          assigned.map((task) => (
+            <TaskRow key={task.id} environmentId={environmentId} task={task} />
           ))
         )
       ) : null}
@@ -160,9 +158,8 @@ function HomeSpacesForEnvironment(props: { readonly environmentId: EnvironmentId
             </Text>
           ) : null}
           {activeSpaces.map((space) => {
-            const mine = needing.filter((row) => row.thread.space?.spaceId === space.id);
-            const shown = mine.slice(0, SUB_ROWS);
-            const more = mine.length - shown.length;
+            const entry = sidebar.spaces.get(space.id);
+            const more = entry?.more ?? 0;
             return (
               <View key={space.id}>
                 <SpaceRow
@@ -170,8 +167,13 @@ function HomeSpacesForEnvironment(props: { readonly environmentId: EnvironmentId
                   space={space}
                   unread={shells.unreadRoomIds.has(space.roomThreadId)}
                 />
-                {shown.map((row) => (
-                  <TaskRow key={row.thread.id} environmentId={environmentId} row={row} />
+                {entry?.needsYou.map((row) => (
+                  <TaskRow
+                    key={row.task.id}
+                    environmentId={environmentId}
+                    task={row.task}
+                    detail={row.activity.text}
+                  />
                 ))}
                 {more > 0 ? (
                   <Pressable
@@ -183,7 +185,9 @@ function HomeSpacesForEnvironment(props: { readonly environmentId: EnvironmentId
                     }
                     className={cn(ROW, "ps-11")}
                   >
-                    <Text className="text-sm text-foreground-muted">{more} more</Text>
+                    <Text className="text-sm text-foreground-muted">
+                      {more === 1 ? "1 more task" : `${more} more tasks`}
+                    </Text>
                   </Pressable>
                 ) : null}
               </View>

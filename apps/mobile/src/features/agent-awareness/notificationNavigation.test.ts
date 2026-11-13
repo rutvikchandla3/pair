@@ -110,14 +110,28 @@ describe("extractAgentNotificationDeepLink", () => {
     ).toBe("/settings/machines");
   });
 
-  it("opens the room from a space push, and knows when it is already on screen", () => {
+  it("opens the room or a task from a space push, and knows when it is already on screen", () => {
     expect(
       extractAgentNotificationDeepLink(responseWithData({ deepLink: "/spaces/env%201/spc_1" })),
     ).toBe("/spaces/env%201/spc_1");
     expect(
-      extractAgentNotificationDeepLink(responseWithData({ deepLink: "/spaces/env/spc_1/x" })),
-    ).toBeNull();
+      extractAgentNotificationDeepLink(
+        responseWithData({ deepLink: "/spaces/env%201/spc_1/tasks/stk_1" }),
+      ),
+    ).toBe("/spaces/env%201/spc_1/tasks/stk_1");
+    for (const deepLink of [
+      "/spaces/env/spc_1/x",
+      "/spaces/env/spc_1/tasks",
+      "/spaces/env/spc_1/tasks/",
+      "/spaces/env/spc_1/notes/stk_1",
+      "/threads/env/thr_1/tasks/stk_1",
+    ]) {
+      expect(extractAgentNotificationDeepLink(responseWithData({ deepLink }))).toBeNull();
+    }
     expect(threadDeepLinkOnScreen("/spaces/env%201/spc_1")).toBe("/spaces/env%201/spc_1");
+    expect(threadDeepLinkOnScreen("/spaces/env%201/spc_1/tasks/stk_1")).toBe(
+      "/spaces/env%201/spc_1/tasks/stk_1",
+    );
   });
 
   it("opens Archived threads from a team archive push", () => {

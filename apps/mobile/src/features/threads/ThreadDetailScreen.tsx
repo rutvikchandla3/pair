@@ -172,7 +172,6 @@ import type {
   ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
-import { SpaceTaskStartBar, useUnstartedSpaceTask } from "../spaces/SpaceTask";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { ThreadMachineNotices } from "./ThreadMachineNotices";
@@ -487,11 +486,6 @@ function ThreadDetailBody(
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
-  // Until its owner starts it, a space task has no machine, so the composer waits.
-  const unstartedSpaceTask = useUnstartedSpaceTask(
-    props.draftMode ? null : props.environmentId,
-    props.draftMode ? null : props.selectedThread.id,
-  );
   const editingRunId = props.queuedRunEdit?.runId ?? null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the composer editor on the next animation frame when a queued run edit starts
   useEffect(() => {
@@ -1795,12 +1789,6 @@ function ThreadDetailBody(
                         }
                       />
                     </View>
-                  ) : unstartedSpaceTask !== null ? (
-                    <SpaceTaskStartBar
-                      environmentId={props.environmentId}
-                      task={unstartedSpaceTask}
-                      bottomInset={composerBottomInset}
-                    />
                   ) : (
                     <>
                       <ThreadComposer

@@ -1,35 +1,27 @@
 import { useAtomMount, useAtomRefresh } from "@effect/atom-react";
-import {
-  type StaticScreenProps,
-  StackActions,
-  useIsFocused,
-  useNavigation,
-} from "@react-navigation/native";
+import { type StaticScreenProps, useIsFocused, useNavigation } from "@react-navigation/native";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type SpaceFeedRow,
   type SpaceRoomMemberState,
   type SpaceRoomState,
   type SpaceViewer,
+  groupSpaceOverview,
+  isSpaceTaskLineEntry,
   joinedSpaceOlderEntries,
   orderSpaceMembers,
   prependSpaceEntries,
   spaceControls,
   spaceFeedRows,
+  spaceHeaderWorkspaceLabel,
   spaceNewDividerIndex,
   spaceSystemLineText,
-  spaceTaskStatus,
-  spaceTasksNeedingViewer,
+  spaceThreadsByTask,
   splitSpacePostText,
 } from "@t3tools/client-runtime/spaces";
+import { spacePairFeedItems, spacePairRoom } from "@t3tools/client-runtime/spaceAgent";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
-import {
-  EnvironmentId,
-  type Space,
-  SpaceId,
-  type SpaceRoomEntry,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, type Space, SpaceId, type SpaceRoomEntry } from "@t3tools/contracts";
 import { type ReactNode, useState } from "react";
 import { FlatList, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
@@ -44,17 +36,18 @@ import { IconButton } from "../../components/ui/IconButton";
 import { Menu } from "../../components/ui/Menu";
 import { Toast } from "../../components/ui/Toast";
 import { cn } from "../../lib/cn";
-import { useProject, useThreadShell } from "../../state/entities";
+import { useProject, useProjects, useThreadShell } from "../../state/entities";
 import {
   reportSpaceResult,
   spaceEnvironment,
   useCanOperateSpaces,
   useSpaceOlderEntries,
   useSpaceRoom,
-  useSpaceTasks,
+  useSpaceThreads,
   useSpaceViewer,
 } from "../../state/spaces";
 import { useTeamRoster } from "../../state/team";
+import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { type SpacePost, SpaceComposer } from "./SpaceComposer";
@@ -64,7 +57,8 @@ import {
   useSpaceLeft,
   useSpaceUndoNotice,
 } from "./space-notices";
-import { SpaceStatusIcon } from "./SpaceStatusIcon";
+import { type SpacePairFeedContext, SpacePairFeedRow, SpacePairStatus } from "./SpacePairFeed";
+import { SpaceRecordLine } from "./SpaceRecordLine";
 
 type Params = { readonly environmentId: string; readonly spaceId: string };
 
@@ -228,15 +222,18 @@ function SpaceRoom(props: {
   const { members } = useTeamRoster(environmentId);
   const canOperate = useCanOperateSpaces(environmentId);
   const controls = spaceControls(space, viewer.memberId, canOperate);
-  const tasks = useSpaceTasks(environmentId, space.id, room.tasks);
+  const threads = useSpaceThreads(environmentId, space.id, room.threads);
   const older = joinedSpaceOlderEntries(
     useSpaceOlderEntries(environmentId, space.id),
     room.entries,
   );
   const project = useProject(scopeProjectRef(environmentId, space.projectId));
+  const projects = useProjects();
   const roomRef = scopeThreadRef(environmentId, space.roomThreadId);
   const roomShell = useThreadShell(roomRef);
   useAtomMount(roomVisitTracker(roomRef));
+  const pairRoom = spacePairRoom(useQuietThreadStructure(roomRef)?.projection ?? null);
+  const pairItems = spacePairFeedItems(pairRoom, room.actions);
   const loadOlder = useAtomCommand(spaceEnvironment.loadOlder, { reportFailure: false });
   const mutate = useAtomCommand(spaceEnvironment.mutate, { reportFailure: false });
   const undo = useSpaceUndoNotice();
@@ -245,13 +242,48 @@ function SpaceRoom(props: {
   const [visitedAt] = useState(() => roomShell?.lastVisitedAt ?? null);
   const [quote, setQuote] = useState<SpacePost | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // "Ask again" refills the composer; the count remounts it with the new draft.
+  const [draft, setDraft] = useState<{ readonly n: number; readonly text: string } | null>(null);
 
   const entries = older === null ? room.entries : prependSpaceEntries(older.entries, room.entries);
   const hasOlder = older === null ? room.hasMoreEntries : older.hasMore;
   const newIndex = spaceNewDividerIndex(entries, visitedAt, viewer.memberId);
-  const rows = [...spaceFeedRows(entries, [], newIndex)].reverse();
-  const tasksById = new Map(tasks.map((task) => [task.id, task] as const));
-  const needsYou = spaceTasksNeedingViewer(tasks, viewer).length;
+  const feedRows = spaceFeedRows(entries, pairItems, newIndex);
+  // Record lines sit 4pt apart, and 12pt below anything else (the board's `.sys.first`).
+  const firstRecords = new Set<string>();
+  feedRows.forEach((row, index) => {
+    const previous = feedRows[index - 1];
+    const isRecord = (candidate: (typeof feedRows)[number] | undefined) =>
+      candidate?.type === "entry" && candidate.entry.type === "system";
+    if (isRecord(row) && !isRecord(previous)) firstRecords.add(row.key);
+  });
+  const rows = [...feedRows].reverse();
+  const tasksById = new Map(room.tasks.map((task) => [task.id, task] as const));
+  const threadTitles = new Map(threads.map((thread) => [thread.id, thread.title] as const));
+  const threadsByTask = spaceThreadsByTask(threads);
+  const pairContext: SpacePairFeedContext = {
+    environmentId,
+    roomRef,
+    space,
+    viewer,
+    pairRoom,
+    entries,
+    taskOf: (taskId) => tasksById.get(taskId) ?? null,
+    threadIdsOf: (taskId) => (threadsByTask.get(taskId) ?? []).map((thread) => thread.id),
+    threadTitle: (threadId) => threadTitles.get(threadId) ?? null,
+    onAskAgain: (text) => setDraft({ n: (draft?.n ?? 0) + 1, text }),
+  };
+  const needsYou =
+    groupSpaceOverview(room.tasks, threadsByTask, viewer).find(
+      (section) => section.id === "needs-you",
+    )?.rows.length ?? 0;
+  const repositoryNames = space.repositoryIds.map(
+    (id) =>
+      projects.find((candidate) => candidate.environmentId === environmentId && candidate.id === id)
+        ?.title ?? "a repository",
+  );
+  const where = spaceHeaderWorkspaceLabel(space, project, repositoryNames);
+  const whereText = [where.name, where.repositories].filter(Boolean).join(" · ") || null;
   const ordered = orderSpaceMembers(space);
   const hasRequests = controls.isOwner && space.joinRequests.length > 0;
   const params = { environmentId, spaceId: space.id };
@@ -271,8 +303,6 @@ function SpaceRoom(props: {
     const result = await mutate({ environmentId, input: { type: "unarchive", spaceId: space.id } });
     reportSpaceResult("Could not unarchive", result);
   };
-  const openTask = (threadId: ThreadId) =>
-    navigation.dispatch(StackActions.push("Thread", { environmentId, threadId }));
 
   const menuActions = [
     ...(controls.canCreateTask ? [{ id: "new-task", title: "New task" }] : []),
@@ -297,44 +327,33 @@ function SpaceRoom(props: {
     }
   };
 
-  const renderTaskChip = (threadId: ThreadId) => {
-    const task = tasksById.get(threadId);
-    const status = task === undefined ? null : spaceTaskStatus(task, viewer);
-    return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${task?.title ?? "task"}`}
-        onPress={() => openTask(threadId)}
-        className="min-h-11 flex-row items-center gap-1.5 self-start active:opacity-70"
-      >
-        {status === null ? null : (
-          <SpaceStatusIcon icon={status.icon} tone={status.tone} label={status.label} />
-        )}
-        <Text numberOfLines={1} className="shrink text-sm font-t3-medium text-foreground">
-          {task?.title ?? "Task"}
-        </Text>
-        {status === null ? null : (
-          <Text className="text-xs text-foreground-muted">{status.label}</Text>
-        )}
-      </Pressable>
-    );
-  };
-
   const renderEntry = (entry: SpaceRoomEntry, continued: boolean) => {
+    if (entry.type === "system" && isSpaceTaskLineEntry(entry)) {
+      return (
+        <SpaceRecordLine
+          environmentId={environmentId}
+          space={space}
+          entry={entry}
+          entries={entries}
+          tasksById={tasksById}
+          viewer={viewer}
+          onTask={null}
+          threadTitle={(threadId) => threadTitles.get(threadId) ?? null}
+          className={firstRecords.has(entry.id) ? "pt-3 pr-4 pl-[60px]" : "pt-1 pr-4 pl-[60px]"}
+        />
+      );
+    }
     if (entry.type === "system") {
       const line = entry.line;
+      if ("taskId" in line) return null;
       const actor = entry.actorId === viewer.memberId ? "You" : viewer.nameOf(entry.actorId);
       return (
-        <View className="gap-0.5 py-1 pr-4 pl-[60px]">
-          <Text className="text-xs text-foreground-muted">
-            <Text className="text-xs font-t3-medium text-foreground-secondary">{actor}</Text>{" "}
-            {spaceSystemLineText(line, viewer)}
-            {line.type === "task-handed-back" ? ` “${line.reason}”` : ""} ·{" "}
-            {formatTime(entry.createdAt)}
+        <View
+          className={firstRecords.has(entry.id) ? "pt-3 pr-4 pl-[60px]" : "pt-1 pr-4 pl-[60px]"}
+        >
+          <Text className="text-xs leading-[22px] text-foreground-muted">
+            {actor} {spaceSystemLineText(line, viewer)} · {formatTime(entry.createdAt)}
           </Text>
-          {line.type === "task-created" || line.type === "task-handed-back"
-            ? renderTaskChip(line.threadId)
-            : null}
         </View>
       );
     }
@@ -382,6 +401,9 @@ function SpaceRoom(props: {
               ),
             )}
           </Text>
+          {entry.pairRequested ? (
+            <SpacePairStatus reply={pairRoom.byTrigger.get(entry.id)} context={pairContext} />
+          ) : null}
         </View>
       </View>
     );
@@ -399,7 +421,7 @@ function SpaceRoom(props: {
     );
   };
 
-  const renderRow = ({ item }: { item: SpaceFeedRow }) => {
+  const renderRow = ({ item }: { item: SpaceFeedRow<(typeof pairItems)[number]> }) => {
     switch (item.type) {
       case "day":
         return (
@@ -417,7 +439,7 @@ function SpaceRoom(props: {
           </View>
         );
       case "pair":
-        return null;
+        return <SpacePairFeedRow item={item.item} context={pairContext} />;
       case "entry":
         return renderEntry(item.entry, item.continued);
     }
@@ -457,13 +479,17 @@ function SpaceRoom(props: {
     >
       <RoomHeader
         title={space.name}
-        subtitle={project?.title ?? null}
+        subtitle={whereText}
         members={avatars}
         trailing={
           <>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={needsYou > 0 ? `Tasks, ${needsYou} need you` : "Tasks"}
+              accessibilityLabel={
+                needsYou === 0
+                  ? "Tasks"
+                  : `Tasks, ${needsYou} ${needsYou === 1 ? "needs" : "need"} you`
+              }
               onPress={() => navigation.navigate("SpaceTasks", params)}
               className="min-h-11 flex-row items-center gap-1.5 rounded-full border border-border-subtle px-3 active:opacity-70"
             >
@@ -511,13 +537,17 @@ function SpaceRoom(props: {
         <View className="px-3 pb-2" pointerEvents="box-none">
           <Toast
             message={undo.title}
-            action={{
-              label: undo.label,
-              onPress: () => {
-                dismissSpaceUndoNotice();
-                undo.undo();
-              },
-            }}
+            action={
+              undo.action === undefined
+                ? undefined
+                : {
+                    label: undo.action.label,
+                    onPress: () => {
+                      dismissSpaceUndoNotice();
+                      undo.action?.run();
+                    },
+                  }
+            }
             dismissMode="swipe"
             onDismiss={dismissSpaceUndoNotice}
           />
@@ -534,6 +564,8 @@ function SpaceRoom(props: {
         />
       ) : controls.canPost ? (
         <SpaceComposer
+          key={draft?.n ?? 0}
+          initialText={draft?.text ?? ""}
           environmentId={environmentId}
           space={space}
           viewer={viewer}

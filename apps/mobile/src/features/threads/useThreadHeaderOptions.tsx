@@ -59,6 +59,8 @@ export function useThreadHeaderOptions(props: {
   readonly draft?: boolean;
   /** Follow and Assign; null outside team mode. */
   readonly teamMenu?: AppBarMenu | null;
+  /** Add to task, Move and Remove; null off a space. */
+  readonly spaceMenu?: AppBarMenu | null;
   /** Wake, sleep, retry and discard; null for a local thread. */
   readonly machineMenu?: AppBarMenu | null;
   /** Teammates viewing this thread; empty outside team mode. */
@@ -77,6 +79,7 @@ export function useThreadHeaderOptions(props: {
   const teamHeaderItems: NativeHeaderItems = [
     ...(props.machineMenu ? [nativeHeaderMenu(props.machineMenu, "thread-right-machine")] : []),
     ...(props.teamMenu ? [nativeHeaderMenu(props.teamMenu, "thread-right-team")] : []),
+    ...(props.spaceMenu ? [nativeHeaderMenu(props.spaceMenu, "thread-right-space")] : []),
   ];
   const viewers = props.viewers ?? [];
   const accessChip = props.accessChip ?? null;
@@ -185,6 +188,7 @@ export function useThreadHeaderOptions(props: {
       threadCenterHeaderItems,
       compactRightHeaderItems,
       props.teamMenu,
+      props.spaceMenu,
       props.machineMenu,
       accessChip?.label,
       viewers.map((viewer) => `${viewer.id}:${viewer.away}`).join(","),
