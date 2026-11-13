@@ -11,6 +11,7 @@ import {
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
+  SPACE_AGENT_DRIVER,
   ThreadId,
   type ProviderThreadId,
 } from "@t3tools/contracts";
@@ -2186,10 +2187,6 @@ export const layerWithOptions = (
                   });
                 }
               }
-              // Backstop for paths that skip the orchestrator's check, such as queued effects.
-              if (cloudOnly && host?.kind !== "sandbox") {
-                return yield* new CloudOnly.CloudOnlyRefusedError({ operation: "provider.open" });
-              }
               const key = sessionKey(input.providerSessionId);
               let existing = (yield* Ref.get(sessions)).get(key);
               // A runner's next boot (the machine woke or restarted) is a new host: the session's
@@ -2242,6 +2239,11 @@ export const layerWithOptions = (
                     }),
                 ),
               );
+              // Backstop for paths that skip the orchestrator's check, such as queued effects.
+              // `spaceAgent` is an HTTP client with no shell, files or subprocess (spaces-agent §14.8).
+              if (cloudOnly && host?.kind !== "sandbox" && adapter.driver !== SPACE_AGENT_DRIVER) {
+                return yield* new CloudOnly.CloudOnlyRefusedError({ operation: "provider.open" });
+              }
               if (host?.kind === "sandbox") {
                 const instanceId = input.modelSelection.instanceId;
                 const stored = Option.isSome(serverSettings)

@@ -16,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  SPACE_AGENT_DRIVER,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -567,6 +568,13 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   });
 });
 
+const layerCloudOnlyServerConfig = Layer.effect(
+  ServerConfig.ServerConfig,
+  Effect.gen(function* () {
+    return { ...(yield* ServerConfig.ServerConfig), cloudOnly: true };
+  }),
+).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-session-manager-" })));
+
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
@@ -600,6 +608,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly driver?: ProviderDriverKind;
+  readonly cloudOnly?: boolean;
   /** Replaces the hosts built from the test's own services, e.g. to register a sandbox. */
   readonly workspaceHostsLayer?: Layer.Layer<WorkspaceHosts.WorkspaceHosts>;
 }) {
@@ -683,7 +692,9 @@ function layerTest(input: {
           layerConfiguredMcpRegistry,
           layerTestStores,
           input.workspaceHostsLayer ?? WorkspaceHostTesting.layerFromContext,
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-session-manager-" }),
+          input.cloudOnly === true
+            ? layerCloudOnlyServerConfig
+            : ServerConfig.layerTest(process.cwd(), { prefix: "t3-session-manager-" }),
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
         ),
@@ -1083,6 +1094,61 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
         }),
       ),
     );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 on a cloud-only server opens only @pair off a machine", () =>
+  Effect.gen(function* () {
+    const openLocal = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make("thread-provider-session-manager-cloud-only");
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+        ],
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      return yield* manager
+        .open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: null },
+        })
+        .pipe(Effect.exit);
+    });
+    const run = (driver?: ProviderDriverKind) =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const exit = yield* openLocal.pipe(
+          Effect.provide(
+            layerTest({
+              state,
+              idleTimeoutMs: 60_000,
+              cloudOnly: true,
+              ...(driver === undefined ? {} : { driver }),
+            }),
+          ),
+        );
+        return { exit, opens: (yield* Ref.get(state)).openCount };
+      });
+
+    const codex = yield* run();
+    assert.isTrue(Exit.isFailure(codex.exit));
+    assert.include(
+      Cause.pretty(Exit.isFailure(codex.exit) ? codex.exit.cause : Cause.empty),
+      "CloudOnlyRefusedError",
+    );
+    assert.equal(codex.opens, 0);
+
+    const pair = yield* run(SPACE_AGENT_DRIVER);
+    assert.isTrue(Exit.isSuccess(pair.exit));
+    assert.equal(pair.opens, 1);
   }),
 );
 
