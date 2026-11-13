@@ -212,7 +212,7 @@ override it per driver (`runnerUrl`) for reverse proxies and split DNS.
 | Docker on another host (`DOCKER_HOST`)               | The server's address as that host's containers reach it, set by the admin as `runnerUrl`. Without one, the runner listener's address, else the boot fails with `runner-url-required`                                                                                                                                                                                                                                                                                       |
 | A VM in the customer's VPC (M5): GCE, then EC2       | The runner listener's address, `http://<runner host>:<runner port>`, which serves `/runner/*` and no client routes; or a `runnerUrl` the deployment kit sets ([09](./09-byoc.md)). Without either, `runner-url-required`. Never the optional public client listener                                                                                                                                                                                                        |
 | Docker Desktop on a macOS server (development only)  | `http://host.docker.internal:<port>`, the live port or the runner listener's. Docker Desktop resolves the name. Laptops no longer offer Cloud, so this path only serves Pair Cloud run from source on a Mac. On Linux the name needs `--add-host host.docker.internal=host-gateway` ([source](#sources)), which fails for a server bound to loopback, as desktop mode is by default ([cli/config.ts](../../../apps/server/src/cli/config.ts)), hence the Unix socket above |
-| A hosted vendor (Later)                              | A public origin, or the T3 Connect tunnel hostname from [ManagedEndpointRuntime.ts](../../../apps/server/src/cloud/ManagedEndpointRuntime.ts). A vendor's machine is on neither the customer's VPC nor a tailnet. Waits for the vendor driver                                                                                                                                                                                                                              |
+| A hosted vendor: boat.dev (M8)                       | The driver's `runnerUrl`, required and `https://`: the server's public address, whose member listener then serves `/runner/*`, or a public hostname proxied to the runner listener ([m8-boat.md §11](./implementation/m8-boat.md#11-runner-route-tls-and-the-token)). A vendor's machine is on neither the customer's VPC nor a tailnet. T3 Connect hostnames are not offered                                                                                              |
 
 A server on any other platform fails with `unsupported-platform` unless the driver sets a
 `runnerUrl`.
@@ -466,7 +466,8 @@ enters the event log.
 - **Rotation and revocation.** Every boot (create, wake, restart) gets a new enrollment and token.
   Sleep, destroy and a new boot revoke the generation, and `RunnerHub` closes its socket, as
   `awaitInvalidation` does for clients. A machine that sleeps when idle (M2) gets a new token on
-  every wake; periodic rotation over the live socket waits for hosted vendors (Later).
+  every wake; periodic rotation over the live socket stays Later, even for boat's hosted machines
+  (M8), which sleep after 20 idle minutes.
 - **No DPoP.** A proof key would sit beside the token in the same tmpfs and memory.
 
 What a stolen sandbox token can do, at most, while that sandbox's current boot lives:
@@ -681,7 +682,7 @@ buffer size, bytes delivered equal bytes written, no duplicates.
 | 12  | M5        | Internal-only listener for `/runner/*` (section 3.2) and an `/mcp`-only in-process listener for forwards (section 8)                                                                                                                  | 3, 7, doc 09                 |
 | 13  | M5        | Private CA and explicit proxy support, BYOC network checklist                                                                                                                                                                         | 3, doc 09                    |
 | 10  | M7        | TCP tunnels (`tcp.connect`) for the machine browser                                                                                                                                                                                   | 4, doc 07                    |
-| 11  | Later     | Hosted vendor URLs (public origin, T3 Connect hostname) and periodic token rotation                                                                                                                                                   | 3                            |
+| 11  | Later     | Periodic token rotation, and T3 Connect hostnames for hosted machines. M8's boat driver dials a required `https://` `runnerUrl`                                                                                                       | 3                            |
 | 16  | Later     | SSH over a TCP tunnel to the sandbox's sshd                                                                                                                                                                                           | 10, doc 07                   |
 
 ## Open questions

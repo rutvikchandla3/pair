@@ -31,8 +31,8 @@ deployment, networking, operations and the offering itself.
 - **Private by default** (D10). Members reach Pair Cloud on the team's own domain over VPN or
   Tailscale, through an internal load balancer. A public HTTPS listener that serves only client
   routes is an opt-in. T3 Connect is off. Runners dial a listener that only machine subnets reach.
-- **A Pair-hosted control plane is rejected** (section 7). Hosted sandbox vendors, and E2B Embed
-  with them, are Later, by demand.
+- **A Pair-hosted control plane is rejected** (section 7). Hosted machines on boat.dev are M8
+  (offering C). Other hosted vendors, and E2B Embed with them, are Later, by demand.
 - **The kit builds on earlier milestones:** cloud-only mode, the versioned Pair Cloud release that
   carries the runner, restore mode and idle sleep (M2), and team image builds (M4).
 
@@ -55,7 +55,7 @@ so does the code those Macs already hold. A team that wants its laptops locked d
 | ------------------------------ | ------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------- |
 | **A. Pair Cloud on a team VM** | A VM the team runs, in any cloud or on its own hardware (Pair's dogfood is a GCE VM) | Docker on that VM, or a Docker host through `DOCKER_HOST`   | Coder, E2B Embed                                                            | M2                   |
 | **B. BYOC**                    | The customer's VPC, installed by the kit: Google Cloud first, then AWS               | VMs in private subnets of that VPC: GCE instances, then EC2 | Coder, self-managed Buildkite                                               | M5                   |
-| **C. Hosted machines**         | A VM the team runs                                                                   | A sandbox vendor's cloud                                    | Conductor on Vercel                                                         | Later, by demand     |
+| **C. Hosted machines**         | A cloud-only server the team runs, at a public `https://` address                    | boat.dev sandboxes, in boat's EU cloud                      | Conductor on Vercel                                                         | M8                   |
 | Pair-hosted control plane      | Pair                                                                                 | The customer's account; runners dial out to Pair            | Ona runners, E2B BYOC, GitHub Actions self-hosted runners, Buildkite hybrid | Rejected (section 7) |
 
 A and B run the same cloud-only server, launch gate and lifecycle. They differ in where machines
@@ -73,14 +73,14 @@ This replaces the BYOC tiers table in [conductor-cloud.md](../conductor-cloud.md
 | 2a     | Customer AWS account | EC2 driver (offering B)                        | Full VM                          | Teams whose code and credentials must stay in their account | M5, after GCP                                |
 | 2b     | Customer GCP project | GCE driver                                     | Full VM                          | The same, on GCP                                            | M5, first                                    |
 | 3      | Customer cloud       | Kubernetes driver                              | gVisor or Kata                   | Enterprises with a platform team                            | Later, by demand                             |
-| Hosted | A team VM            | Hosted vendor (offering C)                     | Vendor VM                        | Fastest Conductor-like setup                                | Later, by demand                             |
+| Hosted | A team VM            | boat.dev driver (offering C)                   | Vendor VM                        | Fastest Conductor-like setup                                | M8                                           |
 | Embed  | Customer cloud       | E2B Embed node, through an E2B driver          | Firecracker microVM              | Small teams that want fast boots in their account           | Later, only with an E2B driver               |
 
 ### What leaves the customer's account
 
 "Leaves" means it is stored or readable outside the customer's cloud account.
 
-| Data                                             | B. BYOC                                                                                                                                                                | C. Hosted machines (Later)                                          |
+| Data                                             | B. BYOC                                                                                                                                                                | C. Hosted machines (M8, boat)                                       |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Transcripts, event store, projections            | Stays, on the server's data volume                                                                                                                                     | Stays on the server; passes through the vendor VM while a turn runs |
 | Project checkouts, mirror, checkpoints and diffs | Stays: machine disks and the server's data volume (decisions 11, 16)                                                                                                   | **On the vendor's disk**; the mirror stays                          |
@@ -189,7 +189,7 @@ Nomad and Consul cluster, is no longer what the README offers; the E2B row in
 [conductor-cloud.md](../conductor-cloud.md#sandbox-vendors) still describes it. Embed boots
 fastest of the three, but one node holds only a few 8 vCPU machines (shared side chats and forks
 stretch that a little), and growing past it means a contract with E2B. Pair has no E2B driver:
-hosted vendors are Later, by demand.
+its first hosted vendor is boat (M8), which offers no BYOC path.
 
 ### Recommendation
 
