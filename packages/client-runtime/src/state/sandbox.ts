@@ -1,4 +1,5 @@
 import {
+  type ComputeDriverKind,
   isSecretReference,
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
@@ -9,6 +10,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShellSandbox,
   type SandboxAccessAudience,
+  type SandboxDriverInstance,
   type SandboxDriverHealth,
   type SandboxId,
   type SandboxOverview,
@@ -453,6 +455,22 @@ export function sandboxWaitingLabel(
   return summary?.state === "provisioning" && summary.admission !== undefined
     ? sandboxStatePresentation(summary, { hasActiveRun: false }).label
     : null;
+}
+
+export const COMPUTE_DRIVER_KIND_LABELS: Readonly<Record<ComputeDriverKind, string>> = {
+  docker: "Docker",
+  gce: "Google Cloud",
+  boat: "boat.dev",
+};
+
+/** Null when the server predates `driverId` on the summary or the driver was removed. */
+export function sandboxDriverOf(
+  drivers: ReadonlyArray<SandboxDriverInstance> | undefined,
+  summary: OrchestrationV2ThreadShellSandbox | undefined,
+): SandboxDriverInstance | null {
+  const driverId = summary?.driverId;
+  if (driverId === undefined || drivers === undefined) return null;
+  return drivers.find((driver) => driver.id === driverId) ?? null;
 }
 
 /** A cloud thread's machine as every surface shows it: one rule for its line, notice and menus. */

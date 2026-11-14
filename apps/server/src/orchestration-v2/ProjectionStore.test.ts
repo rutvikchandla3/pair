@@ -3054,6 +3054,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const summary: OrchestrationV2ThreadShellSandbox = {
         state: "failed",
         ownerThreadId: ownerId,
+        driverId: ComputeDriverId.make("docker"),
         runnerConnected: false,
         failureCode: "lost",
         retryable: true,

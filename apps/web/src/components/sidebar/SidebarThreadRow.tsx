@@ -40,7 +40,6 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
-  CloudIcon,
   EyeIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
@@ -79,6 +78,10 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { ComputeDriverIcon } from "../ComputeDriverIcon";
+import { environmentSandboxDriversAtom } from "../../state/server";
+import { sandboxDriverOf } from "@t3tools/client-runtime/state/sandbox";
+import { useAtomValue } from "@effect/atom-react";
 import {
   animateSidebarLayoutChanges,
   hasUnseenCompletion,
@@ -237,6 +240,13 @@ function SidebarProviderStack(props: {
   );
 }
 
+function useThreadCloudDriver(thread: SidebarThreadSummary) {
+  return sandboxDriverOf(
+    useAtomValue(environmentSandboxDriversAtom(thread.environmentId)),
+    thread.source.sandbox,
+  );
+}
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -270,6 +280,7 @@ function SidebarThreadTooltip({
   terminalProcessCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
+  const cloudDriver = useThreadCloudDriver(thread);
   const previousProviderNames = thread.providerInstanceHistory
     .filter((instanceId) => instanceId !== modelInstanceId)
     .map((instanceId) => providerEntryByInstanceId.get(instanceId)?.displayName ?? instanceId);
@@ -303,8 +314,14 @@ function SidebarThreadTooltip({
         ) : null}
         {thread.source.sandbox !== undefined ? (
           <div className="flex min-w-0 items-center gap-2">
-            <CloudIcon className="size-3 shrink-0 stroke-muted-foreground" />
-            <div className="min-w-0 truncate text-foreground/75">Cloud</div>
+            <ComputeDriverIcon
+              aria-hidden
+              kind={cloudDriver?.kind ?? null}
+              className="size-3 shrink-0 text-muted-foreground"
+            />
+            <div className="min-w-0 truncate text-foreground/75">
+              {cloudDriver === null ? "Cloud" : `Cloud · ${cloudDriver.label}`}
+            </div>
           </div>
         ) : null}
         {thread.branch ? (
@@ -837,6 +854,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
   const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
+  const cloudDriver = useThreadCloudDriver(thread);
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -1166,6 +1184,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
       </span>
     ) : null;
+  const cloudDriverIcon =
+    thread.source.sandbox === undefined ? null : (
+      <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+        <ComputeDriverIcon aria-hidden kind={cloudDriver?.kind ?? null} className="size-3.5" />
+      </span>
+    );
   const diff = latestRunDiff(thread);
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
@@ -1209,6 +1233,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
       >
         {remoteMachineIcon}
+        {cloudDriverIcon}
         <SidebarProviderStack
           thread={thread}
           providerEntryByInstanceId={props.providerEntryByInstanceId}
@@ -1247,6 +1272,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const titleLineIcons = metaLineEmpty ? (
     <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
       {remoteMachineIcon}
+      {cloudDriverIcon}
       <SidebarProviderStack
         thread={thread}
         providerEntryByInstanceId={props.providerEntryByInstanceId}
@@ -1322,6 +1348,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
+              {multiline ? null : cloudDriverIcon}
               {sharedIndicator}
               {ownerAvatar}
               {viewersStack}
