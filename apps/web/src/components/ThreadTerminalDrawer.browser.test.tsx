@@ -95,6 +95,13 @@ vi.mock("../state/projects", async () => {
     },
   };
 });
+// Both read a thread's cloud machine, which needs the full client state.
+vi.mock("./sandbox/useSandboxThreadStatus", () => ({ readSandboxThreadMachine: () => null }));
+vi.mock("./terminal/TerminalStoppedNotice", async () => {
+  const Atom = await import("effect/reactivity/Atom");
+  const stoppedBy = Atom.make(null);
+  return { terminalStoppedByAtom: () => stoppedBy, TerminalStoppedNotice: () => null };
+});
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => () => {} }));
 vi.mock("./preview/openTerminalLinkInPreview", () => ({ openTerminalLinkInPreview: () => {} }));
 vi.mock("~/localApi", () => ({ readLocalApi: () => null }));
