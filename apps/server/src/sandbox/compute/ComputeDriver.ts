@@ -121,8 +121,8 @@ export interface ComputeCapabilities {
   }>;
   /** How many of this instance's sandboxes may run at once before new ones queue. */
   readonly defaultRunningCap: number;
-  /** Whether a ready machine stops once its threads settle; per-hour drivers may wait for idle. */
-  readonly sleepOnSettle: boolean;
+  /** Whether a stopped machine's disk is deleted once every thread on it is archived, not after retention. */
+  readonly discardOnArchive: boolean;
   /** How long a ready machine may sit unused before it sleeps. */
   readonly defaultIdleSleepMs: number;
 }

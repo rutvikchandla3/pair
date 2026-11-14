@@ -258,6 +258,7 @@ import {
   decideCloudPrompt,
   decideSandboxCommand,
   diskRetentionOf,
+  driverDiskRetention,
   planSandboxOnDelete,
   type SandboxAttachedThread,
   sandboxAccessChange,
@@ -11970,7 +11971,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : [];
     const diskRetention =
       command.type === "sandbox.expire"
-        ? diskRetentionOf((yield* serverSettings.getSettings.pipe(mapProjection)).sandbox)
+        ? driverDiskRetention(
+            diskRetentionOf((yield* serverSettings.getSettings.pipe(mapProjection)).sandbox),
+            command.discardOnArchive === true,
+          )
         : undefined;
     const driverId = command.type === "sandbox.provision" ? command.driverId : record?.driverId;
     const admission =

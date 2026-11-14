@@ -170,8 +170,7 @@ const capabilitiesOf = (config: BoatSandboxDriver): ComputeCapabilities => ({
   nestedDocker: true,
   sizes: SANDBOX_SIZES.map((size) => ({ size, ...TYPE_SIZES[typeOf(config, size)] })),
   defaultRunningCap: 20,
-  // Every wake spends one of the plan's starts, which are limited per day.
-  sleepOnSettle: false,
+  discardOnArchive: true,
   defaultIdleSleepMs: 20 * 60_000,
 });
 

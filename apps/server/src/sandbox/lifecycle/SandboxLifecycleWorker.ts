@@ -35,6 +35,7 @@ import {
   decideDiskExpiry,
   diskExpiryFloorMs,
   diskRetentionOf,
+  driverDiskRetention,
   idleDecision,
   SANDBOX_BACKEND_MISSING_FAILURE,
   sandboxAttachedThread,
@@ -59,9 +60,15 @@ const bootDeadlineMs = (sandbox: OrchestrationV2Sandbox): number | null => {
   return sandbox.state === "waking" ? since + WAKE_DEADLINE_MS : null;
 };
 
-/** Ready machines sleep by their driver's policy; created, booting ones are checked through it. */
+/**
+ * Ready machines sleep and stopped ones expire by their driver's policy; created, booting ones are
+ * checked through it.
+ */
 const needsDriver = (sandbox: OrchestrationV2Sandbox) =>
-  sandbox.state === "ready" || (sandbox.state === "provisioning" && sandbox.driverRef !== null);
+  sandbox.state === "ready" ||
+  sandbox.state === "sleeping" ||
+  sandbox.state === "failed" ||
+  (sandbox.state === "provisioning" && sandbox.driverRef !== null);
 
 const affectsLifecycle = (event: OrchestrationV2DomainEvent) =>
   event.type === "sandbox.updated" ||
@@ -187,10 +194,7 @@ export const makeSweep = Effect.gen(function* () {
       record: sandbox,
       threads,
       activity: yield* activity.read(threads.map((thread) => thread.threadId)),
-      policy: {
-        idleMs: driver.capabilities.defaultIdleSleepMs,
-        sleepOnSettle: driver.capabilities.sleepOnSettle,
-      },
+      policy: { idleMs: driver.capabilities.defaultIdleSleepMs },
       capPressure,
       nowMs,
     });
@@ -217,9 +221,11 @@ export const makeSweep = Effect.gen(function* () {
   /** Destroys a stopped machine's disk that outlived retention, or says when to look again. */
   const expireDue = Effect.fn("SandboxLifecycleWorker.expireDue")(function* (
     sandbox: OrchestrationV2Sandbox,
-    retention: SandboxDiskRetention,
+    settingsRetention: SandboxDiskRetention,
+    discardOnArchive: boolean,
     nowMs: number,
   ) {
+    const retention = driverDiskRetention(settingsRetention, discardOnArchive);
     const floorMs = diskExpiryFloorMs(sandbox, retention);
     if (floorMs > nowMs) return { expired: false, nextDueMs: floorMs };
     const shells = yield* attachedShells(sandbox);
@@ -243,6 +249,7 @@ export const makeSweep = Effect.gen(function* () {
       threadId: sandbox.ownerThreadId,
       sandboxId: sandbox.id,
       reason: expiry.reason,
+      ...(discardOnArchive ? { discardOnArchive } : {}),
     });
     return { expired: true, nextDueMs: Infinity };
   });
@@ -418,7 +425,12 @@ export const makeSweep = Effect.gen(function* () {
       }
       if (sandbox.state === "sleeping" || sandbox.state === "failed") {
         if (!cloudOnly) continue;
-        const expiry = yield* expireDue(sandbox, retention, nowMs);
+        const expiry = yield* expireDue(
+          sandbox,
+          retention,
+          drivers.get(sandbox.driverId)?.capabilities.discardOnArchive === true,
+          nowMs,
+        );
         if (expiry.expired) acted = true;
         nextDueMs = Math.min(nextDueMs, expiry.nextDueMs);
         continue;

@@ -4424,6 +4424,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     sandboxId: SandboxId,
     reason: Schema.Literals(["archived", "inactive"]),
+    /** The machine's driver keeps no disk once every thread on it is archived. */
+    discardOnArchive: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("sandbox.adopt"),

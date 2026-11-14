@@ -204,7 +204,7 @@ export interface IdleInput {
     readonly terminalAt: number | null;
     readonly nextScheduledAt: number | null;
   };
-  readonly policy: { readonly idleMs: number; readonly sleepOnSettle: boolean };
+  readonly policy: { readonly idleMs: number };
   /** Another sandbox on this driver waits for admission. */
   readonly capPressure: boolean;
   readonly nowMs: number;
@@ -248,10 +248,7 @@ export const idleDecision = (input: IdleInput): IdleDecision => {
     };
   }
   const readySinceMs = DateTime.toEpochMillis(input.record.updatedAt);
-  const settled =
-    policy.sleepOnSettle || input.record.discardOnSettle === true
-      ? decideAutoSleep(threads, readySinceMs)
-      : null;
+  const settled = decideAutoSleep(threads, readySinceMs);
   if (settled !== null) return sleep(settled);
 
   const next = activity.nextScheduledAt;
@@ -287,6 +284,15 @@ export const diskRetentionOf = (sandbox: SandboxSettings | undefined): SandboxDi
   sandbox?.restoreModeSince !== undefined
     ? NEVER_EXPIRE
     : (sandbox?.diskRetention ?? DEFAULT_DISK_RETENTION);
+
+/** A driver that discards archived machines keeps no archived disk, unless retention is off. */
+export const driverDiskRetention = (
+  retention: SandboxDiskRetention,
+  discardOnArchive: boolean,
+): SandboxDiskRetention =>
+  discardOnArchive && retention.archivedAfterDays !== null
+    ? { ...retention, archivedAfterDays: 0 }
+    : retention;
 
 /**
  * No rule below comes due before this, so a sweep reads no threads for a machine stopped recently.

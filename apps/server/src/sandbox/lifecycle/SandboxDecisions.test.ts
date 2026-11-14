@@ -770,7 +770,7 @@ describe("idleDecision", () => {
   ): IdleInput => ({
     record: record(),
     threads: [thread()],
-    policy: { idleMs: minutes(60), sleepOnSettle: true },
+    policy: { idleMs: minutes(60) },
     capPressure: false,
     ...patch,
     activity: { viewedAt: null, terminalAt: null, nextScheduledAt: null, ...patch.activity },
@@ -837,23 +837,6 @@ describe("idleDecision", () => {
         ],
       }),
       sleeps("archived"),
-    ],
-    [
-      "a driver without sleepOnSettle ignores settling",
-      input(1, {
-        threads: [thread({ settled: true, restingAt: readyAt })],
-        policy: { idleMs: minutes(60), sleepOnSettle: false },
-      }),
-      awake(60),
-    ],
-    [
-      "a discardOnSettle machine settles even on a driver without sleepOnSettle",
-      input(1, {
-        record: record({ discardOnSettle: true }),
-        threads: [thread({ settled: true, restingAt: readyAt })],
-        policy: { idleMs: minutes(60), sleepOnSettle: false },
-      }),
-      sleeps("settled"),
     ],
     [
       "terminal output inside the window keeps it awake",
