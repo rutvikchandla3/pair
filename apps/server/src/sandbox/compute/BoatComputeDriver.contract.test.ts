@@ -1,4 +1,3 @@
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe } from "@effect/vitest";
 import {
@@ -9,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import { HttpClient } from "effect/http";
 import * as Path from "effect/Path";
 
 import { makeBoatApi } from "./BoatApi.ts";
@@ -18,6 +16,7 @@ import * as BoatComputeDriver from "./BoatComputeDriver.ts";
 import { computeDriverContract, type StandInRunnerServer } from "./computeDriverContract.ts";
 import { postStandInHello } from "./ComputeDriverTesting.ts";
 import { vmBaseImageNames } from "./VmBaseImage.ts";
+import { nodeHttpClient } from "./vmHelpers.ts";
 import {
   type SandboxProvisionTreeInfo,
   SandboxProvisionTreeUnavailableError,
@@ -88,8 +87,9 @@ computeDriverContract("BoatComputeDriver", makeFakeDriver, {
 });
 
 /**
- * Against a real boat account. `T3_TEST_BOAT_RUNNER_URL` is a public https address proxied to
- * this host's port of the same number, which boat machines reach.
+ * Against a real boat account. `T3_TEST_BOAT_RUNNER_URL` is a public https address boat machines
+ * reach, proxied to this host's `T3_TEST_BOAT_LISTEN_PORT` (default: the URL's own port), as a
+ * tunnel that only serves 443 needs.
  */
 describe.runIf(process.env.T3_TEST_BOAT === "1")("BoatComputeDriver on boat.dev", () => {
   const runnerUrl = new URL(process.env.T3_TEST_BOAT_RUNNER_URL ?? "https://127.0.0.1:0");
@@ -109,7 +109,8 @@ describe.runIf(process.env.T3_TEST_BOAT === "1")("BoatComputeDriver on boat.dev"
           path.join(import.meta.dirname, "testdata/stand-in-runner/boat-guest.sh"),
         );
         const quoted = `'${script.replaceAll("'", `'\\''`)}'`;
-        const client = yield* HttpClient.HttpClient;
+        // In the case's scope: a provided layer would close its connections once the driver is built.
+        const client = yield* nodeHttpClient;
         return yield* BoatComputeDriver.makeWithApi(
           liveConfig,
           installId,
@@ -123,9 +124,12 @@ describe.runIf(process.env.T3_TEST_BOAT === "1")("BoatComputeDriver on boat.dev"
             guest: { command: (generation) => `sh -c ${quoted} boat-guest ${generation}` },
           },
         );
-      }).pipe(Effect.provide([NodeServices.layer, NodeHttpClient.layerUndici]), Effect.orDie),
+      }).pipe(Effect.provide(NodeServices.layer), Effect.orDie),
     {
-      listen: { host: "0.0.0.0", port: Number(runnerUrl.port) },
+      listen: {
+        host: "0.0.0.0",
+        port: Number(process.env.T3_TEST_BOAT_LISTEN_PORT ?? runnerUrl.port),
+      },
       url: runnerUrl.origin,
     },
   );
