@@ -29,6 +29,7 @@ import {
   MoreHorizontalIcon,
   PlusIcon,
   RefreshCwIcon,
+  ServerIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -477,6 +478,24 @@ function CloudEnvironmentSettings({
                     size="sm"
                     variant="outline"
                     onClick={() => setForm({ mode: "add", kind: "gce" })}
+                  >
+                    Add
+                  </Button>
+                }
+              />
+              <SettingsRow
+                title={
+                  <span className="flex items-center gap-2">
+                    <ServerIcon className="size-4 text-muted-foreground" aria-hidden />
+                    {DRIVER_KIND_LABELS.boat}
+                  </span>
+                }
+                description="VMs in boat.dev's EU cloud, billed per second to your boat account. Needs a public https:// address."
+                control={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setForm({ mode: "add", kind: "boat" })}
                   >
                     Add
                   </Button>
