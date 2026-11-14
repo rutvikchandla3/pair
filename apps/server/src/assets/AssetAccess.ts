@@ -59,7 +59,8 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/WorkspacePaths.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { WorkspaceReadGuard } from "../workspace/WorkspaceReadGuard.ts";
-import { SANDBOX_ROOT } from "../workspaceHost/WorkspaceHost.ts";
+import { SANDBOX_ROOT, sandboxIdFromPath } from "../workspaceHost/WorkspaceHost.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
@@ -127,6 +128,12 @@ const AssetClaimsSchema = Schema.Union([
     download: Schema.optionalKey(Schema.Boolean),
     device: Schema.String,
     inode: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("sandbox-image"),
+    filePath: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -331,6 +338,70 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
   );
 
 const HEADER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+// Served from memory, so a machine image past this is refused rather than buffered.
+const SANDBOX_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * A cloud machine's files are not on this server's disk, so its images are read through the
+ * machine's runner. Raster images only: the bytes route sets no sandboxing headers for SVG.
+ */
+const isSandboxImagePath = (path: Path.Path, filePath: string) =>
+  isWithinRoot(path, filePath, SANDBOX_ROOT) &&
+  sandboxIdFromPath(filePath) !== undefined &&
+  HEADER_IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+
+const readSandboxImage = Effect.fnUntraced(function* (filePath: string) {
+  const path = yield* Path.Path;
+  const mimeType = hostPreviewMimeTypeFromExtension(path.extname(filePath));
+  if (!mimeType || !isSandboxImagePath(path, filePath)) return null;
+  const host = yield* (yield* WorkspaceHosts.WorkspaceHosts).forPath(filePath);
+  const file = yield* host.files.readFile(filePath, SANDBOX_IMAGE_MAX_BYTES + 1);
+  if (file.kind !== "file" || file.size > SANDBOX_IMAGE_MAX_BYTES) return null;
+  return { mimeType, bytes: file.bytes };
+});
+
+const finalizeSandboxImageAsset = Effect.fn("AssetAccess.finalizeSandboxImageAsset")(
+  function* (input: {
+    readonly filePath: string;
+    readonly resource: AssetResource;
+    readonly expiresAt: number;
+  }) {
+    const path = yield* Path.Path;
+    const inspectionError = (cause: unknown) =>
+      new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause });
+    const image = yield* readSandboxImage(input.filePath).pipe(
+      Effect.catchTags({
+        // A stopped machine has no runner to read from; the client shows the image as missing.
+        WorkspaceHostUnavailableError: () => Effect.succeed(null),
+        WorkspaceHostFileError: (error) =>
+          error.code === "ENOENT" || error.code === "ENOTDIR"
+            ? Effect.succeed(null)
+            : Effect.fail(inspectionError(error)),
+      }),
+    );
+    if (image === null) {
+      return yield* new AssetWorkspaceAssetNotFoundError({
+        resource: input.resource,
+        checkedPath: input.filePath,
+      });
+    }
+    const digest = yield* Digest.Digest;
+    const hash = yield* digest
+      .digest(Digest.sha256, image.bytes)
+      .pipe(Effect.map(Hex.encode), Effect.mapError(inspectionError));
+    return {
+      claims: {
+        version: 1 as const,
+        kind: "sandbox-image" as const,
+        filePath: input.filePath,
+        expiresAt: input.expiresAt,
+      },
+      fileName: path.basename(input.filePath),
+      fileRevision: `sha256:${hash}`,
+      imageDimensions: readImageDimensions(image.bytes),
+    };
+  },
+);
 
 const readImageDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) =>
   readMediaFileHeader(filePath, file, IMAGE_DIMENSIONS_HEADER_BYTES).pipe(
@@ -557,6 +628,14 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   switch (input.resource._tag) {
     case "media-file": {
       let requestedPath = expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory);
+      // Normalizing a machine's root would stat this server's disk, where it does not exist.
+      if (
+        !path.isAbsolute(requestedPath) &&
+        input.workspaceRoot !== undefined &&
+        sandboxIdFromPath(input.workspaceRoot) !== undefined
+      ) {
+        requestedPath = path.resolve(input.workspaceRoot, requestedPath);
+      }
       if (!path.isAbsolute(requestedPath)) {
         if (!input.workspaceRoot) {
           return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
@@ -570,6 +649,21 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             ),
           );
         requestedPath = path.resolve(workspaceRoot, requestedPath);
+      }
+      if (
+        input.resource.disposition !== "attachment" &&
+        isSandboxImagePath(path, path.resolve(requestedPath))
+      ) {
+        const finalized = yield* finalizeSandboxImageAsset({
+          filePath: path.resolve(requestedPath),
+          resource: input.resource,
+          expiresAt,
+        });
+        claims = finalized.claims;
+        fileName = finalized.fileName;
+        imageDimensions = finalized.imageDimensions;
+        fileRevision = finalized.fileRevision;
+        break;
       }
       yield* confine(requestedPath);
       const finalized = yield* finalizeAbsoluteMediaFileAsset({
@@ -615,6 +709,18 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const hostPath = input.resource.path.startsWith("~/")
         ? expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory)
         : input.resource.path;
+      if (path.isAbsolute(hostPath) && isSandboxImagePath(path, path.resolve(hostPath))) {
+        const finalized = yield* finalizeSandboxImageAsset({
+          filePath: path.resolve(hostPath),
+          resource: input.resource,
+          expiresAt,
+        });
+        claims = finalized.claims;
+        fileName = finalized.fileName;
+        imageDimensions = finalized.imageDimensions;
+        fileRevision = finalized.fileRevision;
+        break;
+      }
       if (path.isAbsolute(hostPath)) {
         yield* confine(hostPath);
         const finalized = yield* finalizeAbsoluteMediaFileAsset({
@@ -988,6 +1094,19 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
+  if (claims.kind === "sandbox-image") {
+    if (decodedPath !== path.basename(claims.filePath)) return null;
+    const image = yield* readSandboxImage(claims.filePath).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("Failed to read a cloud machine image.", {
+          filePath: claims.filePath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return image ? ({ kind: "bytes", ...image } satisfies ResolvedAsset) : null;
+  }
   if (claims.kind === "media-file-exact") {
     if (decodedPath !== path.basename(claims.filePath)) return null;
     const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
