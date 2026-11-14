@@ -21,10 +21,7 @@ export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommand
   { message: Schema.String },
 ) {}
 
-const unixCandidates = (home: string, platform: NodeJS.Platform) =>
-  platform === "darwin"
-    ? ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/bin`]
-    : [`${home}/.local/bin`, `${home}/bin`];
+const unixCandidates = DesktopCliShim.unixCommandDirectories;
 
 const pathEntries = (value: string | undefined, separator: string) =>
   (value ?? "").split(separator).filter((entry) => entry.length > 0);

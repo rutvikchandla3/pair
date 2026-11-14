@@ -22,6 +22,7 @@ import { writeServiceEnv } from "./service.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  repointDesktopLinks,
   repointLauncher,
   resolveLauncherPath,
   resolveMirrorVersion,
@@ -70,7 +71,10 @@ it.effect("authenticates each release page until the requested channel is found"
 
     assert.deepStrictEqual(yield* resolve(undefined), {
       version: "1.2.3",
-      pages: ["/repos/pingdotgg/t3code/releases?page=1", "/repos/pingdotgg/t3code/releases?page=2"],
+      pages: [
+        "/repos/rutvikchandla3/pair/releases?page=1",
+        "/repos/rutvikchandla3/pair/releases?page=2",
+      ],
     });
     assert.deepStrictEqual(
       yield* resolve("https://github.com/rutvikchandla3/pair/releases/download"),
@@ -215,6 +219,40 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
 });
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
+  it.effect("switches t3 links that run the desktop app's launcher to the standalone t3", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const desktopLauncher = path.join(root, "home/bin/t3");
+      const standalone = path.join(root, "home/runtime/versions/2.0.0/t3");
+      const other = path.join(root, "other-t3");
+      for (const file of [desktopLauncher, standalone, other]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      const [ours, theirs] = [path.join(root, "a"), path.join(root, "b")];
+      yield* fs.makeDirectory(ours);
+      yield* fs.makeDirectory(theirs);
+      yield* fs.symlink(desktopLauncher, path.join(ours, "t3"));
+      yield* fs.symlink(other, path.join(theirs, "t3"));
+
+      const switched = yield* repointDesktopLinks({
+        desktopLauncher,
+        baseDir: path.join(root, "home"),
+        targetEntryPath: standalone,
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          PATH: [ours, theirs, ours, path.join(root, "missing")].join(":"),
+        }),
+      );
+
+      assert.deepStrictEqual(switched, [path.join(ours, "t3")]);
+      assert.equal(yield* fs.readLink(path.join(ours, "t3")), standalone);
+      assert.equal(yield* fs.readLink(path.join(theirs, "t3")), other);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "darwin")),
+  );
+
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

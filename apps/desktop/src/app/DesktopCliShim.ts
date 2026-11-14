@@ -112,6 +112,56 @@ export const renderCliShim = (input: {
   ].join("\n");
 };
 
+/** Where "Install t3 command" links the launcher, in the order it tries them. */
+export const unixCommandDirectories = (home: string, platform: NodeJS.Platform) =>
+  platform === "darwin"
+    ? ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/bin`]
+    : [`${home}/.local/bin`, `${home}/bin`];
+
+/** The launcher line naming the app a launcher runs; equal lines run the same app. */
+const appLineOf = (content: string) =>
+  content.split("\n").find((line) => line.startsWith("app=")) ?? null;
+
+/**
+ * Repoints each `t3` command link that runs this same app through another launcher, such as one
+ * written while the app used another T3 home, to `shimPath`. Links to another app's launcher, or
+ * to anything the app did not write, are left alone. Returns the links it repointed.
+ */
+export const repairCommandLinks = Effect.fn("desktop.cliShim.repairCommandLinks")(
+  function* (input: {
+    readonly directories: ReadonlyArray<string>;
+    readonly shimPath: string;
+    readonly content: string;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const ourApp = appLineOf(input.content);
+    const repaired: Array<string> = [];
+    if (ourApp === null) return repaired;
+    for (const directory of input.directories) {
+      const link = `${directory}/t3`;
+      const target = yield* fs.readLink(link).pipe(Effect.option);
+      if (Option.isNone(target) || target.value === input.shimPath) continue;
+      const resolved = target.value.startsWith("/") ? target.value : `${directory}/${target.value}`;
+      const info = yield* fs.stat(resolved).pipe(Effect.option);
+      // The launcher is a few KB; never read a large binary another `t3` links to.
+      if (Option.isNone(info) || info.value.type !== "File" || Number(info.value.size) > 16_384) {
+        continue;
+      }
+      const theirs = yield* fs.readFileString(resolved).pipe(Effect.option);
+      if (Option.isNone(theirs) || !theirs.value.includes(MARKER)) continue;
+      if (appLineOf(theirs.value) !== ourApp) continue;
+      const staging = `${link}.${process.pid}.tmp`;
+      const moved = yield* fs.symlink(input.shimPath, staging).pipe(
+        Effect.andThen(fs.rename(staging, link)),
+        Effect.as(true),
+        Effect.catchCause(() => fs.remove(staging).pipe(Effect.ignore, Effect.as(false))),
+      );
+      if (moved) repaired.push(link);
+    }
+    return repaired;
+  },
+);
+
 export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) =>
   environment.path.join(
     environment.baseDir,
@@ -151,6 +201,15 @@ export const install = Effect.gen(function* () {
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
       yield* logInfo("installed t3 launcher", { shimPath });
+    }
+    if (!windows) {
+      // A reinstall can move the launcher (a new T3 home); the `t3` command follows it.
+      const repaired = yield* repairCommandLinks({
+        directories: unixCommandDirectories(environment.homeDirectory, environment.platform),
+        shimPath,
+        content,
+      });
+      if (repaired.length > 0) yield* logInfo("repointed t3 command", { repaired, shimPath });
     }
     return Option.some(shimPath);
   }).pipe(

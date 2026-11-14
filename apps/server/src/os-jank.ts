@@ -120,10 +120,27 @@ export const expandHomePath = Effect.fn(function* (input: string) {
   return input;
 });
 
+/**
+ * The home a standalone t3 was installed into: `install.sh` and `t3 update` unpack it at
+ * `<home>/runtime/versions/<version>/`, so a `T3CODE_HOME=~/.pair-app` install keeps using that
+ * home without the variable. Undefined for any other executable.
+ */
+const installedHomeOf = (path: Path.Path, executablePath: string): string | undefined => {
+  const versionDir = path.dirname(executablePath);
+  const versionsDir = path.dirname(versionDir);
+  const runtimeDir = path.dirname(versionsDir);
+  return path.basename(versionsDir) === "versions" && path.basename(runtimeDir) === "runtime"
+    ? path.dirname(runtimeDir)
+    : undefined;
+};
+
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
-  const { join, resolve } = yield* Path.Path;
+  const path = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(yield* HostProcess.HomeDirectory, ".t3");
+    const installed = (yield* HostProcess.IsExecutable)
+      ? installedHomeOf(path, yield* HostProcess.ExecutablePath)
+      : undefined;
+    return installed ?? path.join(yield* HostProcess.HomeDirectory, ".t3");
   }
-  return resolve(yield* expandHomePath(raw.trim()));
+  return path.resolve(yield* expandHomePath(raw.trim()));
 });

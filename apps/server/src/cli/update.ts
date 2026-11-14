@@ -205,6 +205,47 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   return Option.some(input.launchedAs);
 });
 
+/**
+ * The app's bundled CLI follows the app, so a `t3 update` from it switches the `t3` links on PATH
+ * that run the app's launcher (`T3CODE_CLI_PATH`) to the standalone CLI it just installed; later
+ * updates then go through `repointLauncher`. Links to anything else are left alone.
+ */
+export const repointDesktopLinks = Effect.fn("cli.update.repoint_desktop_links")(function* (input: {
+  readonly desktopLauncher: string;
+  readonly baseDir: string;
+  readonly targetEntryPath: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  if ((yield* HostProcess.Platform) === "win32") return [];
+  const launcher = path.resolve(input.desktopLauncher);
+  const repointed: Array<string> = [];
+  const seen = new Set<string>();
+  for (const directory of (environment["PATH"] ?? "").split(":")) {
+    if (directory.length === 0) continue;
+    const link = path.join(path.resolve(directory), "t3");
+    if (seen.has(link)) continue;
+    seen.add(link);
+    const target = yield* fs.readLink(link).pipe(Effect.option);
+    if (Option.isNone(target) || path.resolve(directory, target.value) !== launcher) continue;
+    yield* recordPinnedRuntimeLauncher({ baseDir: input.baseDir, launcher: link }).pipe(
+      Effect.mapError(
+        () => new CliUpdateError({ reason: `Could not record the t3 launcher at ${link}.` }),
+      ),
+    );
+    const tempLink = `${link}.${process.pid}.tmp`;
+    yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
+      Effect.andThen(fs.rename(tempLink, link)),
+      Effect.mapError(
+        () => new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${link}.` }),
+      ),
+    );
+    repointed.push(link);
+  }
+  return repointed;
+});
+
 /** Node preserves argv0's spelling; resolve bare names on PATH to find the launcher symlink. */
 export const resolveLauncherPath = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -561,12 +602,25 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     ),
   );
 
-  const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
+  const isExecutable = yield* HostProcess.IsExecutable;
+  const launchedAs = isExecutable ? yield* resolveLauncherPath : undefined;
   const repointed = yield* repointLauncher({
     launchedAs,
     baseDir: input.baseDir,
     targetEntryPath: runtime.entryPath,
   });
+  // Set only by the desktop app's launcher, which runs the app's bundled CLI.
+  const desktopLauncher = isExecutable
+    ? undefined
+    : environment.T3CODE_CLI_PATH?.trim() || undefined;
+  const switchedFromDesktop =
+    desktopLauncher === undefined
+      ? []
+      : yield* repointDesktopLinks({
+          desktopLauncher,
+          baseDir: input.baseDir,
+          targetEntryPath: runtime.entryPath,
+        });
 
   // Use today's service manager for the target version. Inside the service it hands off to
   // the target CLI, so stopping this process cannot interrupt the switch.
@@ -611,6 +665,14 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   progress.success(`Installed Pair ${targetVersion}`);
   if (Option.isSome(repointed)) {
     yield* Console.log("  Run t3 to get started.\n");
+  } else if (switchedFromDesktop.length > 0) {
+    yield* Console.log(
+      `  ${switchedFromDesktop.join(", ")} now runs the standalone t3 instead of the app's, so it no longer changes with app updates. Run t3 update to update it.\n`,
+    );
+  } else if (desktopLauncher !== undefined) {
+    yield* Console.log(
+      `  The t3 command runs the Pair app's own CLI and updates with the app. The standalone t3 is at ${runtime.entryPath}\n`,
+    );
   } else {
     yield* Console.log(`  Run ${runtime.entryPath}\n`);
   }

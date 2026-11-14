@@ -8,7 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import { assert, it, vi } from "vite-plus/test";
 
-import { fixPath, hydratePosixHome } from "./os-jank.ts";
+import { fixPath, hydratePosixHome, resolveBaseDir } from "./os-jank.ts";
 
 vi.mock("node:child_process", { spy: true });
 
@@ -150,4 +150,26 @@ effectIt.effect("replaces a Path-spelled Windows PATH instead of adding a second
 
     assert.deepEqual(env, { PATH: "C:\\Tools;C:\\Windows" });
   }),
+);
+
+effectIt.effect.each([
+  {
+    executable: "/Users/me/.pair-app/runtime/versions/0.1.7/t3",
+    isExecutable: true,
+    home: "/Users/me/.pair-app",
+  },
+  { executable: "/opt/homebrew/bin/t3", isExecutable: true, home: "/Users/me/.t3" },
+  {
+    executable: "/Users/me/.pair-app/runtime/versions/0.1.7/node",
+    isExecutable: false,
+    home: "/Users/me/.t3",
+  },
+])("defaults the T3 home of $executable to $home", ({ executable, isExecutable, home }) =>
+  resolveBaseDir(undefined).pipe(
+    Effect.tap((baseDir) => Effect.sync(() => assert.equal(baseDir, home))),
+    Effect.provideService(HostProcess.IsExecutable, isExecutable),
+    Effect.provideService(HostProcess.ExecutablePath, executable),
+    Effect.provideService(HostProcess.HomeDirectory, "/Users/me"),
+    Effect.provide(NodeServices.layer),
+  ),
 );
