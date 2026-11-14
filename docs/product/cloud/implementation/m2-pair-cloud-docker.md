@@ -3905,8 +3905,8 @@ written once against the finished state.
       (204) refuse absolute and `~` paths outside a known workspace on cloud-only.
     - `WorkspaceEntries.ts` `browse` (373) refuses outside known workspaces.
     - `AssetAccess.ts` `issueAssetUrl` (530) refuses absolute (550) and `~/` (604–607) media on
-      cloud-only. It also refuses any `/t3-sandbox/…` path there, since assets read the server's
-      own disk.
+      cloud-only. It also refuses `/t3-sandbox/…` paths there, since assets read the server's own
+      disk, except inline raster images, which it reads through the machine's runner.
     - Known gap: the guard resolves symlinks and then the read opens the path, so a link swapped
       in between escapes. Members can't write the server's disk, so this is left.
   - Device tools: on cloud-only, `DeviceService.ts` registers no local host, so only

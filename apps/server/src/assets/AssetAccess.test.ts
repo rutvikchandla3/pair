@@ -35,6 +35,8 @@ import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import { WorkspaceHostFileError } from "../workspaceHost/WorkspaceHost.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
@@ -129,6 +131,7 @@ const layerTest = Layer.mergeAll(
   }),
   layerConfig,
   WorkspacePaths.layer,
+  WorkspaceHostTesting.layerFromContext,
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
@@ -387,8 +390,14 @@ describe("AssetAccess", () => {
         const machine = "/t3-sandbox/sbx_0123456789abcdef0123";
         // This server's disk has no machine paths, so they fail either way; cloud-only says why.
         const machineResources = [
-          { _tag: "media-file", threadId, path: `${machine}/secret.png` },
-          { _tag: "draft-workspace-file", cwd: root, path: `${machine}/secret.png` },
+          { _tag: "media-file", threadId, path: `${machine}/secret.pdf` },
+          {
+            _tag: "media-file",
+            threadId,
+            path: `${machine}/secret.png`,
+            disposition: "attachment",
+          },
+          { _tag: "draft-workspace-file", cwd: root, path: `${machine}/secret.pdf` },
           { _tag: "draft-workspace-file", cwd: machine, path: "secret.png" },
         ] as const;
 
@@ -430,6 +439,64 @@ describe("AssetAccess", () => {
           })),
         );
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([false, true])(
+    "reads a cloud machine's image through its runner: cloudOnly=%s",
+    (on) =>
+      Effect.gen(function* () {
+        const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+        const threadId = ThreadId.make("thread-1");
+        const machine = "/t3-sandbox/sbx_0123456789abcdef0123";
+        const files = new Map([[`${machine}/shots/before.png`, screenshotPng]]);
+        const issue = (path: string, workspaceRoot?: string) =>
+          issueAssetUrl({
+            resource: { _tag: "media-file", threadId, path },
+            ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+          });
+
+        // Asleep: no runner registered for the machine yet.
+        expect((yield* issue(`${machine}/shots/before.png`).pipe(Effect.flip))._tag).toBe(
+          "AssetWorkspaceAssetNotFoundError",
+        );
+
+        yield* hosts.register(machine, {
+          ...hosts.local,
+          files: {
+            ...hosts.local.files,
+            readFile: (path) => {
+              const bytes = files.get(path);
+              return bytes === undefined
+                ? Effect.fail(
+                    new WorkspaceHostFileError({ operation: "open", code: "ENOENT", cause: path }),
+                  )
+                : Effect.succeed({ kind: "file", size: bytes.byteLength, bytes });
+            },
+          },
+        });
+        const result = yield* issue(`${machine}/shots/before.png`);
+        expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+        expect(result.fileRevision).toMatch(/^sha256:[0-9a-f]{64}$/);
+        // A relative path resolves against the machine's worktree without touching this disk.
+        expect((yield* issue("shots/before.png", machine)).fileRevision).toBe(result.fileRevision);
+
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toEqual({
+          kind: "bytes",
+          mimeType: "image/png",
+          bytes: screenshotPng,
+        });
+        expect(yield* resolveAsset(token, "other.png")).toBeNull();
+        expect((yield* issue(`${machine}/shots/missing.png`).pipe(Effect.flip))._tag).toBe(
+          "AssetWorkspaceAssetNotFoundError",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly: on })),
+        Effect.provide(layerTest),
+      ),
   );
 
   it.effect("previews draft audio and video from relative workspace paths", () =>
