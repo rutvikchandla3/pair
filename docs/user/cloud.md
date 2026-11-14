@@ -50,6 +50,9 @@ A Pair Cloud server that runs in your own Google Cloud project can use that proj
 Engine VMs as machines instead: add a **Google Cloud** driver. These machines have
 Docker and Docker Compose, so agents and setup scripts can run containers. Container machines do not.
 
+A Pair Cloud server at a public `https://` address can run machines on boat.dev instead, billed
+to your boat account: see [Run machines on boat.dev](./pair-cloud.md#run-machines-on-boatdev).
+
 With more than one driver, new machines start on the first one until you choose another:
 choose **Use for new machines** in its row's **⋯** menu. Machines already running stay where they are.
 
@@ -199,7 +202,7 @@ While it sleeps, its files, search and Changes are read-only and show as of the 
 (or its last turn, when nothing was saved at sleep). Its terminals stop and keep their output;
 after a wake, typing in one starts a new shell.
 
-A machine that sleeps for 7 days with every thread archived, or goes 30 days with no activity on any
+A machine that sleeps for 7 days with every thread archived, or goes 14 days with no activity on any
 of its threads, has its disk deleted and shows as **Machine discarded**. Its threads stay readable,
 and waking one rebuilds the machine from the server's copy of its work. The agent starts a new
 session there with the conversation so far ([handoffs](./portable-handoffs.md)). Admins change both

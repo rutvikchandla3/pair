@@ -1,4 +1,3 @@
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import type { EnvironmentId, GceSandboxDriver } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -6,7 +5,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
@@ -28,6 +26,7 @@ import {
   type ComputeDriverHealth,
   parseSandboxTags,
   type SandboxBootstrap,
+  wakeFailure,
 } from "./ComputeDriver.ts";
 import {
   type GceApi,
@@ -42,6 +41,7 @@ import {
   operationError,
 } from "./GceApi.ts";
 import { makeGceMetadata } from "./GceMetadata.ts";
+import { cloudSafeName, nodeHttpClient, teamImageName, vmBootstrapText } from "./vmHelpers.ts";
 import {
   baseImagePairVersion,
   stepVmBaseImage,
@@ -114,12 +114,6 @@ const CLOUD_NAME = /^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/;
 const LABEL_KEY = /^[a-z][a-z0-9_-]{0,62}$/;
 const LABEL_VALUE = /^[a-z0-9_-]{0,63}$/;
 
-/** A Compute Engine resource name for `name`, or null when even the mapped name is not one. */
-export const cloudSafeName = (name: string): string | null => {
-  const mapped = name.toLowerCase().replace(/[_:.]/g, "-");
-  return CLOUD_NAME.test(mapped) ? mapped : null;
-};
-
 /** `sandboxTags` as labels (`pair.install` is `pair-install`), or null when one cannot be a label. */
 const toCloudLabels = (
   tags: Readonly<Record<string, string>>,
@@ -141,44 +135,6 @@ const fromCloudLabels = (
   Object.fromEntries(
     Object.entries(labels).map(([key, value]) => [key.replace(/^pair-/, "pair."), value]),
   );
-
-const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-
-/**
- * The `pair-bootstrap` metadata value: Docker's `bootstrap.env` lines. Null when a value holds a
- * line break or the runner URL is not http(s), since a VM cannot dial the server's socket.
- */
-export const vmBootstrapText = (bootstrap: SandboxBootstrap): string | null => {
-  if (!/^https?:\/\//.test(bootstrap.serverUrl)) return null;
-  const values = {
-    PAIR_RUNNER_URL: bootstrap.serverUrl,
-    PAIR_SANDBOX_ID: bootstrap.sandboxId,
-    PAIR_RUNNER_BUILD: bootstrap.runnerBuildId,
-    PAIR_RUNNER_ENROLL: Redacted.value(bootstrap.enrollmentSecret),
-  };
-  if (Object.values(values).some((value) => /[\0\n\r]/.test(value))) return null;
-  return Object.entries(values)
-    .map(([name, value]) => `${name}=${shellQuote(value)}\n`)
-    .join("");
-};
-
-/**
- * `t3-team-image:14` is `pair-<install8>-team-image-14` in family `pair-<install8>-team-image`;
- * null when the name has no `:<build>` or does not fit a resource name.
- */
-export const teamImageName = (
-  installId: EnvironmentId,
-  snapshotName: string,
-): { readonly name: string; readonly family: string; readonly build: string } | null => {
-  const colon = snapshotName.lastIndexOf(":");
-  if (colon <= 0) return null;
-  const family = cloudSafeName(
-    `pair-${installId.slice(0, 8)}-${snapshotName.slice(0, colon).replace(/^t3-/, "")}`,
-  );
-  const build = cloudSafeName(`b${snapshotName.slice(colon + 1)}`)?.slice(1);
-  const name = family === null || build === undefined ? null : cloudSafeName(`${family}-${build}`);
-  return name === null || family === null || build === undefined ? null : { name, family, build };
-};
 
 const statusOf = (status: string): BackendSandboxStatus => {
   switch (status) {
@@ -362,6 +318,9 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
           duration: CALL_DEADLINE,
           orElse: () => Effect.fail(notYet(operation)),
         }),
+        Effect.mapError((error) =>
+          operation === "start" || operation === "stop" ? wakeFailure(error) : error,
+        ),
       );
 
   const ours = (labels: Readonly<Record<string, string>> | undefined) =>
@@ -1291,13 +1250,6 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
     health,
   });
 });
-
-// node:http, not undici: a single executable cannot import the undici the server keeps external.
-const nodeHttpClient = NodeHttpClient.makeAgent(undefined).pipe(
-  Effect.flatMap((agent) =>
-    NodeHttpClient.makeNodeHttp.pipe(Effect.provideService(NodeHttpClient.HttpAgent, agent)),
-  ),
-);
 
 /**
  * The registry factory for `kind: "gce"`. Its only credential is the server VM's service account,

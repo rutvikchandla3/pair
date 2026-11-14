@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type BoatSandboxDriver,
   type ComputeDriverId,
   ComputeDriverKind,
   type DockerSandboxDriver,
@@ -28,6 +29,7 @@ import {
   MoreHorizontalIcon,
   PlusIcon,
   RefreshCwIcon,
+  ServerIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -72,6 +74,9 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
+  type BoatDriverForm,
+  boatDriverFormError,
+  boatDriverFromForm,
   cloudSettingsVisible,
   defaultDriverIdOf,
   dockerDriverFormError,
@@ -102,6 +107,7 @@ const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
 const DRIVER_KIND_LABELS: Readonly<Record<ComputeDriverKind, string>> = {
   docker: "Docker",
   gce: "Google Cloud",
+  boat: "boat.dev",
 };
 
 const STEP_LABELS: Readonly<Record<SandboxDriverCheckStep, string>> = {
@@ -203,20 +209,30 @@ function driverSummary(
   driver: SandboxDriverInstance,
   health: SandboxDriverHealth | undefined,
 ): string {
-  const where =
-    driver.kind === "docker"
-      ? [
+  const where = (() => {
+    switch (driver.kind) {
+      case "docker":
+        return [
           driver.dockerHost ? `Docker at ${driver.dockerHost}` : "Docker on this server",
           isRemoteDockerHost(driver.dockerHost ?? "") && driver.runnerUrl
             ? `runner URL ${driver.runnerUrl}`
             : null,
-        ]
-      : [
+        ];
+      case "gce":
+        return [
           DRIVER_KIND_LABELS.gce,
           driver.project ?? null,
           driver.zones?.join(", ") ?? null,
           driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
         ];
+      case "boat":
+        return [
+          DRIVER_KIND_LABELS.boat,
+          driver.organization ?? null,
+          driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
+        ];
+    }
+  })();
   const cap = health?.runningCap;
   return [
     ...where,
@@ -462,6 +478,24 @@ function CloudEnvironmentSettings({
                     size="sm"
                     variant="outline"
                     onClick={() => setForm({ mode: "add", kind: "gce" })}
+                  >
+                    Add
+                  </Button>
+                }
+              />
+              <SettingsRow
+                title={
+                  <span className="flex items-center gap-2">
+                    <ServerIcon className="size-4 text-muted-foreground" aria-hidden />
+                    {DRIVER_KIND_LABELS.boat}
+                  </span>
+                }
+                description="VMs in boat.dev's EU cloud, billed per second to your boat account. Needs a public https:// address."
+                control={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setForm({ mode: "add", kind: "boat" })}
                   >
                     Add
                   </Button>
@@ -737,6 +771,14 @@ function CloudEnvironmentSettings({
           key={form?.mode === "edit" ? form.id : "add"}
           initial={editing?.kind === "gce" ? editing : null}
           id={editing?.id ?? nextDriverId(drivers, "gce")}
+          onCancel={() => setForm(null)}
+          onSave={saveDriver}
+        />
+      ) : formKind === "boat" ? (
+        <BoatDriverDialog
+          key={form?.mode === "edit" ? form.id : "add"}
+          initial={editing?.kind === "boat" ? editing : null}
+          id={editing?.id ?? nextDriverId(drivers, "boat")}
           onCancel={() => setForm(null)}
           onSave={saveDriver}
         />
@@ -1163,6 +1205,113 @@ function GceDriverDialog({
         <CollapsiblePanel>
           <div className="pt-3">
             {text("runnerUrl", "Runner URL", "Uses this server's runner listener")}
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
+    </DriverDialog>
+  );
+}
+
+function BoatDriverDialog({
+  initial,
+  id,
+  onSave,
+  onCancel,
+}: {
+  readonly initial: BoatSandboxDriver | null;
+  readonly id: ComputeDriverId;
+  readonly onSave: (driver: BoatSandboxDriver) => Promise<void>;
+  readonly onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState<BoatDriverForm>({
+    label: initial?.label ?? DRIVER_KIND_LABELS.boat,
+    apiKey: "",
+    organization: initial?.organization ?? "",
+    runnerUrl: initial?.runnerUrl ?? "",
+    size: initial?.size ?? "default",
+    runningCap: initial?.runningCap?.toString() ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+  const hasSavedKey =
+    initial !== null && (typeof initial.apiKey !== "string" || initial.apiKey !== "");
+  const error = boatDriverFormError({ ...draft, hasSavedKey });
+  const field = (name: string) => `cloud-driver-${id}-${name}`;
+  const text = (
+    name: Exclude<keyof BoatDriverForm, "size" | "runningCap">,
+    label: string,
+    placeholder: string,
+    options: { readonly hint?: string; readonly password?: boolean } = {},
+  ) => (
+    <DialogField id={field(name)} label={label} hint={options.hint}>
+      <Input
+        id={field(name)}
+        size="sm"
+        type={options.password ? "password" : undefined}
+        autoComplete={options.password ? "off" : undefined}
+        placeholder={placeholder}
+        spellCheck={false}
+        value={draft[name]}
+        onChange={(event) => setDraft({ ...draft, [name]: event.target.value })}
+      />
+    </DialogField>
+  );
+
+  return (
+    <DriverDialog
+      title={initial ? `Edit ${initial.label}` : "Add boat.dev driver"}
+      description="Full VMs in boat.dev's EU cloud, billed to your boat account while they run. Machines dial this server over the internet."
+      error={error}
+      saving={saving}
+      onCancel={onCancel}
+      onSubmit={async () => {
+        setSaving(true);
+        await onSave(boatDriverFromForm(initial, id, draft));
+        setSaving(false);
+      }}
+    >
+      {text("label", "Name", "")}
+      {text("apiKey", "API key", hasSavedKey ? "Saved. Paste a new key to replace it" : "boat_…", {
+        password: true,
+      })}
+      {text("runnerUrl", "Runner URL", "https://pair.example.com", {
+        hint: "An https:// address of this server that boat machines reach.",
+      })}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DialogField id={field("size")} label="Machine size">
+          <SizeSelect
+            id={field("size")}
+            value={draft.size}
+            onChange={(size) => setDraft({ ...draft, size })}
+          />
+        </DialogField>
+        <DialogField
+          id={field("runningCap")}
+          label="Machines at once"
+          hint="Automatic uses the driver's default."
+        >
+          <MachinesAtOnceField
+            id={field("runningCap")}
+            value={draft.runningCap}
+            onChange={(runningCap) => setDraft({ ...draft, runningCap })}
+          />
+        </DialogField>
+      </div>
+      <Collapsible defaultOpen={draft.organization !== ""}>
+        <CollapsibleTrigger className="group flex items-center gap-1.5 rounded-md text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
+          />
+          Advanced
+          <span className="font-normal group-data-panel-open:hidden">
+            {draft.organization === "" ? "Organization" : `Organization: ${draft.organization}`}
+          </span>
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div className="pt-3">
+            {text("organization", "Organization", "The key's own wallet", {
+              hint: "Sent as X-Boat-Org, so machines bill this organization's wallet.",
+            })}
           </div>
         </CollapsiblePanel>
       </Collapsible>

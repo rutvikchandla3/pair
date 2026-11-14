@@ -1,5 +1,6 @@
 import {
   AntigravitySettings,
+  BoatSandboxDriver,
   ClaudeSettings,
   CodexSettings,
   EasDeviceHostConfig,
@@ -47,6 +48,7 @@ const providerSecretFields = new Map([
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
+const boatDriverSecretFields = secretSettingsFields(BoatSandboxDriver);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -252,6 +254,32 @@ function mapSecretFieldGroups(
     ]),
   ) as ServerSettings["projectSettingsOverrides"];
 
+  const sandbox =
+    settings.sandbox === undefined
+      ? undefined
+      : {
+          ...settings.sandbox,
+          drivers: settings.sandbox.drivers.map((driver) =>
+            driver.kind === "boat"
+              ? (mapFields(
+                  driver,
+                  boatDriverSecretFields,
+                  (field, serverHost) =>
+                    `sandbox-driver-${encode(driver.id)}-${encode(field)}` +
+                    (serverHost === null ? "" : `-${encode(serverHost)}`),
+                ) as BoatSandboxDriver)
+              : driver,
+          ),
+          ...(settings.sandbox.env
+            ? {
+                env: mapEnvironment(
+                  settings.sandbox.env,
+                  (variable) => `sandbox-env-${encode(variable)}`,
+                ),
+              }
+            : {}),
+        };
+
   return {
     ...settings,
     providerInstances,
@@ -260,16 +288,6 @@ function mapSecretFieldGroups(
     easDeviceHosts,
     simlockDeviceHosts,
     projectSettingsOverrides,
-    ...(settings.sandbox?.env
-      ? {
-          sandbox: {
-            ...settings.sandbox,
-            env: mapEnvironment(
-              settings.sandbox.env,
-              (variable) => `sandbox-env-${encode(variable)}`,
-            ),
-          },
-        }
-      : {}),
+    ...(sandbox === undefined ? {} : { sandbox }),
   };
 }

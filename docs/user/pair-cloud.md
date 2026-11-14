@@ -132,6 +132,55 @@ private-network peers. The runner listener serves machines and nothing else, and
 members use then refuses machines. A remote Docker host needs no **Runner URL** once it is set.
 The server does not start if the port is taken.
 
+## Run machines on boat.dev
+
+[boat.dev](https://boat.dev) can run your cloud machines instead of Docker: each machine is a
+full Ubuntu VM with Docker, billed per second while it runs and free while it sleeps. You need:
+
+- A Pair Cloud server reachable at a public `https://` address.
+- A boat account or organization used only by this server, on a paid plan. The trial refuses
+  machines that never auto-stop, saved snapshots (which Pair's machine images are), and the large
+  size.
+- A boat API key that never expires, with only the actions Pair uses:
+
+  ```sh
+  boat api-key create pair --ttl never --actions sandbox.create,sandbox.read,sandbox.stop,sandbox.resume,sandbox.delete,exec,file.read,file.write,snapshot.read,snapshot.write,account.read
+  ```
+
+  Without `--ttl never` a key expires after 90 days. Don't use the `ci` preset: after you rotate
+  it, the new key could not delete machines the old one created.
+
+In **Settings → Cloud**, choose **Add driver**, then **boat.dev**, and paste the key. The
+**Runner URL** is the `https://` address machines dial:
+
+- **This server's public address.** The address members use then also serves machines. Machine
+  routes accept only a machine's own one-time secret and token.
+- **A public hostname for a runner listener.** Set up the
+  [runner listener](#keep-machines-off-the-member-listener) and put a reverse proxy with TLS on the
+  same host in front of it, such as `https://runner.pair.example.com`.
+
+Under **Advanced**, **Organization** bills machines to one boat organization's wallet. The server
+builds its base image in your boat account the first time, which takes about 10 minutes; then
+**Test** passes.
+
+What to know:
+
+- **Cost.** A default machine (4 vCPU, 8 GB) is $0.036 an hour while it runs. Machines sleep after
+  20 idle minutes. Each wake is one of your plan's starts: the $20 plan allows 60 an hour and 200 a
+  day. A team that runs out sees a message on the wake; send again later, or raise the plan.
+- **Where data lives.** boat runs only in the EU (Germany, Finland and France), and may keep
+  snapshot copies elsewhere. Teams in the US see about 100 to 200 ms on every runner message.
+- **What boat can see.** boat runs the VM, so it can read the machine's disk and memory: your
+  checkouts, and the provider and git credentials agents use while they run. Your boat account's
+  own secrets never reach a machine.
+- **Sleeping disks.** boat keeps a sleeping machine's disk at least 14 days, which is why
+  **Delete unused machines' disks** defaults to 14 days. A machine whose disk is gone rebuilds from
+  this server's copy of its work.
+- **Team images.** An image is a boat saved snapshot of a build machine. It leaves out `/tmp`,
+  `~/.cache` and the Docker build cache, so downloads that tools keep in `~/.cache` (Cypress,
+  Puppeteer, pip) are fetched again on a new machine. Containers the recipe leaves running start in
+  every machine made from the image.
+
 ## Connect GitHub
 
 Create one GitHub App for your organization, as in
@@ -287,7 +336,7 @@ In **Settings → Cloud** on the web or desktop app:
 - **Machines at once**, in the driver's **Edit** form (its row's **⋯** menu under **Compute**), caps how many machines run together. Empty
   means a quarter of the Docker host's vCPUs. More starts wait for a free slot.
 - **Delete archived machines' disks** (7 days by default) and **Delete unused machines' disks**
-  (30 days), under **Storage**, free the disks of machines nobody uses. Their threads stay readable, and waking one
+  (14 days), under **Storage**, free the disks of machines nobody uses. Their threads stay readable, and waking one
   rebuilds the machine from the server's copy of its work.
 
 ## Back up hourly

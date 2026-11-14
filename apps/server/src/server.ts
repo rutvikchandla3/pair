@@ -134,6 +134,7 @@ import * as ThreadAccess from "./team/ThreadAccess.ts";
 import * as SandboxRestoreMode from "./sandbox/lifecycle/SandboxRestoreMode.ts";
 import * as SandboxWake from "./sandbox/lifecycle/SandboxWake.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
+import * as BoatComputeDriver from "./sandbox/compute/BoatComputeDriver.ts";
 import * as GceComputeDriver from "./sandbox/compute/GceComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
 import * as SandboxGitHooks from "./sandbox/credentials/SandboxGitHooks.ts";
@@ -850,15 +851,22 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(
-    // Inference takes one factory's requirements; name both kinds'.
+    // Inference takes one factory's requirements; name every kind's.
     ComputeDriverRegistry.layer<
       Exclude<
-        Effect.Services<ReturnType<typeof DockerComputeDriver.make | typeof GceComputeDriver.make>>,
+        Effect.Services<
+          ReturnType<
+            | typeof DockerComputeDriver.make
+            | typeof GceComputeDriver.make
+            | typeof BoatComputeDriver.make
+          >
+        >,
         Scope.Scope
       >
     >({
       docker: DockerComputeDriver.make,
       gce: GceComputeDriver.make,
+      boat: BoatComputeDriver.make,
     }),
   ),
   Layer.provideMerge(SandboxBootstrapSource.layer),

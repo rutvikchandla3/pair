@@ -296,8 +296,8 @@ Defaults: sleep after 60 idle minutes on Docker, where idle costs only memory on
 already pays for, and after 20 on drivers billed per hour (EC2 in M5, any hosted vendor later;
 Conductor's number). It is a per-driver setting. Settled threads sleep at once on Docker; M2 makes
 that rule a driver capability, so a per-hour driver can choose. Archived sandboxes are destroyed after
-7 days, any sandbox asleep 30 days is destroyed (sooner if the driver's `diskRetentionDays` is
-shorter), and the mirror keeps history usable afterwards. Both are an admin's
+7 days, any sandbox asleep 14 days is destroyed (boat keeps a stopped disk only that long, so the
+default matches it for every driver), and the mirror keeps history usable afterwards. Both are an admin's
 `sandbox.diskRetention` setting, not the worktree cleanup rules: their keep-when checks guard local
 files, which the mirror makes moot. The sweep destroys a disk only once the mirror holds every
 attached thread's branch, so a wake can rebuild it, and only on a cloud-only server, the only kind
@@ -336,7 +336,7 @@ per-account request throttling (M5).
 
 No driver on the M2 to M5 path has a session cap: Docker containers and EC2 instances run until
 stopped. Vercel Sandbox and E2B Pro cap one machine session at 24 hours, reset by stop and resume
-(E2B Hobby: 1 hour), so the recycle below is Later, with a hosted vendor. When
+(E2B Hobby: 1 hour), so the recycle below is Later, with such a vendor; boat (M8) has none. When
 `capabilities.maxSessionMs` is set, the lifecycle worker:
 
 1. From `maxSessionMs - 2h`, at the first moment no attached thread has an active run, dispatches
@@ -632,12 +632,36 @@ relaunching from a snapshot elsewhere. Instances bill per hour of running, so EC
 idle default and a cap of 20. GCE has the same shape and, since 2026-11-10, lands first
 ([m5-byoc.md](./implementation/m5-byoc.md)).
 
-### Hosted vendors (Later)
+### Hosted vendors
 
-No hosted vendor is scheduled. This analysis, retrieved 2026-11-06, stays as reference for the day a
-customer asks; section 8 compares the options. A hosted driver would also bring lifetime recycling
-(section 3), public runner URLs with token rotation (03), its own image builds (05) and the
-settle-sleep choice above.
+boat.dev is the first hosted vendor (M8, the maintainer's pick of 2026-11-13); its spec is
+[m8-boat.md](./implementation/m8-boat.md). Vercel Sandbox and E2B stay below as reference, retrieved
+2026-11-06, for a team boat can't serve; section 8 compares them. Lifetime recycling (section 3)
+and periodic token rotation (03) stay Later: boat has no session cap, and a machine gets a fresh
+token on every wake.
+
+#### boat.dev (M8)
+
+[BoatComputeDriver.ts](../../../apps/server/src/sandbox/compute/BoatComputeDriver.ts) runs each
+machine as one boat sandbox: a full Ubuntu VM with root, systemd and Docker, billed per second while
+it runs. `create` is `POST /sandboxes` with the backend name as `Idempotency-Key`, `sandboxTags` as
+labels, a saved snapshot as `from`, `ttlSeconds: null`, `noEnv: true` and `monitoring: false`.
+`stop` asks boat to snapshot the disk and returns once boat reads `archiving`; `start` resumes it.
+The enrollment secret never rides in a create or resume body, since boat keeps request config and
+each outbox attempt mints a new secret: once the sandbox is ready, the driver writes the bootstrap
+under `/tmp` through boat's files API and runs `pair-boat-boot`, which starts the runner.
+`imageBuild` is `snapshot`: the base image and team images are boat saved snapshots, built by the
+same provision scripts and base image state machine as GCE. The runner dials the driver's
+`runnerUrl`, which must be `https://` (03 §3.2). On `start` and `stop`, every error except
+`not-found` is retryable, so an empty boat wallet or an expired key never lets the reconciler
+delete a disk.
+
+Gaps: EU only (Germany, Finland, France), so a US team pays a transatlantic round trip on every
+runner message; firewall rules live inside the VM, where root can remove them; stopped disks are
+kept at least 14 days only, so Pair's default `asleepAfterDays` is 14; starts are rate limited per
+plan (the $20 plan allows 12 a minute, 60 an hour and 200 a day); SOC 2 is in progress; a young YC
+company. Strengths: by far the cheapest (`large`, 8 vCPU and 16 GB, is $0.072 an hour), full VMs
+with Docker inside, no session cap, and `noEnv` keeps the boat account's own secrets out.
 
 #### Vercel Sandbox
 
@@ -669,18 +693,6 @@ customer's account, or **E2B Embed**, the Apache-2.0 single-node stack a custome
 themselves ([09](./09-byoc.md)). If E2B is ever the vendor, the same driver pointed at an Embed node
 gives small teams a cheap BYOC path with no new driver.
 
-#### boat.dev
-
-`POST /sandboxes` takes `type: "large"`, `name`, `labels`, `env`, `from` (a saved snapshot),
-`ttlSeconds: null`, `noEnv: true` and an `Idempotency-Key`. Resume, stop (which snapshots), fork and
-delete map one to one; `imageBuild` is `snapshot`. Machines are full VMs with Docker inside, and
-`noEnv` keeps the boat account's own secrets out. It is by far the cheapest: `large` (8 vCPU, 16 GB)
-is $0.072 an hour, billed per second while running. boat's $20 plan includes 12 starts a minute.
-Gaps: EU only (Germany, Finland, France), so a US team pays a transatlantic round trip on every
-runner message; firewall rules live inside the VM, where root can remove them; stopped disks are kept
-at least 14 days only; SOC 2 is in progress; a young YC company. A good second hosted driver for EU
-teams.
-
 ### Other backends
 
 Kubernetes waits until a customer asks: a Pod plus a PersistentVolumeClaim (stop deletes the Pod,
@@ -690,7 +702,7 @@ sandboxes cap at 24 h and continue through filesystem snapshots; Fly Machines re
 second" with volumes but no egress brokering (unverified); Morph claims sub-250 ms branching with
 unclear pricing (unverified). None beats the vendors above.
 
-## 8. Choosing a hosted vendor, if one is added
+## 8. Choosing a hosted vendor
 
 A hosted vendor's machines sit on neither the customer's VPC nor a tailnet, so their runners need a
 public `/runner/*` origin or the T3 Connect tunnel (03 §3.2). BYOC keeps `/runner/*` off public
@@ -713,16 +725,17 @@ Vercel Pro is $0.128 per Active CPU hour and $0.0212 per GB-hour of memory in `i
 $0.339 an hour while running, and CPU adds $0.01 at 1% use or $0.256 at 25%. E2B is $0.000014 per
 vCPU-second and $0.0000045 per GiB-second: $0.403 plus $0.130 an hour for 8 vCPU and 8 GiB.
 
-**Pick, if one is added: Vercel Sandbox.** It is proven on this workload (Conductor ran one 8 vCPU,
-16 GB Vercel sandbox per workspace), sells that size self-serve, has persistent named sandboxes that
-match our deterministic names, prices for the long model waits agents spend most time in, gives doc
-06 credential brokering, and carries the lowest company risk. Recycling between turns hides its 24 h
-cap.
+**Pick: boat (maintainer, 2026-11-13; M8).** It costs a tenth of the others at the same size,
+runs full VMs with Docker inside, so its driver reuses the GCE driver's shape, provision scripts
+and base image build, and has no session cap, so nothing recycles. Its risks are named in its gaps
+above: EU only, disks kept 14 days, start limits and company risk. Its runner URL must be public
+`https://`, which a cloud-only server with a public origin already has.
 
-**Runner-up: E2B.** It loses on the 8 GiB ceiling and on paying for idle allocation. It wins on BYOC:
-one driver could serve a hosted vendor and, through Embed, a single-node BYOC tier beside the EC2
-driver. If early, cheap BYOC outweighs machine size, E2B is the pick. boat is the cost leader and
-worth a driver for EU teams once demand shows.
+**Runners-up: Vercel Sandbox and E2B.** Vercel is proven on this workload (Conductor ran one
+8 vCPU, 16 GB Vercel sandbox per workspace), offers 19 regions, credential brokering for doc 06 and
+the lowest company risk; it is the next driver for a team boat can't serve, such as one that needs
+a US region. E2B loses on the 8 GiB ceiling and on paying for idle allocation, and wins on BYOC:
+one driver could serve a hosted vendor and, through Embed, a single-node BYOC tier.
 
 **Cost model.** A team of 10 starts 20 cloud threads a day across the team, 22 working days a month.
 Each thread is busy 1.5 hours a day and sits through three 20-minute idle tails (1 hour). Busy CPU
@@ -792,7 +805,7 @@ money, so from M5 they run nightly against a test account.
 | 11  | `SandboxLifecycleWorker` in full: idle policy, viewer lease, approval hold, cap pressure, retention destroys, settle-sleep as a driver capability (old 2.1). The pre-sleep snapshot, retention rules on disks and rebuild from the mirror are 07's rows. | M2          |
 | 12  | Wake triggers on every surface: thread open, terminal, MCP, CLI, scheduled tasks, restore (old 2.2).                                                                                                                                                     | M2          |
 | 13  | Lifetime recycle and the interrupt-and-continue path (old 2.3), with a hosted vendor.                                                                                                                                                                    | Later       |
-| 14  | A hosted vendor driver (Vercel first) passing the contract suite, with nightly runs (old 2.5).                                                                                                                                                           | Later       |
+| 14  | A hosted vendor driver, boat.dev, passing the contract suite against a fake and, behind `T3_TEST_BOAT=1`, against boat ([m8-boat.md](./implementation/m8-boat.md)).                                                                                      | M8          |
 | 15  | Editable caps, an optional member cap, and sandbox hours in Settings: `TeamUsageResult.sandboxRows`, per-driver rates (old 2.17).                                                                                                                        | Later       |
 | 16  | `retryAfterMs` honored by the effect worker for driver errors (old 2.4).                                                                                                                                                                                 | M2          |
 | 17  | `snapshot` on the driver interface and `docker commit` builds; `deleteImage` in use (doc 05 owns the flow).                                                                                                                                              | M4          |

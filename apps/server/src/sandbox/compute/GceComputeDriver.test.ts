@@ -20,7 +20,8 @@ import {
 } from "./ComputeDriver.ts";
 import { GceApiError, mapGceError } from "./GceApi.ts";
 import * as GceApiFake from "./GceApiTesting.ts";
-import { cloudSafeName, makeWithApi, teamImageName, vmBootstrapText } from "./GceComputeDriver.ts";
+import { makeWithApi } from "./GceComputeDriver.ts";
+import { cloudSafeName, teamImageName, vmBootstrapText } from "./vmHelpers.ts";
 import type { SandboxProvisionTreeInfo } from "../image/SandboxProvisionTree.ts";
 
 const INSTALL = EnvironmentId.make("3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f");
@@ -529,6 +530,65 @@ describe("GceComputeDriver", () => {
       }
       assert.strictEqual(mapped.backendStatus, error.status);
     });
+
+    // A non-retryable wake or sleep fails the record, and the reconciler then deletes its disk.
+    const wakeRows: ReadonlyArray<
+      readonly [
+        string,
+        GceApiError,
+        Pick<ComputeDriverError, "reason" | "retryable" | "retryAfterMs">,
+      ]
+    > = [
+      [
+        "403 forbidden",
+        status(403, "forbidden"),
+        { reason: "auth", retryable: true, retryAfterMs: 5_000 },
+      ],
+      [
+        "QUOTA_EXCEEDED",
+        operation("QUOTA_EXCEEDED", 403),
+        { reason: "quota", retryable: true, retryAfterMs: 5_000 },
+      ],
+      ["400", status(400), { reason: "invalid-request", retryable: true, retryAfterMs: 5_000 }],
+      [
+        "429 for an hour",
+        status(429, undefined, 3_600_000),
+        { reason: "rate-limited", retryable: true, retryAfterMs: 60_000 },
+      ],
+      ["500", status(500), { reason: "unavailable", retryable: true }],
+    ];
+    for (const method of ["start", "stop"] as const) {
+      it.effect.each(wakeRows)(`on ${method}, %s stays retryable`, ([_name, error, expected]) =>
+        Effect.gen(function* () {
+          const { fake, driver } = yield* setup();
+          yield* driver.create(createInput());
+          fake.failNext("instances.get", error);
+          const failed = yield* Effect.flip(
+            method === "start" ? driver.start(NAME, bootstrap(2)) : driver.stop(NAME),
+          );
+          assert.deepStrictEqual(
+            {
+              reason: failed.reason,
+              retryable: failed.retryable,
+              retryAfterMs: failed.retryAfterMs,
+            },
+            { retryAfterMs: undefined, ...expected },
+          );
+          if (expected.reason === "quota" || expected.reason === "auth") {
+            assert.isDefined(failed.setupHint);
+          }
+        }),
+      );
+    }
+
+    it.effect("on start, a machine that is gone stays not-found", () =>
+      Effect.gen(function* () {
+        const { driver } = yield* setup();
+        const error = yield* Effect.flip(driver.start(NAME, bootstrap(2)));
+        assert.strictEqual(error.reason, "not-found");
+        assert.strictEqual(error.retryable, false);
+      }),
+    );
   });
 
   describe("replays", () => {

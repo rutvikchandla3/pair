@@ -50,6 +50,8 @@ node_dir="node-v${NODE_VERSION}-linux-${node_arch}"
 fetch "https://nodejs.org/dist/v${NODE_VERSION}/${node_dir}.tar.xz" \
   "$(indirect "NODE_SHA256_${suffix}")" "$work/node.tar.xz"
 tar -xJf "$work/node.tar.xz" -C "$work"
+# boat's image links /usr/local/bin/node into /home/user/.nvm, and cp would write through the link.
+for bin in "$work/$node_dir/bin/"*; do rm -f "/usr/local/bin/${bin##*/}"; done
 cp -a "$work/$node_dir/bin" "$work/$node_dir/include" "$work/$node_dir/lib" "$work/$node_dir/share" /usr/local/
 corepack enable
 
@@ -89,9 +91,14 @@ install -d /opt/pair-chrome
 mv "$work/chrome/chrome-headless-shell-${chrome_platform}" "$chrome_dir"
 ln -sf "$chrome_dir/chrome-headless-shell" /usr/local/bin/pair-chrome
 
-# 6. The agent user. Ubuntu 24.04 ships an `ubuntu` user at uid 1000.
+# 6. The agent user. Ubuntu 24.04 ships an `ubuntu` user at uid 1000. boat's own `user` may hold
+# 1000 too, so t3 then takes the next free uid; the runner finds t3 by name.
 if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi
-useradd -m -u 1000 -s /bin/bash t3
+if getent passwd 1000 >/dev/null; then
+  useradd -m -s /bin/bash t3
+else
+  useradd -m -u 1000 -s /bin/bash t3
+fi
 echo 't3 ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/t3
 chmod 0440 /etc/sudoers.d/t3
 visudo -c -q -f /etc/sudoers.d/t3
