@@ -105,6 +105,12 @@ describe("mapBoatError", () => {
       { reason: "quota", retryable: false, hint: true },
     ],
     [
+      "403 trial_saved_snapshots_not_allowed",
+      "snapshot",
+      status(403, "trial_saved_snapshots_not_allowed"),
+      { reason: "quota", retryable: false, hint: true },
+    ],
+    [
       "403 trial_machine_class_not_allowed",
       "create",
       status(403, "trial_machine_class_not_allowed"),
@@ -223,6 +229,17 @@ describe("mapBoatError", () => {
 });
 
 describe("BoatApi", () => {
+  it.effect("reads a missing file as null, as boat answers one (400 ENOENT)", () =>
+    Effect.gen(function* () {
+      const fake = yield* BoatApiFake.make();
+      const sandbox = fake.putSandbox({ name: "machine", labels: {}, state: "ready" });
+      const api = fake.api();
+      assert.isNull(yield* api.files.read(sandbox.id, "/tmp/pair-base-build/result"));
+      yield* api.files.write(sandbox.id, "/tmp/pair-base-build/result", "ok\n");
+      assert.strictEqual(yield* api.files.read(sandbox.id, "/tmp/pair-base-build/result"), "ok\n");
+    }),
+  );
+
   it.effect("reads the key again once on a 401, and keeps the new one", () =>
     Effect.gen(function* () {
       const fake = yield* BoatApiFake.make();

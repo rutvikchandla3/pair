@@ -74,6 +74,14 @@ const BOOTSTRAP_PATH = "/tmp/pair-boot/bootstrap.env";
 const BOOT_COMMAND_TIMEOUT_SECONDS = 30;
 const BUILD_DIR = "/tmp/pair-base-build";
 const IMAGE_INFO_PATH = "/etc/pair-image.json";
+
+/** boat keeps `/home/user` at a snapshot's root and every other path under `__system__/`. */
+const snapshotPath = (path: string) => {
+  const absolute = `/${path.replace(/^\/+/, "")}`;
+  return absolute.startsWith("/home/user/")
+    ? absolute.slice("/home/user/".length)
+    : `__system__${absolute}`;
+};
 const BUILD_LOG_LINE = /pair-base-build: .*/g;
 const BOOT_LOG_LINE = /pair-boat-boot: .*/g;
 /** boat's saved snapshot names. */
@@ -626,7 +634,7 @@ export const makeWithApi = Effect.fn("BoatComputeDriver.makeWithApi")(function* 
       const bytes =
         saved.snapshotId === undefined
           ? null
-          : yield* api.snapshots.readFile(saved.snapshotId, IMAGE_INFO_PATH.slice(1));
+          : yield* api.snapshots.readFile(saved.snapshotId, snapshotPath(IMAGE_INFO_PATH));
       const match =
         bytes === null
           ? null
@@ -869,7 +877,7 @@ export const makeWithApi = Effect.fn("BoatComputeDriver.makeWithApi")(function* 
   ) {
     const saved = SAVED_NAME.test(imageRef) ? yield* api.savedSnapshots.get(imageRef) : null;
     if (saved?.snapshotId === undefined || saved.status !== "ready") return null;
-    return yield* api.snapshots.readFile(saved.snapshotId, path.replace(/^\/+/, ""));
+    return yield* api.snapshots.readFile(saved.snapshotId, snapshotPath(path));
   }, bounded("readImageFile"));
 
   const health = Effect.gen(function* () {

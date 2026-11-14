@@ -333,9 +333,21 @@ export const make = Effect.fn("BoatApiTesting.make")(
             return ok({ type: "file.written" });
           }
           if (action === "files" && method === "GET") {
-            const content = sandbox.files.get(query.get("path") ?? "");
+            const path = query.get("path") ?? "";
+            const content = sandbox.files.get(path);
+            // boat answers a missing file so, not with a 404.
             return content === undefined
-              ? fail(404, "not_found")
+              ? {
+                  ...fail(400, "sandbox_direct_failed"),
+                  body: {
+                    ok: false,
+                    status: 400,
+                    code: "sandbox_direct_failed",
+                    message: `ENOENT: no such file or directory, stat '${path}'`,
+                    error: { code: "sandbox_direct_failed", status: 400 },
+                    requestId: "req_fake",
+                  },
+                }
               : ok({ type: "file.read", content, encoding: "utf8" });
           }
           if (action === "commands" && method === "POST") {

@@ -22,6 +22,8 @@ export class BoatApiError extends Schema.TaggedError<BoatApiError>()("BoatApiErr
   requestId: Schema.optionalKey(Schema.String),
   /** From `Retry-After`, or a 503's `retryAfterSeconds`. */
   retryAfterMs: Schema.optionalKey(Schema.Number),
+  /** boat answers a read of a missing file with a 400 whose message starts `ENOENT`. */
+  missingFile: Schema.optionalKey(Schema.Boolean),
 }) {
   override get message(): string {
     const detail = [this.status, this.code].filter((part) => part !== undefined).join(" ");
@@ -43,7 +45,7 @@ const KEY_UNREADABLE_HINT =
 const WALLET_HINT =
   "boat's included time is used and its wallet is empty. Add money to the boat wallet.";
 const PLAN_HINT =
-  "This boat account is on its trial or a plan without this size. Start a paid plan (xlarge needs $100 a month).";
+  "This boat account is on its free trial, or its plan lacks this size. Pair needs a paid plan: the trial refuses machines without auto-stop, saved snapshots and large machines, and xlarge needs $100 a month.";
 const LIMIT_HINT =
   "boat's plan is running as many sandboxes as it allows. Lower Machines at once, or raise the boat plan.";
 
@@ -56,6 +58,7 @@ const WALLET_CODES = new Set([
 const PLAN_CODES = new Set([
   "trial_auto_stop_required",
   "trial_machine_class_not_allowed",
+  "trial_saved_snapshots_not_allowed",
   "machine_class_plan_required",
 ]);
 
@@ -179,6 +182,7 @@ export type BoatLimits = typeof Limits.Type;
 
 const ErrorBody = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
+  message: Schema.optionalKey(Schema.String),
   error: Schema.optionalKey(Schema.Struct({ code: Schema.optionalKey(Schema.String) })),
   requestId: Schema.optionalKey(Schema.String),
   retryAfterSeconds: Schema.optionalKey(Schema.Number),
@@ -328,6 +332,11 @@ export const makeBoatApi = (
     const body = decoded._tag === "Some" ? decoded.value : undefined;
     const code = body?.code ?? body?.error?.code;
     const retryAfterMs = retryAfterMsOf(response, body);
+    // Only the fact is kept: the message names the path.
+    const missingFile =
+      response.status === 400 &&
+      code === "sandbox_direct_failed" &&
+      body?.message?.startsWith("ENOENT") === true;
     return yield* new BoatApiError({
       endpoint,
       failure: "status",
@@ -335,6 +344,7 @@ export const makeBoatApi = (
       ...(code === undefined ? {} : { code }),
       ...(body?.requestId === undefined ? {} : { requestId: body.requestId }),
       ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+      ...(missingFile ? { missingFile } : {}),
     });
   });
 
@@ -453,6 +463,7 @@ export const makeBoatApi = (
             },
             FileRead,
           ),
+          (error) => isStatus(404)(error) || error.missingFile === true,
         ).pipe(Effect.map((file) => file?.content ?? null)),
     },
     commands: {

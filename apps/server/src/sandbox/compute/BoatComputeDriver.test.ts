@@ -64,7 +64,7 @@ const setup = Effect.fn("BoatComputeDriverTest.setup")(function* (
   if (options.baseImage !== false) {
     fake.addSavedSnapshot({
       name: BASE_IMAGE,
-      files: { "etc/pair-image.json": '{"pairVersion":"1.2.3","providers":{}}' },
+      files: { "__system__/etc/pair-image.json": '{"pairVersion":"1.2.3","providers":{}}' },
     });
   }
   const driver = yield* makeWithApi({ ...config, ...options.config }, INSTALL, fake.api(), {
@@ -350,13 +350,23 @@ describe("BoatComputeDriver", () => {
       const { fake, driver } = yield* setup();
       fake.addSavedSnapshot({
         name: "pair-3f2a9c1e-team-image-5",
-        files: { "etc/t3/build.json": '{"ok":true}', "usr/bin/ls": "base-image" },
+        // boat keeps /home/user at a snapshot's root and every other path under __system__/.
+        files: {
+          "__system__/etc/t3/build.json": '{"ok":true}',
+          "__system__/usr/bin/ls": "base-image",
+          ".boat/pre-stop": "#!/bin/sh",
+        },
       });
       const read = (path: string) => driver.readImageFile("pair-3f2a9c1e-team-image-5", path);
       const file = yield* read("/etc/t3/build.json");
       assert.strictEqual(
         file instanceof Uint8Array ? new TextDecoder().decode(file) : file,
         '{"ok":true}',
+      );
+      const home = yield* read("/home/user/.boat/pre-stop");
+      assert.strictEqual(
+        home instanceof Uint8Array ? new TextDecoder().decode(home) : home,
+        "#!/bin/sh",
       );
       assert.isNull(yield* read("/usr/bin/ls"));
       assert.isNull(yield* read("/etc/missing"));
