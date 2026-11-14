@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
+import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -173,6 +174,24 @@ const routingCredential = Context.Reference<{
 const credentialNamespace = Symbol("pullRequestCredentialNamespace");
 type CredentialRef = PullRequestRef & { readonly [credentialNamespace]?: string };
 
+/** The reading member's own GitHub, which a cloud machine may have pushed and opened PRs with. */
+export interface MemberReadCredential {
+  readonly host: string;
+  readonly token: Redacted.Redacted<string>;
+  readonly login: string;
+  /** Names this member's account; reads made with it are cached apart from everyone else's. */
+  readonly credentialFingerprint: string;
+}
+
+/** The server's own access, and the App, cannot see the repository. */
+const hiddenFromServer = (error: PullRequestError) =>
+  error._tag === "PullRequestUnavailableError"
+    ? error.reason === "cli-unauthenticated"
+    : isPullRequestProviderError(error.cause) &&
+      (error.cause.reason === "not-found" ||
+        error.cause.reason === "forbidden" ||
+        error.cause.reason === "unauthenticated");
+
 export class PullRequestService extends Context.Service<
   PullRequestService,
   {
@@ -195,6 +214,14 @@ export class PullRequestService extends Context.Service<
       input: PullRequestRef,
       operation: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | PullRequestError, R>;
+    /**
+     * Retries a read the server cannot see with the member's own GitHub, which `member` looks up
+     * only then. The answer is cached under that member's credential, never served to others.
+     */
+    readonly withMemberReadFallback: <A, R>(
+      member: Effect.Effect<Option.Option<MemberReadCredential>>,
+      read: Effect.Effect<A, PullRequestError, R>,
+    ) => Effect.Effect<A, PullRequestError, R>;
     readonly summary: (
       input: PullRequestRef,
       options?: { readonly recoverTransientFailure?: boolean },
@@ -1630,6 +1657,34 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
     return { ...identity, host, provider: api.kind };
   });
+
+  const withMemberReadFallback: PullRequestService["Service"]["withMemberReadFallback"] = (
+    member,
+    read,
+  ) =>
+    read.pipe(
+      Effect.catchIf(hiddenFromServer, (error) =>
+        member.pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.fail(error),
+              onSome: (credential) =>
+                read.pipe(
+                  Effect.provideService(PinnedGitHubCredential, {
+                    host: credential.host,
+                    token: credential.token,
+                    credentialFingerprint: credential.credentialFingerprint,
+                  }),
+                  Effect.provideService(routingCredential, {
+                    credentialFingerprint: credential.credentialFingerprint,
+                    viewer: credential.login,
+                  }),
+                ),
+            }),
+          ),
+        ),
+      ),
+    );
 
   const withRoutingCredential: PullRequestService["Service"]["withRoutingCredential"] = Effect.fn(
     "PullRequestService.withRoutingCredential",
@@ -3741,6 +3796,7 @@ export const make = Effect.gen(function* () {
     routing,
     routingIdentity,
     withRoutingCredential,
+    withMemberReadFallback,
     list,
     filterOptions,
     // The local operation owns the span; this wrapper only canonicalizes refs.

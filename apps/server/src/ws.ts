@@ -301,6 +301,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import { makeMemberReadCredential } from "./pullRequest/memberReadCredential.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -1748,6 +1749,16 @@ export const layerWsRpc = (
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const sourceControlSignIn = yield* SourceControlSignIn.SourceControlSignIn;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
+      const memberReadCredential = yield* makeMemberReadCredential;
+      // Reads only: a write keeps the server's credential and its permission check.
+      const readPullRequest = <A, R>(
+        input: Parameters<typeof withPullRequestViewer>[0],
+        read: Effect.Effect<A, PullRequestService.PullRequestError, R>,
+      ) =>
+        pullRequests.withMemberReadFallback(
+          memberReadCredential(currentSession.memberId, input.host),
+          withPullRequestViewer(input, read),
+        );
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -3289,9 +3300,9 @@ export const layerWsRpc = (
         [WS_METHODS.pullRequestsRoutingIdentity]: (input) => pullRequests.routingIdentity(input),
         [WS_METHODS.pullRequestsRouting]: (input) => pullRequests.routing(input),
         [WS_METHODS.pullRequestsSummary]: (input) =>
-          withPullRequestViewer(input, pullRequests.summary(input)),
+          readPullRequest(input, pullRequests.summary(input)),
         [WS_METHODS.pullRequestsStack]: (input) =>
-          withPullRequestViewer(input, pullRequests.stack(input)),
+          readPullRequest(input, pullRequests.stack(input)),
         [WS_METHODS.pullRequestsLinkedThreads]: (input) =>
           resolvePullRequestSyncKey(input).pipe(
             Effect.flatMap((key) =>
@@ -3303,13 +3314,13 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.pullRequestsDetail]: (input) =>
-          withPullRequestViewer(input, pullRequests.detail(input)),
+          readPullRequest(input, pullRequests.detail(input)),
         [WS_METHODS.pullRequestsPreview]: (input) =>
-          withPullRequestViewer(input, pullRequests.preview(input)),
+          readPullRequest(input, pullRequests.preview(input)),
         [WS_METHODS.pullRequestsChecks]: (input) =>
-          withPullRequestViewer(input, pullRequests.checks(input)),
+          readPullRequest(input, pullRequests.checks(input)),
         [WS_METHODS.pullRequestsActivity]: (input) =>
-          withPullRequestViewer(input, pullRequests.activity(input)),
+          readPullRequest(input, pullRequests.activity(input)),
         [WS_METHODS.pullRequestsReviewGuide]: (input) =>
           withPullRequestViewer(input, reviewGuides.get(input)),
         [WS_METHODS.pullRequestsGenerateReviewGuide]: (input) =>
@@ -3321,13 +3332,13 @@ export const layerWsRpc = (
             }),
           ),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>
-          withPullRequestViewer(input, pullRequests.threadComments(input)),
+          readPullRequest(input, pullRequests.threadComments(input)),
         [WS_METHODS.pullRequestsDiffFileContents]: (input) =>
-          withPullRequestViewer(input, pullRequests.diffFileContents(input)),
+          readPullRequest(input, pullRequests.diffFileContents(input)),
         [WS_METHODS.pullRequestsFilesViewed]: (input) =>
           withPullRequestViewer(input, pullRequests.filesViewed(input)),
         [WS_METHODS.pullRequestsChangeBreakdown]: (input) =>
-          withPullRequestViewer(input, pullRequests.changeBreakdown(input)),
+          readPullRequest(input, pullRequests.changeBreakdown(input)),
         [WS_METHODS.pullRequestsSetFilesViewed]: (input) =>
           withPullRequestViewer(input, pullRequests.setFilesViewed(input)),
         [WS_METHODS.pullRequestsRunAction]: (input) =>
