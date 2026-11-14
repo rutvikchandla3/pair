@@ -71,6 +71,7 @@ export const sandboxShellSummary = (
 ): OrchestrationV2ThreadShellSandbox => ({
   state: sandbox.state,
   ownerThreadId: sandbox.ownerThreadId,
+  driverId: sandbox.driverId,
   ...(sandbox.admission === null
     ? {}
     : {

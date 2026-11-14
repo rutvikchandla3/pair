@@ -18,18 +18,20 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { drainNoticeLabel, sandboxIsolationLabel } from "@t3tools/client-runtime/state/sandbox";
+import {
+  COMPUTE_DRIVER_KIND_LABELS,
+  drainNoticeLabel,
+  sandboxIsolationLabel,
+} from "@t3tools/client-runtime/state/sandbox";
+import { ComputeDriverIcon } from "../ComputeDriverIcon";
 import * as DateTime from "effect/DateTime";
 import {
-  BoxIcon,
   CheckIcon,
   ChevronRightIcon,
-  CloudIcon,
   InfoIcon,
   MoreHorizontalIcon,
   PlusIcon,
   RefreshCwIcon,
-  ServerIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -102,12 +104,6 @@ const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
   small: "Small",
   default: "Default",
   large: "Large",
-};
-
-const DRIVER_KIND_LABELS: Readonly<Record<ComputeDriverKind, string>> = {
-  docker: "Docker",
-  gce: "Google Cloud",
-  boat: "boat.dev",
 };
 
 const STEP_LABELS: Readonly<Record<SandboxDriverCheckStep, string>> = {
@@ -196,7 +192,8 @@ function AddDriverMenu({ onAdd }: { readonly onAdd: (kind: ComputeDriverKind) =>
       <MenuPopup align="end">
         {ComputeDriverKind.literals.map((kind) => (
           <MenuItem key={kind} onClick={() => onAdd(kind)}>
-            {DRIVER_KIND_LABELS[kind]}
+            <ComputeDriverIcon kind={kind} aria-hidden />
+            {COMPUTE_DRIVER_KIND_LABELS[kind]}
           </MenuItem>
         ))}
       </MenuPopup>
@@ -220,14 +217,14 @@ function driverSummary(
         ];
       case "gce":
         return [
-          DRIVER_KIND_LABELS.gce,
+          COMPUTE_DRIVER_KIND_LABELS.gce,
           driver.project ?? null,
           driver.zones?.join(", ") ?? null,
           driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
         ];
       case "boat":
         return [
-          DRIVER_KIND_LABELS.boat,
+          COMPUTE_DRIVER_KIND_LABELS.boat,
           driver.organization ?? null,
           driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
         ];
@@ -445,8 +442,12 @@ function CloudEnvironmentSettings({
               <SettingsRow
                 title={
                   <span className="flex items-center gap-2">
-                    <BoxIcon className="size-4 text-muted-foreground" aria-hidden />
-                    {DRIVER_KIND_LABELS.docker}
+                    <ComputeDriverIcon
+                      kind="docker"
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                    {COMPUTE_DRIVER_KIND_LABELS.docker}
                   </span>
                 }
                 description={
@@ -468,8 +469,12 @@ function CloudEnvironmentSettings({
               <SettingsRow
                 title={
                   <span className="flex items-center gap-2">
-                    <CloudIcon className="size-4 text-muted-foreground" aria-hidden />
-                    {DRIVER_KIND_LABELS.gce}
+                    <ComputeDriverIcon
+                      kind="gce"
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                    {COMPUTE_DRIVER_KIND_LABELS.gce}
                   </span>
                 }
                 description="Compute Engine VMs in this server's Google Cloud project, created with its service account."
@@ -486,8 +491,12 @@ function CloudEnvironmentSettings({
               <SettingsRow
                 title={
                   <span className="flex items-center gap-2">
-                    <ServerIcon className="size-4 text-muted-foreground" aria-hidden />
-                    {DRIVER_KIND_LABELS.boat}
+                    <ComputeDriverIcon
+                      kind="boat"
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                    {COMPUTE_DRIVER_KIND_LABELS.boat}
                   </span>
                 }
                 description="VMs in boat.dev's EU cloud, billed per second to your boat account. Needs a public https:// address."
@@ -1120,7 +1129,7 @@ function GceDriverDialog({
   readonly onCancel: () => void;
 }) {
   const [draft, setDraft] = useState<GceDriverForm>({
-    label: initial?.label ?? DRIVER_KIND_LABELS.gce,
+    label: initial?.label ?? COMPUTE_DRIVER_KIND_LABELS.gce,
     project: initial?.project ?? "",
     zones: initial?.zones?.join(", ") ?? "",
     subnetwork: initial?.subnetwork ?? "",
@@ -1224,7 +1233,7 @@ function BoatDriverDialog({
   readonly onCancel: () => void;
 }) {
   const [draft, setDraft] = useState<BoatDriverForm>({
-    label: initial?.label ?? DRIVER_KIND_LABELS.boat,
+    label: initial?.label ?? COMPUTE_DRIVER_KIND_LABELS.boat,
     apiKey: "",
     organization: initial?.organization ?? "",
     runnerUrl: initial?.runnerUrl ?? "",

@@ -2445,6 +2445,8 @@ export const OrchestrationV2ThreadShellSandbox = Schema.Struct({
   state: ForwardCompatibleNullable(SandboxState),
   /** Side chats and forks name the thread whose machine they share. */
   ownerThreadId: ThreadId,
+  /** Clients read its kind and label from the settings' `sandbox.drivers`. */
+  driverId: Schema.optionalKey(ComputeDriverId),
   admission: Schema.optionalKey(
     Schema.Struct({
       reason: ForwardCompatibleNullable(SandboxAdmissionReason),

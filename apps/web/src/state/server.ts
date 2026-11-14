@@ -3,6 +3,7 @@ import {
   type EditorId,
   type EnvironmentId,
   type EnvironmentTheme,
+  type SandboxDriverInstance,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleLegacyThreadMigrationPayload,
@@ -49,6 +50,15 @@ export const environmentCloudLaunchAtom = Atom.family((environmentId: Environmen
       get(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
         .cloudLaunch === true,
   ).pipe(Atom.withLabel(`web-environment-cloud-launch:${environmentId}`)),
+);
+const NO_SANDBOX_DRIVERS: ReadonlyArray<SandboxDriverInstance> = [];
+/** The compute drivers a cloud thread's `driverId` names; members get them too. */
+export const environmentSandboxDriversAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(serverEnvironment.configValueAtom(environmentId))?.settings.sandbox?.drivers ??
+      NO_SANDBOX_DRIVERS,
+  ).pipe(Atom.withLabel(`web-environment-sandbox-drivers:${environmentId}`)),
 );
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
