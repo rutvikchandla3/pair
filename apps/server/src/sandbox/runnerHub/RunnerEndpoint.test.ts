@@ -216,7 +216,8 @@ const liveEndpoint = (
 it.live("opens the runner socket once and serves only the runner routes on it", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-endpoint-" });
+    // macOS's tmpdir is long enough to push the socket past its path limit.
+    const stateDir = yield* fs.makeTempDirectoryScoped({ directory: "/tmp", prefix: "t3-runner-" });
     const services = yield* Layer.build(liveEndpoint({ stateDir }));
     const endpoint = Context.get(services, RunnerEndpoint.RunnerEndpoint);
     const planFor = endpoint

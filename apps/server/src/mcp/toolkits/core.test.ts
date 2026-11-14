@@ -836,7 +836,6 @@ function scheduledTask(id: string, runtimeMode: "auto" | "full-access"): never {
     nextRunAt: null,
     lastRunStatus: "never",
     lastRunAt: null,
-    lastRunThreadId: null,
     lastRunError: null,
     runCount: 0,
     createdAt: "2026-10-01T00:00:00.000Z",

@@ -77,6 +77,8 @@ describe("V2 preview upgrade", () => {
         [95, "TeamImages"],
         [96, "TeamImageProposals"],
         [97, "SandboxAccess"],
+        // Later migrations have no preview history; list them from the manifest.
+        ...migrationManifest.filter(([id]) => id >= 98),
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -197,6 +199,8 @@ describe("V2 preview upgrade", () => {
         [95, "TeamImages"],
         [96, "TeamImageProposals"],
         [97, "SandboxAccess"],
+        // Later migrations have no preview history; list them from the manifest.
+        ...migrationManifest.filter(([id]) => id >= 98),
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

@@ -77,7 +77,16 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
     environment: [],
     enabled: true,
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
-  }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, http),
+    // Hide the host's OpenCode credentials, which would send the usage-limits check over HTTP.
+    Effect.provideService(HostProcess.Environment, {
+      ...process.env,
+      XDG_DATA_HOME: "/nonexistent/t3-opencode-test",
+      OPENCODE_AUTH_CONTENT: undefined,
+      OPENCODE_API_KEY: undefined,
+    }),
+  );
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
 

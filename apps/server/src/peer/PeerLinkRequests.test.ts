@@ -53,6 +53,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -177,6 +178,7 @@ const makeLaptopWith = ({
       Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
       Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      Layer.provide(ThreadAccess.layerTest()),
       Layer.provide(
         Layer.effect(
           ServerConfig.ServerConfig,

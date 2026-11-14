@@ -941,7 +941,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
             const query = span.attributes.get("db.query.text");
             if (
               typeof query === "string" &&
-              /SELECT[\s\S]*FROM orchestration_v2_projection_messages/i.test(query)
+              /^\s*SELECT[\s\S]*FROM orchestration_v2_projection_messages/i.test(query)
             ) {
               messageReads.push(query);
             }

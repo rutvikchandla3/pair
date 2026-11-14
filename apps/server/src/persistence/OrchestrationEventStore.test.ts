@@ -75,7 +75,7 @@ layer("OrchestrationEventStore", (it) => {
         const pull = yield* Stream.toPull(
           store.streamProjectedApplicationEvents({
             afterSequence,
-            project: toShellApplicationEvent,
+            project: (stored) => toShellApplicationEvent(stored),
           }),
         );
         assert.deepEqual(yield* pull, [{ sequence: replayed!.sequence, event: { threadId } }]);
