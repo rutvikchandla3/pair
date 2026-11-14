@@ -166,7 +166,7 @@ builds its base image in your boat account the first time, which takes about 10 
 What to know:
 
 - **Cost.** A default machine (4 vCPU, 8 GB) is $0.036 an hour while it runs. Machines sleep after
-  20 idle minutes. Each wake is one of your plan's starts: the $20 plan allows 60 an hour and 200 a
+  20 idle minutes, or once every thread on them is settled; archiving every thread deletes the disk. Each wake is one of your plan's starts: the $20 plan allows 60 an hour and 200 a
   day. A team that runs out sees a message on the wake; send again later, or raise the plan.
 - **Where data lives.** boat runs only in the EU (Germany, Finland and France), and may keep
   snapshot copies elsewhere. Teams in the US see about 100 to 200 ms on every runner message.
@@ -335,7 +335,7 @@ In **Settings → Cloud** on the web or desktop app:
 
 - **Machines at once**, in the driver's **Edit** form (its row's **⋯** menu under **Compute**), caps how many machines run together. Empty
   means a quarter of the Docker host's vCPUs. More starts wait for a free slot.
-- **Delete archived machines' disks** (7 days by default) and **Delete unused machines' disks**
+- **Delete archived machines' disks** (7 days by default; at once on Compute Engine and boat.dev) and **Delete unused machines' disks**
   (14 days), under **Storage**, free the disks of machines nobody uses. Their threads stay readable, and waking one
   rebuilds the machine from the server's copy of its work.
 

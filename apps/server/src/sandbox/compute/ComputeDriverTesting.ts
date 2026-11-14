@@ -92,7 +92,7 @@ export const make = Effect.fn("FakeComputeDriver.make")(function* (
   driverId: ComputeDriverId = ComputeDriverId.make("fake"),
   options: {
     readonly defaultRunningCap?: number;
-    readonly sleepOnSettle?: boolean;
+    readonly discardOnArchive?: boolean;
     readonly defaultIdleSleepMs?: number;
   } = {},
 ) {
@@ -125,7 +125,7 @@ export const make = Effect.fn("FakeComputeDriver.make")(function* (
         { size: "large", vcpus: 8, memoryGb: 16 },
       ],
       defaultRunningCap: options.defaultRunningCap ?? 20,
-      sleepOnSettle: options.sleepOnSettle ?? true,
+      discardOnArchive: options.discardOnArchive ?? false,
       defaultIdleSleepMs: options.defaultIdleSleepMs ?? 60 * 60_000,
     },
     create: Effect.fn("FakeComputeDriver.create")((input: ComputeDriverCreateInput) =>

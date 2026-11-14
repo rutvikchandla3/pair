@@ -402,6 +402,7 @@ const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
   beforeProvision: Effect.Effect<void> = Effect.void,
   discardOnSettle = false,
   imageBuild?: SandboxImageBuildRef,
+  driverId = ComputeDriverId.make("docker"),
 ) {
   const threadId = ThreadId.make(`thread:${key}`);
   const sandboxId = SandboxId.make(
@@ -431,7 +432,7 @@ const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
     threadId,
     sandboxId,
     projectId: ProjectId.make("project:sandbox-lifecycle"),
-    driverId: ComputeDriverId.make("docker"),
+    driverId,
     size: "default",
     ...(discardOnSettle ? { discardOnSettle: true } : {}),
     ...(imageBuild === undefined ? {} : { imageBuild }),
@@ -1763,6 +1764,56 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
         yield* attachAndRelease(runtime, threadId, sandboxId, 2);
         assert.include(yield* Ref.get(restores), CommandId.make(`sandbox-restore:${threadId}:2`));
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("a cloud driver deletes an archived machine's disk as soon as it stops", () =>
+    Effect.gen(function* () {
+      const snapshots = yield* makeSnapshotFakes();
+      const driverId = ComputeDriverId.make("gce");
+      const runtime = yield* makeSandboxRuntime(
+        yield* FakeComputeDriver.make(driverId, { discardOnArchive: true }),
+        snapshots.layer,
+      );
+      const { threadId, sandboxId } = yield* provisioned(
+        "discard-archived",
+        Effect.void,
+        false,
+        undefined,
+        driverId,
+      );
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            runtime.layerDriver,
+            Layer.mock(CheckpointMirror)({
+              gitDir: () => "/unused",
+              tips: (_projectId, refs) => Effect.succeed(new Map(refs.map((ref) => [ref, "oid"]))),
+            }),
+          ),
+        ),
+      );
+
+      yield* dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("archive:discard"),
+        threadId,
+      });
+      assert.equal(yield* runtime.worker.drain(1), 1);
+      yield* sweep();
+      yield* runAnswering(runtime, answerStop);
+      assert.deepInclude(yield* getSandbox(sandboxId), {
+        state: "sleeping",
+        sleepReason: "archived",
+      });
+
+      yield* sweep();
+      assert.equal((yield* getSandbox(sandboxId))?.state, "destroyed");
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "destroy" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect(

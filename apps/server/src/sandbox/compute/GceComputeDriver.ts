@@ -229,7 +229,7 @@ const capabilitiesOf = (config: GceSandboxDriver): ComputeCapabilities => {
     nestedDocker: true,
     sizes: SIZES,
     defaultRunningCap: 20,
-    sleepOnSettle: false,
+    discardOnArchive: true,
     defaultIdleSleepMs: 20 * 60_000,
   };
 };

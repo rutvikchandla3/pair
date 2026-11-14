@@ -192,7 +192,7 @@ state while it is not simply running:
 | **Machine failed**          | The machine could not start or stopped unexpectedly. Choose **Retry** or **Discard**.                       |
 | **Machine discarded**       | The machine and its files are gone. Choose **Start a new machine**, or send a message, for a fresh one.     |
 
-A Docker machine goes to sleep once every thread on it is settled or archived and none is running.
+A machine goes to sleep once every thread on it is settled or archived and none is running.
 It also sleeps after an hour with no running turn, nobody viewing its threads, and no activity in
 its terminals, or after 5 minutes of that while another machine waits for a slot. A turn waiting
 for your answer keeps its machine awake for 2 hours, then stops. Sending a message, opening a
@@ -203,10 +203,11 @@ While it sleeps, its files, search and Changes are read-only and show as of the 
 after a wake, typing in one starts a new shell.
 
 A machine that sleeps for 7 days with every thread archived, or goes 14 days with no activity on any
-of its threads, has its disk deleted and shows as **Machine discarded**. Its threads stay readable,
-and waking one rebuilds the machine from the server's copy of its work. The agent starts a new
-session there with the conversation so far ([handoffs](./portable-handoffs.md)). Admins change both
-in **Settings → Cloud → Compute**.
+of its threads, has its disk deleted and shows as **Machine discarded**. On Compute Engine and
+boat.dev, a machine whose threads are all archived has its disk deleted as soon as it stops. Its
+threads stay readable, and waking one rebuilds the machine from the server's copy of its work. The
+agent starts a new session there with the conversation so far
+([handoffs](./portable-handoffs.md)). Admins change both in **Settings → Cloud → Compute**.
 
 Anyone who can open the thread can wake or retry its machine. Only the thread's owner or an admin can choose **Sleep now** or
 **Discard machine**, from the thread's menu (on a phone, the **Machine** menu in the thread

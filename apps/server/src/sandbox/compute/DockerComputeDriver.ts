@@ -92,7 +92,7 @@ const capabilities: Omit<ComputeCapabilities, "defaultRunningCap"> = {
   nestedDocker: false,
   sizes: SIZES,
   // Idle costs only memory on a box the team already pays for (04 §2).
-  sleepOnSettle: true,
+  discardOnArchive: false,
   defaultIdleSleepMs: 60 * 60_000,
 };
 
