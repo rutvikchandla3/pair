@@ -139,7 +139,8 @@ full Ubuntu VM with Docker, billed per second while it runs and free while it sl
 
 - A Pair Cloud server reachable at a public `https://` address.
 - A boat account or organization used only by this server, on a paid plan. The trial refuses
-  machines that never auto-stop, and the large size.
+  machines that never auto-stop, saved snapshots (which Pair's machine images are), and the large
+  size.
 - A boat API key that never expires, with only the actions Pair uses:
 
   ```sh
