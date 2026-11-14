@@ -1188,6 +1188,70 @@ it.effect(
     }),
 );
 
+it.effect(
+  "retries a pull request the server cannot see with the member's GitHub, cached for them alone",
+  () =>
+    Effect.gen(function* () {
+      const reads: Array<string | null> = [];
+      const service = yield* makeService({
+        projects: [project({ id: "p1", title: "a", workspaceRoot: "/a", repository: "org/a" })],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getViewer: () => Effect.succeed("server-bot"),
+            getChangeRequest: () =>
+              Effect.gen(function* () {
+                const pin = yield* PinnedGitHubCredential;
+                reads.push(pin?.credentialFingerprint ?? null);
+                if (pin === null) {
+                  return yield* new PullRequestProviderError({
+                    provider: SourceControlProviderKind.make("github"),
+                    operation: "getChangeRequest",
+                    reason: "not-found",
+                    detail: "HTTP 404",
+                  });
+                }
+                return hostedChangeRequest("member body");
+              }),
+          }),
+        ],
+      });
+      const reference = {
+        projectId: "p1" as ProjectId,
+        repository: "org/a",
+        number: 1,
+        host: "github.com",
+      };
+      const member = {
+        host: "github.com",
+        token: Redacted.make("gho_member"),
+        login: "octocat",
+        credentialFingerprint: "github.com:member:m1:octocat",
+      };
+      let lookups = 0;
+      const lookup = (credential: typeof member | null) =>
+        Effect.sync(() => {
+          lookups += 1;
+          return Option.fromNullishOr(credential);
+        });
+
+      const detail = yield* service.withMemberReadFallback(
+        lookup(member),
+        service.detail(reference),
+      );
+      assert.strictEqual(detail.body, "member body");
+      assert.strictEqual(detail.viewer, "octocat");
+
+      // A member without a linked GitHub, or a plain read, still gets the server's answer.
+      const unlinked = yield* Effect.flip(
+        service.withMemberReadFallback(lookup(null), service.detail(reference)),
+      );
+      assert.strictEqual(unlinked._tag, "PullRequestOperationError");
+      assert.strictEqual((yield* Effect.flip(service.detail(reference)))._tag, unlinked._tag);
+      assert.deepStrictEqual(reads, [null, member.credentialFingerprint, null, null]);
+      assert.strictEqual(lookups, 2);
+    }),
+);
+
 it.effect("routing verifies the current account on the requested host without caching it", () =>
   Effect.gen(function* () {
     let viewer = "first-account";
