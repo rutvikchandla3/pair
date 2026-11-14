@@ -45,8 +45,10 @@ import {
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
 import {
+  cloudConnection,
   inEnvironment,
   launchWorkspaceStrategy,
+  projectListEntries,
   readLatestMessages,
   resolveProject,
   ThreadUnauthorizedError,
@@ -316,6 +318,125 @@ it.effect(
         "ThreadUsageError",
       );
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("--environment fails on a name that is neither a title there nor a folder here", () =>
+  Effect.gen(function* () {
+    const environmentId = EnvironmentId.make("environment-pair-cloud");
+    const here = {
+      id: "project-here",
+      title: "app",
+      workspaceRoot: process.cwd(),
+      repositoryIdentity: { canonicalKey: "github.com/acme/app" },
+    };
+    const { tools } = scriptedTools({
+      t3_project_list: [
+        {
+          projects: [
+            {
+              id: "project-cloud-app",
+              title: "app-cloud",
+              workspaceRoot: "/srv/app",
+              repositoryIdentity: { canonicalKey: "github.com/acme/app" },
+            },
+          ],
+          nextCursor: null,
+        },
+        { projects: [here], nextCursor: null },
+      ],
+    });
+    const error = yield* resolveProject(inEnvironment(tools, environmentId), "app-typo", {
+      remote: true,
+      environmentId,
+    }).pipe(Effect.flip);
+    assert.strictEqual(error._tag, "ThreadProjectNotFoundError");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it("project list puts repos before workspaces and names each workspace's repositories", () => {
+  const entries = projectListEntries(
+    [
+      {
+        id: ProjectId.make("workspace-1"),
+        title: "ade-pair",
+        workspaceRoot: "/srv/workspaces/ade-pair",
+        roots: [
+          { projectId: ProjectId.make("project-ade"), name: "ade" },
+          { projectId: ProjectId.make("project-gone"), name: "gone" },
+        ],
+      },
+      {
+        id: ProjectId.make("project-ade"),
+        title: "ade",
+        workspaceRoot: "/srv/ade",
+        repositoryIdentity: { canonicalKey: "github.com/acme/ade", owner: "acme", name: "ade" },
+      },
+      {
+        id: ProjectId.make("project-old"),
+        title: "old",
+        workspaceRoot: "/srv/old",
+        archivedAt: "2026-11-01T00:00:00.000Z",
+      },
+    ],
+    { archived: false },
+  );
+  assert.deepStrictEqual(
+    entries.map((entry) => [entry.kind, entry.title, entry.repository]),
+    [
+      ["repo", "ade", "acme/ade"],
+      ["workspace", "ade-pair", null],
+    ],
+  );
+  assert.deepStrictEqual(entries[1]?.roots, [
+    { name: "ade", projectId: "project-ade", repository: "acme/ade" },
+    { name: "gone", projectId: "project-gone", repository: null },
+  ]);
+});
+
+it.effect("--cloud runs on the one linked Pair Cloud when this server has no cloud machines", () =>
+  Effect.gen(function* () {
+    const environmentId = EnvironmentId.make("environment-pair-cloud");
+    const link = (id: string, cloud: boolean) => ({
+      environmentId: EnvironmentId.make(id),
+      label: id,
+      status: "reachable",
+      access: "full-access",
+      expiresAt: "2026-12-01T00:00:00.000Z",
+      lastError: null,
+      ...(cloud ? { cloud: true } : {}),
+    });
+    const route = (cloudThreads: boolean, links: ReadonlyArray<unknown>) => {
+      const { tools, calls } = scriptedTools({
+        orchestrator_capabilities: [{ features: { cloudThreads } }],
+        t3_environment_links: [{ environmentId: "environment-here", links, notListed: "" }],
+      });
+      return cloudConnection(tools, { remote: false }).pipe(
+        Effect.map(({ connection }) => ({ connection, calls })),
+      );
+    };
+
+    const here = yield* route(true, []);
+    assert.deepStrictEqual(here.connection, { remote: false });
+    assert.deepStrictEqual(
+      here.calls.map((entry) => entry.tool),
+      ["orchestrator_capabilities"],
+    );
+
+    const there = yield* route(false, [link("vps", false), link(environmentId, true)]);
+    assert.deepStrictEqual(there.connection, {
+      remote: true,
+      environmentId,
+      cloudLabel: environmentId,
+    });
+
+    const none = yield* route(false, [link("vps", false)]).pipe(Effect.flip);
+    assert.instanceOf(none, ThreadUsageError);
+    const two = yield* route(false, [link("cloud-a", true), link("cloud-b", true)]).pipe(
+      Effect.flip,
+    );
+    assert.instanceOf(two, ThreadUsageError);
+    assert.include(two.message, "Pass --environment");
+  }),
 );
 
 const ProbeToolkit = Toolkit.make(

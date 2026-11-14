@@ -106,8 +106,8 @@ export class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProject
   override readonly [Runtime.errorReported] = false;
   override get message(): string {
     return this.remote === true
-      ? `No Pair project matches '${this.identifier}'. Pass a project id, the project's folder on the server, or its title.`
-      : `No Pair project matches '${this.identifier}'. Pass a project id or a path inside a project.`;
+      ? `No Pair project matches '${this.identifier}'. Pass a project id, the project's folder on the server, or its title. t3 project list shows them.`
+      : `No Pair project matches '${this.identifier}'. Pass a project id or a path inside a project. t3 project list shows them.`;
   }
 }
 
@@ -179,11 +179,28 @@ const ProjectListResult = Schema.Struct({
       title: Schema.String,
       workspaceRoot: Schema.String,
       repositoryIdentity: Schema.optional(
-        Schema.NullOr(Schema.Struct({ canonicalKey: Schema.String })),
+        Schema.NullOr(
+          Schema.Struct({
+            canonicalKey: Schema.String,
+            owner: Schema.optional(Schema.String),
+            name: Schema.optional(Schema.String),
+          }),
+        ),
       ),
+      /** Set on a workspace: the projects whose repositories it checks out, by folder name. */
+      roots: Schema.optional(
+        Schema.Array(Schema.Struct({ projectId: ProjectId, name: Schema.String })),
+      ),
+      archivedAt: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
   nextCursor: Schema.NullOr(Schema.Int),
+});
+type ListedProject = (typeof ProjectListResult.Type)["projects"][number];
+
+/** Only what `thread start` reads from `orchestrator_capabilities`. */
+const CloudThreadsCapability = Schema.Struct({
+  features: Schema.Struct({ cloudThreads: Schema.Boolean }),
 });
 
 const ThreadLaunchResult = Schema.Struct({
@@ -279,6 +296,47 @@ const findLink = Effect.fn("cli.thread.findLink")(function* (tools: ThreadTools,
     });
   }
   return byLabel[0];
+});
+
+/**
+ * Where `--cloud` runs when no environment is named: here when this server runs cloud
+ * machines, else on its one linked Pair Cloud, as the app's Cloud option does.
+ */
+export const cloudConnection = Effect.fn("cli.thread.cloudConnection")(function* (
+  tools: ThreadTools,
+  connection: ThreadConnection,
+) {
+  const capabilities = yield* tools.call("orchestrator_capabilities", {}, CloudThreadsCapability);
+  if (capabilities.features.cloudThreads) return { tools, connection };
+  const { links } = yield* tools.call(
+    "t3_environment_links",
+    {},
+    OrchestratorMcpEnvironmentLinksResult,
+  );
+  const clouds = links.filter((link) => link.cloud === true);
+  const [link] = clouds;
+  if (link === undefined) {
+    return yield* new ThreadUsageError({
+      detail:
+        "This Pair server doesn't run cloud machines, and no Pair Cloud is linked. Link it in Settings → Connections → Linked environments, then retry.",
+    });
+  }
+  if (clouds.length > 1) {
+    return yield* new ThreadUsageError({
+      detail: `More than one Pair Cloud is linked: ${clouds
+        .map((candidate) => `${candidate.label} (${candidate.environmentId})`)
+        .join(", ")}. Pass --environment with one of them.`,
+    });
+  }
+  yield* Console.error(`Running on ${link.label}, since this server doesn't run cloud machines.`);
+  return {
+    tools: inEnvironment(tools, link.environmentId),
+    connection: {
+      remote: true,
+      environmentId: link.environmentId,
+      cloudLabel: link.label,
+    } satisfies ThreadConnection,
+  };
 });
 
 /** Runs `run` in the linked environment `value` names, through this machine's link. */
@@ -419,7 +477,7 @@ const readMessageArgument = Effect.fn("cli.thread.readMessage")(function* (argum
 });
 
 const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools: ThreadTools) {
-  const projects: Array<(typeof ProjectListResult.Type)["projects"][number]> = [];
+  const projects: Array<ListedProject> = [];
   let cursor: number | null = 0;
   while (cursor !== null) {
     const page: typeof ProjectListResult.Type = yield* tools.call(
@@ -460,8 +518,14 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
     if (connection.environmentId === undefined || tools.here === undefined) {
       return yield* new ThreadProjectNotFoundError({ identifier, remote: true });
     }
-    // Through a link, a folder here names the project there with the same repository.
-    const here = yield* containingProject(yield* listAllProjects(tools.here), identifier);
+    // Through a link, a folder here names the project there with the same repository. A name
+    // that is neither a title there nor a folder here fails, rather than matching this directory.
+    const here = yield* containingProject(yield* listAllProjects(tools.here), identifier).pipe(
+      Effect.catchTags({
+        ThreadProjectNotFoundError: () =>
+          Effect.fail(new ThreadProjectNotFoundError({ identifier, remote: true })),
+      }),
+    );
     const key = here.repositoryIdentity?.canonicalKey;
     const sameRepository =
       key === undefined
@@ -485,7 +549,7 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
 
 /** The project whose folder holds `identifier`, a path on this machine (deepest wins). */
 const containingProject = Effect.fn("cli.thread.containingProject")(function* (
-  projects: ReadonlyArray<(typeof ProjectListResult.Type)["projects"][number]>,
+  projects: ReadonlyArray<ListedProject>,
   identifier: string,
 ) {
   const path = yield* Path.Path;
@@ -494,7 +558,12 @@ const containingProject = Effect.fn("cli.thread.containingProject")(function* (
   // through a symlink (macOS /tmp), so both sides compare as real paths.
   const realPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(path.resolve(yield* HostProcess.WorkingDirectory, identifier));
+  const resolved = path.resolve(yield* HostProcess.WorkingDirectory, identifier);
+  // A mistyped name is no folder: it must not resolve to the directory it was typed in.
+  if (!(yield* fileSystem.exists(resolved).pipe(Effect.orElseSucceed(() => false)))) {
+    return yield* new ThreadProjectNotFoundError({ identifier });
+  }
+  const target = yield* realPath(resolved);
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
@@ -861,6 +930,132 @@ const threadListCommand = Command.make("list", {
   ),
 );
 
+/** `owner/name` of a project's repository, or null when it has none. */
+const repositoryName = (project: ListedProject | undefined): string | null => {
+  const identity = project?.repositoryIdentity;
+  if (identity === undefined || identity === null) return null;
+  if (identity.owner !== undefined && identity.name !== undefined) {
+    return `${identity.owner}/${identity.name}`;
+  }
+  return identity.canonicalKey.replace(/^[^/]+\//, "");
+};
+
+export interface ProjectListEntry {
+  readonly id: string;
+  readonly kind: "repo" | "workspace";
+  readonly title: string;
+  /** `owner/name` of a repo's origin; null for a workspace or a repo without one. */
+  readonly repository: string | null;
+  /** The project's folder on the server it was listed from. */
+  readonly folder: string;
+  readonly archived: boolean;
+  /** For a workspace: each folder it checks out and the project behind it. */
+  readonly roots?: ReadonlyArray<{
+    readonly name: string;
+    readonly projectId: string;
+    readonly repository: string | null;
+  }>;
+}
+
+/** Repos, then workspaces, each by title; archived projects only when asked for. */
+export const projectListEntries = (
+  projects: ReadonlyArray<ListedProject>,
+  options: { readonly archived: boolean },
+): ReadonlyArray<ProjectListEntry> => {
+  const byId = new Map(projects.map((project) => [project.id as string, project]));
+  return projects
+    .filter((project) => options.archived || !project.archivedAt)
+    .map((project): ProjectListEntry => {
+      const base = {
+        id: project.id,
+        title: project.title,
+        folder: project.workspaceRoot,
+        archived: Boolean(project.archivedAt),
+      };
+      if (project.roots === undefined) {
+        return { ...base, kind: "repo", repository: repositoryName(project) };
+      }
+      return {
+        ...base,
+        kind: "workspace",
+        repository: null,
+        roots: project.roots.map((root) => ({
+          name: root.name,
+          projectId: root.projectId,
+          repository: repositoryName(byId.get(root.projectId)),
+        })),
+      };
+    })
+    .toSorted(
+      (left, right) =>
+        (left.kind === right.kind ? 0 : left.kind === "repo" ? -1 : 1) ||
+        left.title.localeCompare(right.title, undefined, { sensitivity: "base" }),
+    );
+};
+
+/** One line per project: id, kind, title, then its repository, folder, or workspace folders. */
+const projectListLines = (
+  entries: ReadonlyArray<ProjectListEntry>,
+  remote: boolean,
+): ReadonlyArray<string> => {
+  const titleWidth = Math.max(0, ...entries.map((entry) => entry.title.length));
+  return entries.map((entry) => {
+    const detail =
+      entry.roots !== undefined
+        ? entry.roots.map((root) => root.name).join(", ")
+        : remote
+          ? (entry.repository ?? entry.folder)
+          : entry.folder;
+    const archived = entry.archived ? "  (archived)" : "";
+    return `${entry.id}  ${entry.kind.padEnd(9)}  ${entry.title.padEnd(titleWidth)}  ${detail}${archived}`;
+  });
+};
+
+export const projectListCommand = Command.make("list", {
+  ...projectLocationFlags,
+  url: urlFlag,
+  environment: environmentFlag,
+  workspaces: Flag.Boolean("workspaces").pipe(
+    Flag.withDescription("List only workspaces."),
+    Flag.withDefault(false),
+  ),
+  repos: Flag.Boolean("repos").pipe(
+    Flag.withDescription("List only repositories, not workspaces."),
+    Flag.withDefault(false),
+  ),
+  archived: Flag.Boolean("archived").pipe(
+    Flag.withDescription("Include archived projects."),
+    Flag.withDefault(false),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "List projects and workspaces, with the titles thread start takes. A workspace checks out several projects' repositories together.",
+  ),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.project.list")(function* (tools, connection) {
+        if (flags.workspaces && flags.repos) {
+          return yield* new ThreadUsageError({ detail: "Use --workspaces or --repos, not both." });
+        }
+        const entries = projectListEntries(yield* listAllProjects(tools), {
+          archived: flags.archived,
+        }).filter(
+          (entry) =>
+            (!flags.workspaces || entry.kind === "workspace") &&
+            (!flags.repos || entry.kind === "repo"),
+        );
+        if (flags.json) return yield* printJson(entries);
+        if (entries.length === 0) return yield* Console.log("No projects.");
+        for (const line of projectListLines(entries, connection.remote)) {
+          yield* Console.log(line);
+        }
+      }),
+    ).pipe(reportThreadErrors),
+  ),
+);
+
 const threadStartCommand = Command.make("start", {
   ...projectLocationFlags,
   url: urlFlag,
@@ -915,7 +1110,11 @@ const threadStartCommand = Command.make("start", {
       ).pipe(Effect.mapError(() => new ThreadUsageError({ detail: "The title is empty." })));
       yield* withThreadTools(
         flags,
-        Effect.fn("cli.thread.start")(function* (tools, connection) {
+        Effect.fn("cli.thread.start")(function* (toolsHere, connectionHere) {
+          const { tools, connection } =
+            workspaceStrategy?.type === "cloud" && !connectionHere.remote
+              ? yield* cloudConnection(toolsHere, connectionHere)
+              : { tools: toolsHere, connection: connectionHere };
           if (connection.cloudLabel !== undefined && workspaceStrategy === undefined) {
             return yield* new ThreadUsageError({
               detail: `${connection.cloudLabel} runs every thread on a cloud machine. Pass --cloud <base-ref>.`,

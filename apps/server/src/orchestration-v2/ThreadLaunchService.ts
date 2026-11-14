@@ -532,15 +532,18 @@ const make = Effect.gen(function* () {
   const checkCloudLaunch: ThreadLaunchService["Service"]["checkCloudLaunch"] = Effect.fn(
     "ThreadLaunchService.checkCloudLaunch",
   )(function* (input) {
+    // A server that runs no cloud machines says so first, before any workspace root's remote.
+    const launch = yield* CloudPreparation.resolveCloudLaunch(
+      input.projectId,
+      input.instanceId,
+    ).pipe(Effect.provide(cloudServices));
     const project = yield* projects
       .getById(input.projectId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isSome(project) && project.value.roots !== undefined) {
       yield* checkWorkspaceRoots(input.projectId, project.value.roots);
     }
-    return yield* CloudPreparation.resolveCloudLaunch(input.projectId, input.instanceId).pipe(
-      Effect.provide(cloudServices),
-    );
+    return launch;
   });
 
   /** Refuses a branch origin lacks; when git cannot ask, the checkout in the sandbox decides. */
