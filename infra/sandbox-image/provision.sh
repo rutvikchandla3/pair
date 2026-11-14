@@ -50,6 +50,8 @@ node_dir="node-v${NODE_VERSION}-linux-${node_arch}"
 fetch "https://nodejs.org/dist/v${NODE_VERSION}/${node_dir}.tar.xz" \
   "$(indirect "NODE_SHA256_${suffix}")" "$work/node.tar.xz"
 tar -xJf "$work/node.tar.xz" -C "$work"
+# boat's image links /usr/local/bin/node into /home/user/.nvm, and cp would write through the link.
+for bin in "$work/$node_dir/bin/"*; do rm -f "/usr/local/bin/${bin##*/}"; done
 cp -a "$work/$node_dir/bin" "$work/$node_dir/include" "$work/$node_dir/lib" "$work/$node_dir/share" /usr/local/
 corepack enable
 

@@ -1,5 +1,10 @@
 #!/bin/sh
 # boat runs ~/.boat/pre-stop before it snapshots a stopping machine. Ending the runner and its agents
-# here means a machine boat keeps warm after a stop holds no live runner or credential.
-sudo systemctl stop pair-runner.service
-sudo rm -f /etc/pair-runner/bootstrap.env
+# here means a machine boat keeps warm after a stop holds no live runner or credential. A resume can
+# land while this runs, so only the generation that was running when the stop began is ended.
+generation="$(sudo cat /etc/pair-runner/generation 2>/dev/null || true)"
+sudo flock /run/pair-boat-boot.lock sh -c '
+  [ "$(cat /etc/pair-runner/generation 2>/dev/null || true)" = "$1" ] || exit 0
+  systemctl stop pair-runner.service
+  rm -f /etc/pair-runner/bootstrap.env
+' pre-stop "$generation"
