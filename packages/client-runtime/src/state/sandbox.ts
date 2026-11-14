@@ -694,6 +694,11 @@ export function createSandboxEnvironmentAtoms<R, E>(
     }),
     /** Sleeps or discards a machine by id; the server lets only its owner or an admin. */
     stopById,
+    /** A fresh signed-in URL for the thread's machine screen; ask again on every viewer load. */
+    desktop: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandbox:desktop",
+      tag: WS_METHODS.sandboxDesktop,
+    }),
     /** Boots and discards one machine; settings:write, like the driver it tests. */
     checkDriver: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandbox:check-driver",

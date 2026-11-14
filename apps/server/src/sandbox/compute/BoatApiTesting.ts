@@ -328,6 +328,15 @@ export const make = Effect.fn("BoatApiTesting.make")(
             }
             return ok({ status: "resuming" }, 202);
           }
+          if (action === "desktop" && method === "POST") {
+            if (!["ready", "idle", "running"].includes(sandbox.state)) {
+              return fail(400, "machine_not_running");
+            }
+            return ok({
+              type: "sandbox.desktop",
+              desktopUrl: `https://desktop.boat.test/${sandbox.id}?theme=${query.get("theme")}#token=fake`,
+            });
+          }
           if (action === "files" && method === "PUT") {
             sandbox.files.set(String(json.path), String(json.content));
             return ok({ type: "file.written" });

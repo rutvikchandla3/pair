@@ -144,7 +144,7 @@ full Ubuntu VM with Docker, billed per second while it runs and free while it sl
 - A boat API key that never expires, with only the actions Pair uses:
 
   ```sh
-  boat api-key create pair --ttl never --actions sandbox.create,sandbox.read,sandbox.stop,sandbox.resume,sandbox.delete,exec,file.read,file.write,snapshot.read,snapshot.write,account.read
+  boat api-key create pair --ttl never --actions sandbox.create,sandbox.read,sandbox.stop,sandbox.resume,sandbox.delete,exec,file.read,file.write,snapshot.read,snapshot.write,account.read,desktop
   ```
 
   Without `--ttl never` a key expires after 90 days. Don't use the `ci` preset: after you rotate
@@ -176,6 +176,10 @@ What to know:
 - **Sleeping disks.** boat keeps a sleeping machine's disk at least 14 days, which is why
   **Delete unused machines' disks** defaults to 14 days. A machine whose disk is gone rebuilds from
   this server's copy of its work.
+- **Desktop.** On a thread whose machine is running, open **Desktop** from the right panel to see
+  the machine's screen and use it with your mouse and keyboard, for example to check an app the
+  agent started. The key needs the `desktop` action; a key without it shows an error there and
+  everything else keeps working. Anyone who can use a thread's terminal can use its desktop.
 - **Team images.** An image is a boat saved snapshot of a build machine. It leaves out `/tmp`,
   `~/.cache` and the Docker build cache, so downloads that tools keep in `~/.cache` (Cypress,
   Puppeteer, pip) are fetched again on a new machine. Containers the recipe leaves running start in

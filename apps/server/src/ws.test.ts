@@ -81,6 +81,7 @@ import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ComputeDriverCheck from "./sandbox/compute/ComputeDriverCheck.ts";
+import * as SandboxDesktop from "./sandbox/desktop/SandboxDesktop.ts";
 import * as TeamImageService from "./sandbox/image/TeamImageService.ts";
 import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
 import * as ServerDrain from "./drain/ServerDrain.ts";
@@ -770,6 +771,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(OtlpEndpointCheck.OtlpEndpointCheck)({}),
   Layer.mock(SandboxOverview.SandboxOverview)({}),
   Layer.mock(ComputeDriverCheck.ComputeDriverCheck)({}),
+  Layer.mock(SandboxDesktop.SandboxDesktop)({}),
   Layer.mock(MachinePorts.MachinePorts)({}),
   Layer.mock(TeamImageService.TeamImageService)({}),
   Layer.mock(PairingGrantStore.PairingGrantStore)({}),

@@ -7,6 +7,9 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  SandboxDesktopError,
+  SandboxDesktopInput,
+  SandboxDesktopResult,
   SandboxDriverCheckError,
   SandboxDriverCheckInput,
   SandboxDriverCheckResult,
@@ -643,6 +646,7 @@ export const WS_METHODS = {
   sandboxOverview: "sandbox.overview",
   sandboxViewing: "sandbox.viewing",
   sandboxStopById: "sandbox.stopById",
+  sandboxDesktop: "sandbox.desktop",
   sandboxCheckDriver: "sandbox.checkDriver",
   teamImageSubscribe: "teamImage.subscribe",
   teamImageSaveRecipe: "teamImage.saveRecipe",
@@ -1236,6 +1240,12 @@ const WsSandboxStopByIdRpc = Rpc.make(WS_METHODS.sandboxStopById, {
   payload: SandboxStopByIdInput,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
   error: Schema.Union([OrchestrationV2DispatchCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxDesktopRpc = Rpc.make(WS_METHODS.sandboxDesktop, {
+  payload: SandboxDesktopInput,
+  success: SandboxDesktopResult,
+  error: Schema.Union([SandboxDesktopError, EnvironmentAuthorizationError]),
 });
 
 const WsSandboxCheckDriverRpc = Rpc.make(WS_METHODS.sandboxCheckDriver, {
@@ -2615,6 +2625,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSandboxOverviewRpc,
   WsSandboxViewingRpc,
   WsSandboxStopByIdRpc,
+  WsSandboxDesktopRpc,
   WsSandboxCheckDriverRpc,
   WsTeamImageSubscribeRpc,
   WsTeamImageSaveRecipeRpc,

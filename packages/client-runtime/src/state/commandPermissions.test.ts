@@ -15,6 +15,7 @@ import {
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   ThreadId,
   EnvironmentId,
   MEMBER_SCOPES,
@@ -165,6 +166,7 @@ describe("command permissions", () => {
   it.effect.each([
     [WS_METHODS.serverCheckOtlpEndpoint, AuthSettingsWriteScope],
     [WS_METHODS.sandboxCheckDriver, AuthSettingsWriteScope],
+    [WS_METHODS.sandboxDesktop, AuthTerminalOperateScope],
     [WS_METHODS.teamImageActivateBuild, AuthSettingsWriteScope],
     [WS_METHODS.teamImageDismissProposal, AuthSettingsWriteScope],
     [WS_METHODS.teamImageSetSecret, AuthSettingsWriteScope],

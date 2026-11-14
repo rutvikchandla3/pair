@@ -41,6 +41,7 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
       "snapshot",
       "readImageFile",
       "health",
+      "desktop",
     ]),
     reason: ComputeDriverErrorReason,
     // Set where the error is built, never derived later from `reason`.
@@ -235,6 +236,14 @@ export class ComputeDriver extends Context.Service<
     ) => Effect.Effect<Uint8Array | null | "whole-disk", ComputeDriverError>;
     /** What Settings → Cloud's Test button shows. */
     readonly health: Effect.Effect<ComputeDriverHealth, ComputeDriverError>;
+    /**
+     * A signed-in URL that streams a running machine's screen, for a browser to embed. Absent
+     * where the backend has no desktop. The URL is a credential: never log or store it.
+     */
+    readonly desktop?: (
+      driverRef: string,
+      theme: "light" | "dark",
+    ) => Effect.Effect<string, ComputeDriverError>;
   }
 >()("t3/sandbox/compute/ComputeDriver") {}
 

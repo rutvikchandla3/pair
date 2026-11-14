@@ -39,6 +39,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope,
   // The same stop `sandbox.sleep` and `sandbox.discard` send, by machine id.
   [WS_METHODS.sandboxStopById]: AuthOrchestrationOperateScope,
+  // The desktop types and clicks on the machine, as a terminal does.
+  [WS_METHODS.sandboxDesktop]: AuthTerminalOperateScope,
   // Creates a worktree and a thread here.
   [WS_METHODS.threadMoveToLocal]: AuthOrchestrationOperateScope,
   // A move starts a thread on Pair Cloud through this server's link.

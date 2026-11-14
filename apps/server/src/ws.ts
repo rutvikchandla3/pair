@@ -311,6 +311,7 @@ import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ComputeDriverCheck from "./sandbox/compute/ComputeDriverCheck.ts";
 import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
+import * as SandboxDesktop from "./sandbox/desktop/SandboxDesktop.ts";
 import * as ServerDrain from "./drain/ServerDrain.ts";
 import * as TeamImageService from "./sandbox/image/TeamImageService.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
@@ -1742,6 +1743,7 @@ export const layerWsRpc = (
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const sandboxOverview = yield* SandboxOverview.SandboxOverview;
       const sandboxWake = yield* SandboxWake;
+      const sandboxDesktop = yield* SandboxDesktop.SandboxDesktop;
       const serverDrain = yield* ServerDrain.ServerDrain;
       const computeDriverCheck = yield* ComputeDriverCheck.ComputeDriverCheck;
       const teamImages = yield* TeamImageService.TeamImageService;
@@ -3220,6 +3222,7 @@ export const layerWsRpc = (
                 });
               }),
             ),
+        [WS_METHODS.sandboxDesktop]: (input) => sandboxDesktop.open(input),
         [WS_METHODS.sandboxCheckDriver]: (input) => computeDriverCheck.check(input),
         [WS_METHODS.teamImageSubscribe]: (_input) =>
           teamImages.changes({
@@ -4188,7 +4191,13 @@ export const layer = Layer.unwrap(
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(OtlpEndpointCheck.layer),
-              Layer.provide(Layer.mergeAll(SandboxOverview.layer, ComputeDriverCheck.layer)),
+              Layer.provide(
+                Layer.mergeAll(
+                  SandboxOverview.layer,
+                  ComputeDriverCheck.layer,
+                  SandboxDesktop.layer,
+                ),
+              ),
               Layer.provide(MachinePorts.layer.pipe(Layer.provide(ProcessRunner.layer))),
               Layer.provide(TeamUsage.layer),
               Layer.provide(

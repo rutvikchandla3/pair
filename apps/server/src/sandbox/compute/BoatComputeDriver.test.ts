@@ -302,6 +302,26 @@ describe("BoatComputeDriver", () => {
     }),
   );
 
+  it.effect("opens a running machine's desktop, and fails for a stopped or missing one", () =>
+    Effect.gen(function* () {
+      const { fake, driver } = yield* setup();
+      const desktop = driver.desktop;
+      assert.isDefined(desktop);
+      yield* driver.create(createInput());
+      const id = fake.sandbox(NAME)!.id;
+      assert.strictEqual(
+        yield* desktop(NAME, "dark"),
+        `https://desktop.boat.test/${id}?theme=dark#token=fake`,
+      );
+      fake.sandbox(NAME)!.state = "archived";
+      assert.strictEqual((yield* Effect.flip(desktop(NAME, "light"))).reason, "invalid-request");
+      const missing = yield* Effect.flip(
+        desktop(sandboxBackendName(INSTALL, OTHER_SANDBOX, 1), "light"),
+      );
+      assert.strictEqual(missing.reason, "not-found");
+    }),
+  );
+
   it.effect("deletes no image whose name is not this install's, without a call", () =>
     Effect.gen(function* () {
       const { fake, driver } = yield* setup();

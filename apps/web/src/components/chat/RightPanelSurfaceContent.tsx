@@ -34,6 +34,11 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const MachineDesktopPanel = lazy(() =>
+  import("../sandbox/MachineDesktopPanel").then((module) => ({
+    default: module.MachineDesktopPanel,
+  })),
+);
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -171,6 +176,12 @@ export function RightPanelSurfaceContent(props: {
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
     case "space-overview":
       return <SpaceThreadOverviewPanel threadRef={threadRef} />;
+    case "machine-desktop":
+      return (
+        <Suspense fallback={null}>
+          <MachineDesktopPanel threadRef={threadRef} />
+        </Suspense>
+      );
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

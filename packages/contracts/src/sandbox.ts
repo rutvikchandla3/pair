@@ -245,6 +245,40 @@ export type SandboxStopByIdInput = typeof SandboxStopByIdInput.Type;
 export const SandboxViewingInput = Schema.Struct({ threadId: ThreadId });
 export type SandboxViewingInput = typeof SandboxViewingInput.Type;
 
+/** A cloud thread's machine screen, for drivers that stream one (boat.dev). */
+export const SandboxDesktopInput = Schema.Struct({
+  threadId: ThreadId,
+  theme: Schema.Literals(["light", "dark"]),
+});
+export type SandboxDesktopInput = typeof SandboxDesktopInput.Type;
+
+/** Signed in for one viewer; it must be opened within minutes and never stored or logged. */
+export const SandboxDesktopResult = Schema.Struct({ url: Schema.String });
+export type SandboxDesktopResult = typeof SandboxDesktopResult.Type;
+
+export class SandboxDesktopError extends Schema.TaggedError<SandboxDesktopError>()(
+  "SandboxDesktopError",
+  {
+    reason: Schema.Literals(["no-machine", "unsupported", "not-running", "unavailable"]),
+    /** A driver's own hint, such as an API key that lacks the `desktop` action. */
+    detail: Schema.optionalKey(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "no-machine":
+        return "This thread does not run on a cloud machine.";
+      case "unsupported":
+        return "This machine's provider does not stream its desktop.";
+      case "not-running":
+        return "The machine is not running. Wake it to see its desktop.";
+      case "unavailable":
+        return this.detail ?? "Could not open the machine's desktop. Try again in a moment.";
+    }
+  }
+}
+
 export const SandboxDriverCheckInput = Schema.Struct({ driverId: ComputeDriverId });
 export type SandboxDriverCheckInput = typeof SandboxDriverCheckInput.Type;
 

@@ -779,6 +779,15 @@ export const makeWithApi = Effect.fn("BoatComputeDriver.makeWithApi")(function* 
     ids.delete(driverRef);
   }, bounded("destroy"));
 
+  const desktop = Effect.fn("BoatComputeDriver.desktop")(function* (
+    driverRef: string,
+    theme: "light" | "dark",
+  ) {
+    const sandbox = yield* locate(driverRef);
+    if (sandbox === null) return yield* failure("desktop", "not-found");
+    return yield* api.sandboxes.desktop(sandbox.id, theme);
+  }, bounded("desktop"));
+
   const view = Effect.fn("BoatComputeDriver.view")(function* (sandbox: BoatSandbox) {
     const created = Option.fromNullishOr(sandbox.createdAt).pipe(Option.flatMap(DateTime.make));
     const name = sandbox.name ?? sandbox.id;
@@ -928,6 +937,7 @@ export const makeWithApi = Effect.fn("BoatComputeDriver.makeWithApi")(function* 
     snapshot,
     readImageFile,
     health,
+    desktop,
   });
 });
 

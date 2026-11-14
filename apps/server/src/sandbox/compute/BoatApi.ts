@@ -159,6 +159,8 @@ export type BoatCommandResult = typeof CommandResult.Type;
 
 const FileRead = Schema.Struct({ content: Schema.String });
 
+const Desktop = Schema.Struct({ desktopUrl: Schema.String });
+
 const SavedSnapshot = Schema.Struct({
   name: Schema.String,
   /** saving, ready or failed. */
@@ -235,6 +237,8 @@ export interface BoatApi {
     readonly resume: (id: string) => Call<void>;
     /** A missing sandbox succeeds. */
     readonly delete: (id: string) => Call<void>;
+    /** A signed-in viewer URL, valid to open for 10 minutes; it carries a token, so never log it. */
+    readonly desktop: (id: string, theme: "light" | "dark") => Call<string>;
   };
   readonly files: {
     readonly write: (id: string, path: string, content: string) => Call<void>;
@@ -443,6 +447,16 @@ export const makeBoatApi = (
           path: sandbox(sandboxId),
           headers: { "X-Ascii-Confirm-Delete": sandboxId },
         }).pipe(Effect.catchIf(isStatus(404), () => Effect.void)),
+      desktop: (sandboxId, theme) =>
+        decoded(
+          {
+            method: "POST",
+            endpoint: "/sandboxes/{id}/desktop",
+            path: `${sandbox(sandboxId)}/desktop`,
+            query: [["theme", theme]],
+          },
+          Desktop,
+        ).pipe(Effect.map((body) => body.desktopUrl)),
     },
     files: {
       write: (sandboxId, path, content) =>

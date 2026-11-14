@@ -259,10 +259,12 @@ import {
 import { useCloudTarget } from "~/state/sandbox";
 import { othersTurnStarterId } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
+  environmentSandboxDriversAtom,
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
   serverEnvironment,
 } from "../state/server";
+import { sandboxDriverOf } from "@t3tools/client-runtime/state/sandbox";
 import { threadEnvironment } from "../state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment, vcsStatusRevalidation } from "../state/vcs";
@@ -2994,6 +2996,13 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.lineage.sideChat !== true &&
     !isSubagentThread &&
     serverConfig?.environment.capabilities.sideChats === true;
+  // Only boat.dev streams a machine's screen; other cloud threads see the entry disabled.
+  const cloudDriver = sandboxDriverOf(
+    useAtomValue(environmentSandboxDriversAtom(environmentId)),
+    serverThread?.source.sandbox,
+  );
+  const machineDesktopOffered = !embedded && serverThread?.source.sandbox !== undefined;
+  const machineDesktopAvailable = cloudDriver?.kind === "boat" && canOperateTerminal;
   const sideChat = useSideChat({
     threadRef: sideChatsOffered && isServerThread ? activeThreadRef : null,
     onError: (message) => {
@@ -4257,6 +4266,14 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
+          onAddMachineDesktop={
+            machineDesktopOffered
+              ? () => {
+                  if (machineDesktopAvailable)
+                    useRightPanelStore.getState().open(activeThreadRef, "machine-desktop");
+                }
+              : undefined
+          }
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
@@ -4265,6 +4282,7 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
+          machineDesktopAvailable={machineDesktopAvailable}
           sideChatAvailable={sideChat.available}
           sideChatDisabledReason={sideChatDisabledReason}
         >
