@@ -596,6 +596,11 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-insiders-" });
+    const env = { HOME: home, PATH: path.join(home, "empty") };
+    // System-wide apps in /Applications show up too, so compare with the editors found before it.
+    const before = yield* Effect.flatMap(ExternalLauncher.ExternalLauncher, (launcher) =>
+      launcher.resolveAvailableEditors(),
+    ).pipe(Effect.provide(layerTest({ platform: "darwin", env })));
     // The real Insiders bundle ships both `code-insiders` and `code`.
     const bin = path.join(
       home,
@@ -617,7 +622,7 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
       Effect.provide(
         layerTest({
           platform: "darwin",
-          env: { HOME: home, PATH: path.join(home, "empty") },
+          env,
           onSpawn: (command) => {
             spawned = command;
           },
@@ -625,8 +630,10 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
       ),
     );
 
-    assert.notInclude(editors, "vscode");
-    assert.include(editors, "vscode-insiders");
+    assert.deepEqual(
+      editors.filter((editor) => !before.includes(editor)),
+      ["vscode-insiders"],
+    );
     assert.equal(spawned?.command, path.join(bin, "code-insiders"));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

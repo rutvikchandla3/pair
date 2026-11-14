@@ -265,6 +265,7 @@ describe.runIf(process.env.T3_TEST_DOCKER === "1")("DockerComputeDriver on a rea
       // The daemon merges the container's labels into the commit's; this records which survive.
       assert.deepStrictEqual(image?.Config?.Labels, {
         ...sandboxTags({ installId, sandboxId, generation: 1, driverId: driver.driverId }),
+        "pair.size": "small",
         "pair.team-image.build": installId.slice(0, 8),
         "pair.team-image.machine": driverRef,
       });

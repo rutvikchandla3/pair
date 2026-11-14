@@ -418,8 +418,14 @@ describe("runner files", () => {
         );
         expect(yield* Queue.take(batches)).toEqual([]);
         yield* fs.writeFileString(file, "1");
-        const batch = yield* Queue.take(batches);
-        expect(batch.map((event) => event.path)).toEqual(["one"]);
+        // macOS also reports the folder itself, created just before the watch, alone or alongside.
+        const takePaths = Queue.take(batches).pipe(
+          Effect.map((batch) =>
+            batch.map((event) => event.path).filter((name) => name !== path.basename(dir)),
+          ),
+        );
+        const paths = yield* takePaths;
+        expect(paths.length === 0 ? yield* takePaths : paths).toEqual(["one"]);
       }),
     ),
   );

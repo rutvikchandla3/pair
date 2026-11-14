@@ -143,7 +143,8 @@ export const listTaskThreadIds = Effect.fnUntraced(function* (taskId: SpaceTaskI
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<{ readonly thread_id: string }>`
     SELECT thread_id FROM orchestration_v2_projection_threads
-    WHERE json_extract(payload_json, '$.space.taskId') = ${taskId}
+    WHERE (CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.space.taskId') END)
+      = ${taskId}
       AND json_extract(payload_json, '$.space.kind') = 'task'
       AND json_extract(payload_json, '$.deletedAt') IS NULL
     ORDER BY created_at DESC, rowid DESC

@@ -165,9 +165,14 @@ function hourOptions(hour12: boolean): Intl.DateTimeFormatOptions {
 function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean): string {
   if (hour12) return formatter.format(date);
   // Rolling buckets can start between whole hours, but their labels always name the hour.
-  return formatter
-    .formatToParts(date)
-    .map((part) => (part.type === "hour" ? `${part.value}:00` : part.value))
+  const parts = formatter.formatToParts(date);
+  return parts
+    .map((part, index) => {
+      if (part.type === "hour") return `${part.value}:00`;
+      // ICU 78 writes an hour-only 24-hour time as `01h`; the `:00` already marks the hour.
+      if (parts[index - 1]?.type === "hour") return part.value.replace(/^h/, "");
+      return part.value;
+    })
     .join("");
 }
 

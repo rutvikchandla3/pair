@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- fixtures: a FIFO and the test's own temp root.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -20,14 +21,15 @@ import { isRunnerLost, SANDBOX_ROOT, WorkspaceHostUnavailableError } from "./Wor
 import * as WorkspaceHostLoopback from "./WorkspaceHostLoopback.ts";
 import * as WorkspaceHosts from "./WorkspaceHosts.ts";
 
-const tmpRoot = NodeOS.tmpdir();
+// macOS's tmpdir is a symlink to /private/var; processes report the resolved path.
+const tmpRoot = NodeFS.realpathSync(NodeOS.tmpdir());
 const layerTest = WorkspaceHostLoopback.layerLoopback(tmpRoot).pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
 const tempDir = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  return yield* fs.makeTempDirectoryScoped({ prefix: "t3-sandbox-host-" });
+  return yield* fs.makeTempDirectoryScoped({ directory: tmpRoot, prefix: "t3-sandbox-host-" });
 });
 
 const hostFor = (path: string) =>
@@ -262,9 +264,14 @@ it.live("watches through the runner and reports ready first", () =>
     const cwd = yield* tempDir;
     const host = yield* hostFor(cwd);
     const ready = yield* Deferred.make<void>();
+    // macOS also reports the folder itself, created just before the watch.
     const first = yield* host.fileSystem
       .watch(cwd, { onReady: () => Deferred.doneUnsafe(ready, Effect.void) })
-      .pipe(Stream.runHead, Effect.forkChild);
+      .pipe(
+        Stream.filter((event) => path.basename(event.path) !== path.basename(cwd)),
+        Stream.runHead,
+        Effect.forkChild,
+      );
     yield* Deferred.await(ready);
     yield* host.fileSystem.writeFileString(path.join(cwd, "new.txt"), "x");
     const event = Option.getOrThrow(yield* Fiber.join(first));

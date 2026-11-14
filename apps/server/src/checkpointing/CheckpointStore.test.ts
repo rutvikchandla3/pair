@@ -162,11 +162,11 @@ describe.each(layers)("on the %s host", (_hostKind, layerTest) =>
         expect(baseline.status).toBe("ready");
         expect(baseline.commitOid).toMatch(/^[0-9a-f]{40}$/);
 
-        // Each of the three detections probes `.t3code/vcs.json` in every folder up to the root and
-        // checks three paths on disk; the first, a cache miss, checks them twice.
+        // Each of the three detections checks three paths on disk, twice on its kind's cache miss.
+        // The repository check names git; the other two probe `.t3code/vcs.json` up to the root.
         const configProbes = tmp.split(NodePath.sep).length;
         const { files, spawns } = recording.ops;
-        expect(files.filter((name) => name === "exists")).toHaveLength(3 * (configProbes + 3) + 3);
+        expect(files.filter((name) => name === "exists")).toHaveLength(2 * configProbes + 5 * 3);
         expect(files.filter((name) => name !== "exists")).toEqual([
           "stat",
           "copyFile",

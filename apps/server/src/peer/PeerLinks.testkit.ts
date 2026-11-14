@@ -33,6 +33,7 @@ import * as PeerLinks from "./PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 
 class PeerTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.metadata)
@@ -129,6 +130,8 @@ export const servePeer = <E, R>(
           }),
         ),
         Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+        // A cloud-only peer's MCP needs one; these tests check links, not thread access.
+        Layer.provide(ThreadAccess.layerTest()),
       ),
     ).pipe(
       Layer.provide(layerRecordBearers),

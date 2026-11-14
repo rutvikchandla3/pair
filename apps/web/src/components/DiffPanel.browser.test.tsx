@@ -37,9 +37,14 @@ const state = vi.hoisted(() => ({
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
 }));
 
-vi.mock("~/state/server", () => ({
-  serverEnvironment: { configValueAtom: () => state.config },
-}));
+vi.mock("~/state/server", async () => {
+  const Atom = await import("effect/reactivity/Atom");
+  const cloudLaunch = Atom.make(null);
+  return {
+    serverEnvironment: { configValueAtom: () => state.config },
+    environmentCloudLaunchAtom: () => cloudLaunch,
+  };
+});
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
     diffPreview: ({ input }: { input: { baseRef?: string } }) =>

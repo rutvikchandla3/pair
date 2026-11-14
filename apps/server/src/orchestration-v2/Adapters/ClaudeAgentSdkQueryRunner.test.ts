@@ -137,7 +137,10 @@ it.live("forks a sandbox session in the bundle's history worker on that machine"
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const bundle = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-worker-" });
+    // Claude Code names projects by real path, and macOS's tmpdir is a symlink.
+    const bundle = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-worker-" }),
+    );
     yield* fileSystem.symlink(
       yield* path.fromFileUrl(new URL("../../claude-history-worker.ts", import.meta.url)),
       path.join(bundle, "claude-history-worker.mjs"),

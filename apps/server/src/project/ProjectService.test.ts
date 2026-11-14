@@ -904,11 +904,11 @@ it.effect(
       const fileSystem = yield* FileSystem.FileSystem;
       const { checkoutsDir } = yield* ServerConfig.ServerConfig;
       const projectId = ProjectId.make("project:pair-cloud");
-      const create = (id: ProjectId, workspaceRoot: string) =>
+      const create = (id: ProjectId, workspaceRoot: string, title = "App") =>
         service.create({
           commandId: CommandId.make(`command:create:${id}`),
           projectId: id,
-          title: "App",
+          title,
           workspaceRoot,
         });
       const refusal = <A>(effect: Effect.Effect<A, ProjectService.ProjectServiceError>) =>
@@ -946,7 +946,8 @@ it.effect(
       for (const id of [projectId, apiId]) {
         yield* fileSystem.makeDirectory(`${checkoutsDir}/${id}/.git`, { recursive: true });
       }
-      yield* create(apiId, `${checkoutsDir}/${apiId}`);
+      // A workspace names its folders after its repositories, so the two need distinct titles.
+      yield* create(apiId, `${checkoutsDir}/${apiId}`, "API");
       const workspace = yield* service.create({
         commandId: CommandId.make("command:create:workspace"),
         projectId: ProjectId.make("project:workspace"),
