@@ -72,8 +72,9 @@ reconciler.
 [Presence](../../../apps/server/src/team/Presence.ts). The first hello of a generation while
 `provisioning` or `waking` dispatches `sandbox.runner.attached` to the owner's stream: `ready`. A
 disconnect past the 120 s lease while `ready` dispatches `sandbox.runner.lost`, which sets
-`runnerLostAt` and enqueues `sandbox.status` to decide between waiting, restarting or `failed`. A
-later attach clears it. When a `ready` runner's socket drops, the hub asks the driver 5 s later,
+`runnerLostAt` and enqueues `sandbox.status`. A backend that is still running has a dead runner
+(it never restarts in place, having spent its enrollment), so the effect stops it and reports
+`sandbox.stopped`: the next prompt wakes it with a fresh runner. A later attach clears it. When a `ready` runner's socket drops, the hub asks the driver 5 s later,
 and a backend that is not running loses the runner at once instead of after the lease. A separate
 **boot deadline** covers "no hello since boot" (section 5).
 

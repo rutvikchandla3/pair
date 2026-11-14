@@ -814,6 +814,49 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       assert.deepEqual(yield* Ref.get(runtime.revokedInstallationTokens), [sandboxId]);
     }),
   );
+
+  it.effect("stops a running machine whose runner was lost, so the next prompt wakes it", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("lost-running");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+      yield* dispatch({
+        type: "sandbox.runner.lost",
+        commandId: CommandId.make(`sandbox-lost:${sandboxId}:1:boot`),
+        threadId,
+        sandboxId,
+        generation: 1,
+        runnerBootId: "boot",
+      });
+
+      const run = yield* runtime.worker.drain(1).pipe(Effect.forkChild);
+      const status = yield* Queue.take(runtime.calls);
+      if (status._tag !== "status") return yield* Effect.die(status._tag);
+      yield* Deferred.succeed(status.reply, {
+        driverRef: status.driverRef,
+        name: status.driverRef,
+        sandboxId: null,
+        status: "running",
+        createdAt: yield* DateTime.now,
+      });
+      const stop = yield* Effect.raceFirst(
+        Queue.take(runtime.calls),
+        Fiber.join(run).pipe(
+          Effect.andThen(Effect.die("The status check left the machine running.")),
+        ),
+      );
+      if (stop._tag !== "stop") return yield* Effect.die(stop._tag);
+      assert.equal(stop.ref, status.driverRef);
+      yield* Deferred.succeed(stop.reply, undefined);
+      assert.equal(yield* Fiber.join(run), 1);
+
+      const sandbox = yield* getSandbox(sandboxId);
+      assert.equal(sandbox?.state, "sleeping");
+      assert.isNull(sandbox?.runnerLostAt);
+      assert.deepEqual(yield* Ref.get(runtime.revokedInstallationTokens), [sandboxId]);
+    }),
+  );
   it.effect("a wake whose backend is gone fails as missing, and a retry provisions anew", () =>
     Effect.gen(function* () {
       const restores = yield* Ref.make<ReadonlyArray<CommandId>>([]);

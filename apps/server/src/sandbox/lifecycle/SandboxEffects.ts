@@ -637,7 +637,23 @@ const make = Effect.gen(function* () {
         });
       case "starting":
       case "running":
-        return;
+        // The lease passed, so the runner is dead on a live machine (it never restarts in place).
+        // Stopping keeps the disk and lets the next prompt wake it with a fresh runner.
+        if (record.state !== "ready" || record.runnerLostAt === null) return;
+        yield* call(
+          driver.stop(record.driverRef).pipe(
+            Effect.catchIf(
+              (error) => error.reason === "not-found",
+              () => Effect.void,
+            ),
+          ),
+        );
+        yield* revokeCredentials(record, "status");
+        return yield* report(record, {
+          type: "sandbox.stopped",
+          commandId: CommandId.make(`sandbox-stopped:${record.id}:${record.generation}`),
+          ...generationFields(record),
+        });
     }
   });
 
