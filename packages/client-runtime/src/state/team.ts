@@ -13,7 +13,6 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { request } from "../rpc/client.ts";
-import type { EnvironmentThreadShell } from "./models.ts";
 import {
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcCommand,
@@ -186,44 +185,6 @@ export function resolveThreadFollowing(
 ): boolean | null {
   if (!team || sidebarThreadOwnerId(thread, team) === team.memberId) return null;
   return thread.followedAt != null;
-}
-
-/** Where a non-snoozed thread lists in team mode: someone else's settled thread is not listed. */
-export function resolveTeamThreadSection(
-  thread: TeamThread,
-  viewer: TeamViewer,
-  state: { readonly settled: boolean },
-): "mine" | "team" | "hidden" {
-  if (isSidebarThreadMine(thread, viewer)) return "mine";
-  return state.settled ? "hidden" : "team";
-}
-
-function timestampMs(value: string | null | undefined): number {
-  const parsed = value == null ? Number.NaN : Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-/** Newest activity first: the latest message, run, or update. */
-export function sortTeamThreadsByActivity<
-  T extends Pick<
-    EnvironmentThreadShell,
-    "id" | "environmentId" | "latestUserMessageAt" | "latestRun" | "updatedAt"
-  >,
->(threads: readonly T[]): T[] {
-  const activityAt = (thread: T) =>
-    Math.max(
-      timestampMs(thread.latestUserMessageAt),
-      timestampMs(thread.latestRun?.completedAt),
-      timestampMs(thread.latestRun?.startedAt),
-      timestampMs(thread.updatedAt),
-    );
-  const timestamps = new Map(threads.map((thread) => [thread, activityAt(thread)]));
-  return [...threads].sort(
-    (left, right) =>
-      timestamps.get(right)! - timestamps.get(left)! ||
-      left.id.localeCompare(right.id) ||
-      left.environmentId.localeCompare(right.environmentId),
-  );
 }
 
 /** The teammate who wrote a user message; undefined for my own, solo, and non-member senders. */

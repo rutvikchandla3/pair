@@ -44,7 +44,6 @@ import {
   spaceMergedSuggestion,
   spaceNewDividerIndex,
   spaceRecordText,
-  spaceSidebarTasks,
   spaceStatusUndo,
   spaceTaskActivity,
   spaceTaskAssignedAt,
@@ -323,28 +322,6 @@ describe("space overview", () => {
       band: true,
       collapsedByDefault: true,
     });
-  });
-
-  it("gives the sidebar two Needs-you rows per space, the rest as more, and Assigned to me", () => {
-    const archivedId = SpaceId.make("spc_00000000000000000099");
-    const archived = { ...space, id: archivedId, archivedAt: "2026-11-12T00:00:00.000Z" };
-    const tasks = [
-      spaceTask(1, { ownerId: rutvik, assignedBy: kousik, status: "todo" }),
-      spaceTask(2, { ownerId: rutvik, status: "in-progress" }),
-      spaceTask(3),
-      spaceTask(4),
-      spaceTask(5, { ownerId: rutvik, spaceId: archivedId }),
-    ];
-    const sidebar = spaceSidebarTasks(
-      { spaces: [space, archived], tasks },
-      [needs("t2", 2, rutvik, "user_input"), needs("t3", 3, rutvik, "permission")],
-      viewer,
-    );
-    const row = sidebar.spaces.get(spaceId)!;
-    expect(row.needsYou).toHaveLength(2);
-    expect(row.more).toBe(2);
-    expect(sidebar.spaces.has(archivedId)).toBe(false);
-    expect(sidebar.assignedToMe.map((task) => task.id).sort()).toEqual([taskId(1), taskId(2)]);
   });
 });
 
