@@ -12,7 +12,9 @@ import * as Stream from "effect/Stream";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { forkParked } from "../../serverActivation.ts";
+import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import { ComputeDriverRegistry } from "../compute/ComputeDriverRegistry.ts";
+import { adoptMachineCopy } from "../lifecycle/CloudPreparation.ts";
 import { listLiveSandboxes } from "../lifecycle/SandboxProjection.ts";
 import { type RunnerDrop, RunnerHub, type RunnerHubFact } from "./RunnerHub.ts";
 
@@ -33,6 +35,7 @@ export const layer = Layer.effectDiscard(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const registry = yield* ComputeDriverRegistry;
+    const hosts = yield* Effect.serviceOption(WorkspaceHosts.WorkspaceHosts);
 
     const dispatch = Effect.fn("RunnerHubFacts.dispatch")(
       function* (fact: RunnerHubFact) {
@@ -52,6 +55,18 @@ export const layer = Layer.effectDiscard(
           generation: fact.generation,
           runnerBootId: fact.runnerBootId,
         };
+        // A fork's copied disk is adopted before `ready`, so no turn opens on a path not there yet.
+        if (
+          fact._tag === "attached" &&
+          fact.generation === 1 &&
+          record.copyOf !== undefined &&
+          Option.isSome(hosts)
+        ) {
+          yield* adoptMachineCopy(record).pipe(
+            Effect.provideService(WorkspaceHosts.WorkspaceHosts, hosts.value),
+            Effect.provideService(ProjectionStore.ProjectionStoreV2, projections),
+          );
+        }
         const id = `${fact.sandboxId}:${fact.generation}:${fact.runnerBootId}`;
         const command: OrchestrationV2ServerCommand =
           fact._tag === "attached"

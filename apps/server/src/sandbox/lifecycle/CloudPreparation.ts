@@ -398,43 +398,52 @@ const isCheckout = (cwd: string) =>
 type CloneSource = "image" | "origin" | "existing";
 
 /**
- * Moves a copied disk's checkouts from the source machine's root to this one's (paths route to a
- * machine by root), points git's worktree links at the new paths, and puts the fork on its branch.
+ * Moves a copied disk's root from the source machine's to this one's (paths route to a machine by
+ * root), merging into what this machine already wrote there (provider homes, attachments), which
+ * wins. Then points git's worktree links at the new paths and puts the fork on its branch.
  * Idempotent: a moved root is skipped and the branch is only switched once.
  */
 const ADOPT_COPY_SCRIPT = `set -eu
 src=$1; dst=$2; worktree=$3; branch=$4
 if command -v flock >/dev/null 2>&1; then exec 9>/tmp/pair-machine-copy.lock; flock 9; fi
+merge() {
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    target="$2/\${entry##*/}"
+    if [ -d "$entry" ] && [ ! -L "$entry" ] && [ -d "$target" ] && [ ! -L "$target" ]; then
+      merge "$entry" "$target"
+    elif [ ! -e "$target" ] && [ ! -L "$target" ]; then
+      mv "$entry" "$target"
+    fi
+  done
+}
 if [ -d "$src" ]; then
   mkdir -p "$dst"
-  for entry in "$src"/* "$src"/.[!.]* "$src"/..?*; do
-    [ -e "$entry" ] || continue
-    mv "$entry" "$dst"/
-  done
-  rmdir "$src" 2>/dev/null || true
-  find "$dst" -maxdepth 6 \\( -name .git -type f -o -name gitdir -path '*/.git/worktrees/*' \\) -exec sed -i "s#$src/#$dst/#g" {} +
+  merge "$src" "$dst"
+  rm -rf "$src"
+  find "$dst" -maxdepth 10 \\( -name node_modules -o -name .pnpm-store \\) -prune -o \\( -name .git -type f -o -name gitdir -path '*/.git/worktrees/*' \\) -exec sed -i "s#$src/#$dst/#g" {} +
 fi
-if [ -e "$worktree/.git" ] && [ "$(git -C "$worktree" rev-parse --abbrev-ref HEAD)" != "$branch" ]; then
+if [ -n "$worktree" ] && [ -e "$worktree/.git" ] && [ "$(git -C "$worktree" rev-parse --abbrev-ref HEAD)" != "$branch" ]; then
   git -C "$worktree" checkout -B "$branch"
 fi
 `;
 
-/** A fork's machine starts as a copy of another's disk; its checkout is adopted before first use. */
-const adoptMachineCopy = Effect.fn("CloudPreparation.adoptMachineCopy")(function* (input: {
-  readonly sandboxId: SandboxId;
-  readonly worktreePath: string;
-  readonly branch: string;
-}) {
+/**
+ * A fork's machine starts as a copy of another's disk; this adopts it for its owner thread. Runs
+ * before the machine reads ready, and again before a checkout, where it is a no-op once done.
+ */
+export const adoptMachineCopy = Effect.fn("CloudPreparation.adoptMachineCopy")(function* (
+  record: Pick<OrchestrationV2Sandbox, "id" | "copyOf" | "ownerThreadId">,
+) {
+  const sourceId = record.copyOf;
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   const hosts = yield* Effect.serviceOption(WorkspaceHosts.WorkspaceHosts);
-  if (Option.isNone(projections) || Option.isNone(hosts)) return;
-  const record = yield* projections.value
-    .getSandbox(input.sandboxId)
+  if (sourceId === undefined || Option.isNone(projections) || Option.isNone(hosts)) return;
+  const owner = yield* projections.value
+    .getThreadShell(record.ownerThreadId)
     .pipe(Effect.orElseSucceed(() => null));
-  const sourceId = record?.copyOf;
-  if (sourceId === undefined) return;
   const checkoutRoot = yield* SandboxCheckoutRoot;
-  const root = checkoutRoot(input.sandboxId);
+  const root = checkoutRoot(record.id);
   yield* hosts.value.forPath(root).pipe(
     Effect.flatMap((host) =>
       host.spawner.exitCode(
@@ -446,8 +455,8 @@ const adoptMachineCopy = Effect.fn("CloudPreparation.adoptMachineCopy")(function
             "sh",
             checkoutRoot(sourceId),
             root,
-            input.worktreePath,
-            input.branch,
+            owner?.worktreePath ?? "",
+            owner?.branch ?? "",
           ],
           { stdin: "ignore" },
         ),
@@ -457,10 +466,7 @@ const adoptMachineCopy = Effect.fn("CloudPreparation.adoptMachineCopy")(function
       code === 0 ? Effect.void : Effect.fail(`Adopting the copied disk exited with ${code}`),
     ),
     Effect.catchCause((cause) =>
-      Effect.logWarning("Could not adopt a machine copy's checkout; rebuilding it", {
-        sandboxId: input.sandboxId,
-        cause,
-      }),
+      Effect.logWarning("Could not adopt a machine copy's disk", { sandboxId: record.id, cause }),
     ),
   );
 });
@@ -530,11 +536,11 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
   const git = yield* GitWorkflow.GitWorkflowService;
   const { root, url, clonePath } = yield* cloneTarget(input);
   if (input.existingWorktreePath !== null && !(yield* isCheckout(input.existingWorktreePath))) {
-    yield* adoptMachineCopy({
-      sandboxId: input.sandboxId,
-      worktreePath: input.existingWorktreePath,
-      branch: input.branch,
-    });
+    const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+    const record = Option.isNone(projections)
+      ? null
+      : yield* projections.value.getSandbox(input.sandboxId).pipe(Effect.orElseSucceed(() => null));
+    if (record !== null) yield* adoptMachineCopy(record);
   }
   // A kept disk still has the thread's checkout; a new machine starts without one.
   if (input.existingWorktreePath !== null && (yield* isCheckout(input.existingWorktreePath))) {
