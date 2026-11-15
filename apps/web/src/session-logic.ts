@@ -729,10 +729,10 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
-    // A member's lifecycle change is a quiet divider; other notices stay warnings.
+    // A member's lifecycle change or a lineage step is a quiet row; other notices stay warnings.
     if (
       STANDALONE_V2_ITEM_TYPES.has(item.type) ||
-      (item.type === "system_notice" && item.actorId !== undefined)
+      (item.type === "system_notice" && (item.actorId !== undefined || item.lineage !== undefined))
     ) {
       entries.push({
         id: item.id,

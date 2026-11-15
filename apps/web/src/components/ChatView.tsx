@@ -210,6 +210,9 @@ import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
+import { ComposerBranchOffHint } from "./branchOff/ComposerBranchOffHint";
+import { useForkAllowed } from "./branchOff/useBranchOff";
+import { useLineageResolvingBanner } from "./lineage/lineageResolvingBanner";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   providerInstanceEntriesFor,
@@ -1190,6 +1193,9 @@ export default function ChatView(props: ChatViewProps) {
   const sharedMachineBannerItem = useSharedMachineBanner(
     environmentId,
     serverThread === null ? null : threadId,
+  );
+  const lineageResolvingBannerItem = useLineageResolvingBanner(
+    serverThread === null ? null : routeThreadRef,
   );
   const sandboxStatus = useSandboxThreadStatus({
     threadRef: serverThread === null ? null : routeThreadRef,
@@ -2839,9 +2845,12 @@ export default function ChatView(props: ChatViewProps) {
         : [];
     const cloudPushItems = [
       ...sandboxStatus.bannerItems,
-      ...[cloudPushBannerItem, cloudAccountBannerItem, sharedMachineBannerItem].filter(
-        (item) => item !== null,
-      ),
+      ...[
+        cloudPushBannerItem,
+        cloudAccountBannerItem,
+        sharedMachineBannerItem,
+        lineageResolvingBannerItem,
+      ].filter((item) => item !== null),
       ...routedCloudWarning,
     ];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
@@ -3010,6 +3019,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const machineDesktopOffered = !embedded && serverThread?.source.sandbox !== undefined;
   const machineDesktopAvailable = cloudDriver?.kind === "boat" && canOperateTerminal;
+  // On a team's cloud thread only its holder forks; the others Branch off.
+  const forkAllowed = useForkAllowed(isServerThread ? activeThreadRef : null);
   const sideChat = useSideChat({
     threadRef: sideChatsOffered && isServerThread ? activeThreadRef : null,
     onError: (message) => {
@@ -3718,7 +3729,10 @@ export default function ChatView(props: ChatViewProps) {
                   // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
                   {...(embedded
                     ? {}
-                    : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
+                    : {
+                        onOpenTurnDiff: onOpenTurnDiffStable,
+                        ...(forkAllowed ? { onForkFromRun: onForkFromRunStable } : {}),
+                      })}
                   onOpenThread={onOpenRelatedThreadStable}
                   parentThreadLink={parentThreadLink}
                   workflowOpening={workflowOpening}
@@ -4096,6 +4110,9 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       ) : null}
                     </ComposerSurface.Shell>
+                    {isServerThread && activeThreadRef !== null && !embedded ? (
+                      <ComposerBranchOffHint threadRef={activeThreadRef} />
+                    ) : null}
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
@@ -4298,7 +4315,11 @@ export default function ChatView(props: ChatViewProps) {
         </ChatRightPanel>
       ) : null}
 
-      <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
+      <RevertConfirmHost
+        threadKey={routeThreadKey}
+        threadRef={routeThreadRef}
+        onConfirm={onConfirmRevertStable}
+      />
       {embedded ? null : <LinkPullRequestDialogHost />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />

@@ -29,6 +29,7 @@ export interface PersistedUiState {
   sidebarProjectScopeKey?: string | null;
   sidebarProjectScopeKeys?: string[];
   sidebarOwnerFilterByEnvironmentId?: Record<string, string>;
+  sidebarSpaceOrderByEnvironmentId?: Record<string, string[]>;
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
@@ -40,6 +41,8 @@ export interface UiProjectState {
   sidebarProjectScopeKeys: string[];
   /** Team-mode owner filter per environment: "me" or a member id. Absent means anyone. */
   sidebarOwnerFilterByEnvironmentId: Record<string, string>;
+  /** The sidebar's space order per environment, as the user dragged it. */
+  sidebarSpaceOrderByEnvironmentId: Record<string, string[]>;
 }
 
 export interface UiThreadState {
@@ -63,6 +66,7 @@ const initialState: UiState = {
   projectOrder: [],
   sidebarProjectScopeKeys: [],
   sidebarOwnerFilterByEnvironmentId: {},
+  sidebarSpaceOrderByEnvironmentId: {},
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -107,6 +111,17 @@ function sanitizeStringRecord(value: unknown): Record<string, string> {
     Object.entries(value).filter(
       (entry): entry is [string, string] =>
         entry[0].length > 0 && typeof entry[1] === "string" && entry[1].length > 0,
+    ),
+  );
+}
+
+function sanitizeStringArrayRecord(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entry]) =>
+      key.length > 0 && Array.isArray(entry) ? [[key, sanitizeStringArray(entry)]] : [],
     ),
   );
 }
@@ -172,6 +187,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     ),
     sidebarOwnerFilterByEnvironmentId: sanitizeStringRecord(
       parsed.sidebarOwnerFilterByEnvironmentId,
+    ),
+    sidebarSpaceOrderByEnvironmentId: sanitizeStringArrayRecord(
+      parsed.sidebarSpaceOrderByEnvironmentId,
     ),
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
@@ -253,6 +271,7 @@ export function persistState(state: UiState): void {
             ? (state.sidebarProjectScopeKeys[0] ?? null)
             : null,
         sidebarOwnerFilterByEnvironmentId: state.sidebarOwnerFilterByEnvironmentId,
+        sidebarSpaceOrderByEnvironmentId: state.sidebarSpaceOrderByEnvironmentId,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
@@ -381,6 +400,24 @@ function setSidebarOwnerFilters(
   return { ...state, sidebarOwnerFilterByEnvironmentId: next };
 }
 
+function setSidebarSpaceOrder(
+  state: UiState,
+  environmentId: string,
+  order: readonly string[],
+): UiState {
+  const current = state.sidebarSpaceOrderByEnvironmentId[environmentId];
+  if (current?.length === order.length && current.every((id, index) => id === order[index])) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarSpaceOrderByEnvironmentId: {
+      ...state.sidebarSpaceOrderByEnvironmentId,
+      [environmentId]: [...order],
+    },
+  };
+}
+
 function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMethod): UiState {
   return state.pullRequestMergeMethod === method
     ? state
@@ -471,6 +508,7 @@ interface UiStateStore extends UiState {
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKeys: (projectKeys: readonly string[]) => void;
   setSidebarOwnerFilters: (filters: Readonly<Record<string, string>>) => void;
+  setSidebarSpaceOrder: (environmentId: string, order: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -493,6 +531,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setSidebarProjectScopeKeys: (projectKeys) =>
     set((state) => setSidebarProjectScopeKeys(state, projectKeys)),
   setSidebarOwnerFilters: (filters) => set((state) => setSidebarOwnerFilters(state, filters)),
+  setSidebarSpaceOrder: (environmentId, order) =>
+    set((state) => setSidebarSpaceOrder(state, environmentId, order)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

@@ -25,6 +25,7 @@ import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { WizardPopup } from "../ui/wizard";
 import { registerThreadOverlay } from "./threadOverlayRetention";
+import { RevertAppliedNote } from "../lineage/RevertAppliedNote";
 
 /**
  * Open state for overlays the chat view hosts. It lives in atoms rather than
@@ -184,6 +185,8 @@ interface PendingRevert {
   readonly messageId: MessageId;
   /** Teammates whose turns the revert discards; empty when they are all yours. */
   readonly discards: ReadonlyArray<{ readonly name: string; readonly count: number }>;
+  /** When the restored checkpoint was taken: offers applied after it are discarded too. */
+  readonly restoresTo?: string;
 }
 
 /** "Discards 2 turns by Alice and 1 by Carol". */
@@ -203,6 +206,7 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
+  readonly threadRef: ScopedThreadRef;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
@@ -229,6 +233,9 @@ export function RevertConfirmHost(props: {
               <span className="mt-2 block font-medium text-destructive">
                 {discardsLine(discards)}
               </span>
+            )}
+            {pending?.restoresTo === undefined ? null : (
+              <RevertAppliedNote threadRef={props.threadRef} restoresTo={pending.restoresTo} />
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>

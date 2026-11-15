@@ -1,3 +1,4 @@
+import type { CloudThreadMenuItem } from "@t3tools/client-runtime/branch-lineage";
 import type { ContextMenuItem, MemberId } from "@t3tools/contracts";
 import type { SandboxAction } from "@t3tools/client-runtime/state/sandbox";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
@@ -7,6 +8,9 @@ import { SANDBOX_ACTION_MENU_LABELS } from "@t3tools/client-runtime/state/sandbo
 import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
 
 export type ThreadActionMenuId =
+  | "branch-off"
+  | "side-chat"
+  | "move-to-own-machine"
   | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -142,6 +146,11 @@ export interface ThreadActionMenuState {
     /** Why it can't fork now, shown in the label as the owner-only items are. */
     readonly blocker: string | null;
   };
+  /**
+   * A team's cloud thread: Branch off, Side chat and Move to my own machine, and which owner
+   * tools apply (`menuItemsForCloudThread`). Absent keeps the menu as it is.
+   */
+  readonly cloud?: ReadonlyArray<CloudThreadMenuItem>;
   /** Set only when the member's own server can take this cloud thread. */
   readonly continueLocally?: {
     /** Why it can't now, shown in the label as the owner-only items are. */
@@ -178,10 +187,34 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   ].includes(action);
 }
 
+/** "Share… (on Kousik's machine, sharing follows Kousik's list)". */
+const withReason = (label: string, reason: string) =>
+  `${label} (${reason.charAt(0).toLowerCase()}${reason.slice(1).replace(/\.$/, "")})`;
+
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  const cloudItem = (id: CloudThreadMenuItem["id"]) =>
+    state.cloud?.find((item) => item.id === id) ?? null;
+  const branchOff = cloudItem("branchOff");
+  const sideChat = cloudItem("sideChat");
+  // On someone else's machine, sharing and moving to another task wait for Move to my own machine.
+  const machineReason = cloudItem("share")?.disabledReason ?? null;
+  // Fork reuses the holder's checkout, so it stays the holder's tool.
+  const forkAllowed = state.cloud === undefined || cloudItem("fork") !== null;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(branchOff === null
+      ? []
+      : [{ id: "branch-off" as const, label: branchOff.label, icon: "git-branch" }]),
+    ...(sideChat === null
+      ? []
+      : [
+          {
+            id: "side-chat" as const,
+            label: sideChat.readOnly ? `${sideChat.label} (read-only)` : sideChat.label,
+            icon: "message-square",
+          },
+        ]),
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
       : []),
@@ -250,9 +283,13 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "share" as const,
-            label: state.share.allowed ? "Share…" : "Share… (owner only)",
+            label: !state.share.allowed
+              ? "Share… (owner only)"
+              : machineReason === null
+                ? "Share…"
+                : withReason("Share…", machineReason),
             icon: "users",
-            ...(state.share.allowed ? {} : { disabled: true }),
+            ...(state.share.allowed && machineReason === null ? {} : { disabled: true }),
           },
         ]
       : []),
@@ -260,9 +297,12 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "space-move-task" as const,
-            label: "Move to another task…",
+            label:
+              machineReason === null
+                ? "Move to another task…"
+                : withReason("Move to another task…", machineReason),
             icon: "folder-tree",
-            ...(state.spaceTask.canMove ? {} : { disabled: true }),
+            ...(state.spaceTask.canMove && machineReason === null ? {} : { disabled: true }),
           },
           {
             id: "space-remove-task" as const,
@@ -306,7 +346,17 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.forkToMachine
+    ...(cloudItem("moveToOwnMachine") === null
+      ? []
+      : [
+          {
+            id: "move-to-own-machine" as const,
+            label: "Move to my own machine…",
+            icon: "cloud-upload",
+            separatorBefore: true,
+          },
+        ]),
+    ...(state.forkToMachine && forkAllowed
       ? [
           {
             id: "fork-to-machine" as const,

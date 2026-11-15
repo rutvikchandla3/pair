@@ -26,6 +26,7 @@ import { Atom } from "effect/reactivity";
 import { CloudIcon, CloudOffIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { confirmMachineSleep, machineActionNote } from "~/components/branchOff/machineRules";
 import { ThreadStatusLine } from "~/components/chat/ThreadStatusLine";
 import type { ComposerBannerStackItem } from "~/components/chat/ComposerBannerStack";
 import { Button } from "~/components/ui/button";
@@ -67,11 +68,18 @@ export function useSandboxActionRunner() {
     if (action === "discard") {
       const api = readLocalApi();
       if (!api) return;
+      const others = machineActionNote(threadRef, sandboxId, "discard");
       const confirmed = await settlePromise(() =>
-        api.dialogs.confirm(SANDBOX_DISCARD_CONFIRMATION, { variant: "destructive" }),
+        api.dialogs.confirm(
+          others === null
+            ? SANDBOX_DISCARD_CONFIRMATION
+            : `${SANDBOX_DISCARD_CONFIRMATION}\n${others}`,
+          { variant: "destructive" },
+        ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;
     }
+    if (action === "sleep" && !(await confirmMachineSleep(threadRef, sandboxId))) return;
     const result = await commands[action]({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId, sandboxId },

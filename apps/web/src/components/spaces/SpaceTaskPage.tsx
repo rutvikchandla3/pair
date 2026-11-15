@@ -32,6 +32,7 @@ import { Link } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
   CircleXIcon,
+  CornerDownRightIcon,
   EllipsisIcon,
   LinkIcon,
   PanelRightOpenIcon,
@@ -46,6 +47,7 @@ import { isElectron } from "../../env";
 import { spaceEnvironment, useSpaceProjects, useSpaceTaskView } from "../../state/spaces";
 import { useTeamMembers } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { threadsByLineage } from "../branchOff/branchOff.logic";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { RelativeTime } from "../RelativeTime";
 import { MemberAvatar } from "../team/MemberAvatar";
@@ -552,18 +554,27 @@ function TaskBody(props: {
         {props.threads.length === 0 ? (
           <p className="py-2 text-muted-foreground text-sm">No threads yet.</p>
         ) : (
-          props.threads.map((thread) => (
-            <TaskThreadRow
-              key={thread.id}
-              environmentId={props.environmentId}
-              space={space}
-              task={task}
-              thread={thread}
-              viewer={viewer}
-              canOperate={props.controls.canCreateTask}
-              runsIn={spaceThreadRunsIn(thread, projects)}
-              color={thread.ownerId == null ? null : colorOf(thread.ownerId)}
-            />
+          threadsByLineage(props.threads).map(({ thread, indented }) => (
+            <div key={thread.id} className={indented ? "flex items-center ps-4" : "flex"}>
+              {indented ? (
+                <CornerDownRightIcon
+                  aria-label="Branch"
+                  className="size-3.5 shrink-0 text-muted-foreground"
+                />
+              ) : null}
+              <div className="min-w-0 flex-1">
+                <TaskThreadRow
+                  environmentId={props.environmentId}
+                  space={space}
+                  task={task}
+                  thread={thread}
+                  viewer={viewer}
+                  canOperate={props.controls.canCreateTask}
+                  runsIn={spaceThreadRunsIn(thread, projects)}
+                  color={thread.ownerId == null ? null : colorOf(thread.ownerId)}
+                />
+              </div>
+            </div>
           ))
         )}
       </section>

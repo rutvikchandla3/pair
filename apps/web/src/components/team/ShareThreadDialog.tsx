@@ -16,6 +16,7 @@ import {
   type ShareAccess,
   type ShareChange,
 } from "@t3tools/client-runtime/state/share-thread";
+import { removeMemberMachineNote } from "@t3tools/client-runtime/branch-lineage";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MemberId, ScopedThreadRef, TeamMember } from "@t3tools/contracts";
 import { XIcon } from "lucide-react";
@@ -25,10 +26,12 @@ import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { copyThreadReference } from "~/lib/copyThreadReference";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useThreadShell } from "~/state/entities";
+import { branchLineageEnvironment, useLineageViewer } from "~/state/branchLineage";
 import { useEnvironment } from "~/state/environments";
 import { sandboxEnvironment } from "~/state/sandbox";
 import { readThreadShareOrigin, useTeamMembers } from "~/state/team";
 import { environmentThreadShells } from "~/state/threads";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -95,6 +98,11 @@ function ShareThreadDialog({
   const [highlighted, setHighlighted] = useState(false);
   const [confirming, setConfirming] = useState<MemberId | null>(null);
   const [capMessage, setCapMessage] = useState<string | null>(null);
+  const viewer = useLineageViewer(environmentId);
+  const moveToOwnMachine = useAtomCommand(branchLineageEnvironment.moveToOwnMachine, {
+    reportFailure: false,
+  });
+  const [moving, setMoving] = useState<MemberId | null>(null);
 
   if (shell === null || sandboxId === undefined || summary?.canShare !== true) return null;
   const { relatedThreadOwnerIds, ownAccountProvider } = shareMachineContext({
@@ -165,6 +173,33 @@ function ShareThreadDialog({
   const remove = (member: TeamMember) => {
     setConfirming(null);
     void apply({ kind: "remove", memberId: member.id });
+  };
+
+  // Their threads here, other than the one the machine belongs to.
+  const threadsOf = (member: TeamMember) =>
+    threads.filter(
+      (thread) =>
+        thread.sandboxId === sandboxId &&
+        thread.id !== ownerThreadId &&
+        thread.ownerId === member.id,
+    );
+
+  /** Moves their threads onto a new machine of their own, then removes them. */
+  const moveThenRemove = async (member: TeamMember) => {
+    setMoving(member.id);
+    for (const thread of threadsOf(member)) {
+      const result = await moveToOwnMachine({
+        environmentId,
+        input: { threadId: thread.id },
+      });
+      if (result._tag === "Failure") {
+        setMoving(null);
+        toastCommandFailure(`Could not move ${member.name}'s thread`, result);
+        return;
+      }
+    }
+    setMoving(null);
+    remove(member);
   };
 
   return (
@@ -278,6 +313,11 @@ function ShareThreadDialog({
                 )}
                 {listed.map((member) => {
                   const warning = confirming === member.id ? warningFor(member) : null;
+                  const moveFirst =
+                    warning === null
+                      ? null
+                      : removeMemberMachineNote(member.id, threadsOf(member).length, viewer)
+                          ?.moveFirst;
                   return (
                     <li key={member.id} className="space-y-1">
                       <div className="flex min-h-8 items-center gap-2">
@@ -302,7 +342,22 @@ function ShareThreadDialog({
                           <Button size="xs" variant="ghost" onClick={() => setConfirming(null)}>
                             Cancel
                           </Button>
-                          <Button size="xs" variant="destructive" onClick={() => remove(member)}>
+                          {moveFirst == null ? null : (
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              disabled={moving !== null}
+                              onClick={() => void moveThenRemove(member)}
+                            >
+                              {moving === member.id ? "Moving…" : moveFirst}
+                            </Button>
+                          )}
+                          <Button
+                            size="xs"
+                            variant="destructive"
+                            disabled={moving !== null}
+                            onClick={() => remove(member)}
+                          >
                             Remove
                           </Button>
                         </div>

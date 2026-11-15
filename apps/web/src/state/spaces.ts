@@ -42,6 +42,8 @@ const spaceShells = createSpaceShellAtoms({
 });
 
 export const spaceEnvironment = createSpaceEnvironmentAtoms(connectionAtomRuntime, spaceShells);
+/** Moves on every space or task write here; My tasks' closed tasks refetch on it. */
+export const spaceTasksKeyAtom = spaceShells.roomsKeyAtom;
 
 export function useSpaceEnvironmentIds(): ReadonlyArray<EnvironmentId> {
   return useAtomValue(spaceShells.environmentIdsAtom);
@@ -77,6 +79,37 @@ export function useSpaceListWithOpenRoom(
 
 export function useSpaceList(environmentId: EnvironmentId | null): ReadonlyArray<Space> {
   return useSpaceListResult(environmentId).spaces;
+}
+
+export interface SpaceTaskNames {
+  readonly spaceName: (spaceId: SpaceId) => string | null;
+  readonly taskTitle: (taskId: string) => string | null;
+}
+
+const spaceTaskNamesFamily = Atom.family((environmentIdsKey: string) =>
+  Atom.make((get): SpaceTaskNames => {
+    const spaces = new Map<string, string>();
+    const tasks = new Map<string, string>();
+    for (const environmentId of environmentIdsKey === ""
+      ? []
+      : (environmentIdsKey.split("\n") as EnvironmentId[])) {
+      const list = AsyncResult.getOrElse(
+        get(spaceEnvironment.list({ environmentId, input: undefined })),
+        () => EMPTY_LIST,
+      );
+      for (const space of list.spaces) spaces.set(space.id, space.name);
+      for (const task of list.tasks) tasks.set(task.id, task.title);
+    }
+    return {
+      spaceName: (spaceId) => spaces.get(spaceId) ?? null,
+      taskTitle: (taskId) => tasks.get(taskId) ?? null,
+    };
+  }).pipe(Atom.withLabel("space-task-names")),
+);
+
+/** Space names and open task titles across these environments, for thread row tooltips. */
+export function useSpaceTaskNames(environmentIds: ReadonlyArray<EnvironmentId>): SpaceTaskNames {
+  return useAtomValue(spaceTaskNamesFamily(environmentIds.join("\n")));
 }
 
 /** The space's threads on tasks: the live shells, then the room page's copies they lack. */

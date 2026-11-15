@@ -388,6 +388,12 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "chiefOfStaff.toggle") return "Chief of Staff: Start or Stop";
   if (command === "space.new") return "Spaces: New Space";
   if (command === "space.newTask") return "Spaces: New Task";
+  if (command === "inbox.open") return "Go to Inbox";
+  if (command === "myTasks.open") return "Go to My tasks";
+  if (command === "sharedWithYou.open") return "Go to Shared with you";
+  if (command === "thread.branchOff") return "Thread: Branch off…";
+  if (command === "thread.updateFromSource") return "Thread: Update from source";
+  if (command === "thread.offerChanges") return "Thread: Offer changes";
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;

@@ -21,6 +21,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     sidebarProjectScopeKeys: [],
     sidebarOwnerFilterByEnvironmentId: {},
+    sidebarSpaceOrderByEnvironmentId: {},
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -128,6 +129,7 @@ describe("parsePersistedState", () => {
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKeys: [],
       sidebarOwnerFilterByEnvironmentId: {},
+      sidebarSpaceOrderByEnvironmentId: {},
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -235,6 +237,7 @@ describe("uiStateStore persistence", () => {
       sidebarProjectScopeKeys: [],
       sidebarProjectScopeKey: null,
       sidebarOwnerFilterByEnvironmentId: {},
+      sidebarSpaceOrderByEnvironmentId: {},
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -249,11 +252,16 @@ describe("uiStateStore persistence", () => {
     });
   });
 
-  it("restores the sidebar project scope and owner filter across reloads", () => {
+  it("restores the sidebar project scope, owner filter and space order across reloads", () => {
     const keys = ["github.com/pingdotgg/t3code", "github.com/pingdotgg/uploadthing"];
-    const owners = { "env-a": "me", "env-b": "member-bob" };
+    const owners = { "env-a": "me" };
+    const spaceOrder = { "env-a": ["space-b", "space-a"] };
     persistState(
-      makeUiState({ sidebarProjectScopeKeys: keys, sidebarOwnerFilterByEnvironmentId: owners }),
+      makeUiState({
+        sidebarProjectScopeKeys: keys,
+        sidebarOwnerFilterByEnvironmentId: owners,
+        sidebarSpaceOrderByEnvironmentId: spaceOrder,
+      }),
     );
 
     const persisted = JSON.parse(
@@ -262,6 +270,7 @@ describe("uiStateStore persistence", () => {
 
     expect(parsePersistedState(persisted).sidebarProjectScopeKeys).toEqual(keys);
     expect(parsePersistedState(persisted).sidebarOwnerFilterByEnvironmentId).toEqual(owners);
+    expect(parsePersistedState(persisted).sidebarSpaceOrderByEnvironmentId).toEqual(spaceOrder);
   });
 
   it("keeps a single-project scope readable by older clients", () => {

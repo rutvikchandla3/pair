@@ -6,6 +6,10 @@ import { startChiefOfStaff, stopChiefOfStaff, useChiefOfStaffStore } from "../ch
 import { useChiefOfStaffTarget } from "../chiefOfStaff/useChiefOfStaffTarget";
 import { openSpaceDialog } from "../spaceDialogStore";
 import { useSpaceShortcutTarget } from "./spaces/SpaceShortcuts";
+import { useBranchOffPaletteItems } from "./branchOff/BranchOffShortcuts";
+import { useForkAllowed } from "./branchOff/useBranchOff";
+import { useLineagePaletteItems } from "./lineage/LineageShortcuts";
+import { useTeamEnvironmentIds } from "../state/inbox";
 import { SPACE_TASK_STATUSES } from "@t3tools/client-runtime/spaces";
 import { useSetSpaceTaskStatus } from "./spaces/SpaceStatusMenu";
 import { SpaceTaskStatusGlyph } from "./spaces/SpaceStatusIcon";
@@ -100,6 +104,9 @@ import {
   MicOffIcon,
   UsersRoundIcon,
   ListPlusIcon,
+  InboxIcon,
+  ListTodoIcon,
+  Share2Icon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
@@ -523,6 +530,7 @@ function OpenCommandPaletteDialog(props: {
   const paletteRouteTarget = useThreadRouteTarget();
   const chiefOfStaffTarget = useChiefOfStaffTarget();
   const spaceTarget = useSpaceShortcutTarget();
+  const teamMode = useTeamEnvironmentIds().length > 0;
   const spaceThread = useSpaceThreadActions(
     activeThread?.environmentId ?? null,
     activeThread?.id ?? null,
@@ -566,6 +574,15 @@ function OpenCommandPaletteDialog(props: {
   );
   const primaryIsTeamMode = useIsTeamMode(primaryEnvironmentId);
   const activeThreadFollowing = useThreadFollowing(activeThread);
+  const lineageItems = useLineagePaletteItems(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
+  const branchOffItems = useBranchOffPaletteItems(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
+  const activeThreadForkAllowed = useForkAllowed(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
   const setThreadFollowed = useSetThreadFollowed();
   const canOperateActiveThread = useEnvironmentScope(
     activeThread?.environmentId ?? null,
@@ -1624,6 +1641,8 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (canOperateActiveThread) actionItems.push(...branchOffItems, ...lineageItems);
+
   if (activeThread !== null && canShareActiveThreadWithGuest) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     actionItems.push({
@@ -1684,7 +1703,7 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
-    if (forkToMachine !== null && canOperateActiveThread) {
+    if (forkToMachine !== null && canOperateActiveThread && activeThreadForkAllowed) {
       const { blocker } = forkToMachine;
       actionItems.push({
         kind: "action",
@@ -1886,6 +1905,44 @@ function OpenCommandPaletteDialog(props: {
         else if (startIn !== null) startChiefOfStaff(startIn);
       },
     });
+  }
+
+  if (teamMode) {
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:inbox-open",
+        searchTerms: ["inbox", "needs you", "approvals", "mentions"],
+        title: "Go to Inbox",
+        shortcutCommand: "inbox.open",
+        icon: <InboxIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await navigate({ to: "/inbox" });
+        },
+      },
+      {
+        kind: "action",
+        value: "action:my-tasks-open",
+        searchTerms: ["my tasks", "tasks", "assigned"],
+        title: "Go to My tasks",
+        shortcutCommand: "myTasks.open",
+        icon: <ListTodoIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await navigate({ to: "/my-tasks" });
+        },
+      },
+      {
+        kind: "action",
+        value: "action:shared-with-you-open",
+        searchTerms: ["shared with you", "shared", "team threads"],
+        title: "Go to Shared with you",
+        shortcutCommand: "sharedWithYou.open",
+        icon: <Share2Icon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await navigate({ to: "/shared" });
+        },
+      },
+    );
   }
 
   if (spaceTarget.environmentId !== null) {

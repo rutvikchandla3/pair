@@ -1,3 +1,4 @@
+import type { CloudThreadMenuItem } from "@t3tools/client-runtime/branch-lineage";
 import { MemberId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -193,6 +194,107 @@ describe("buildThreadActionMenuItems", () => {
     expect(share({ team })).toBeNull();
     expect(share({})).toBeNull();
     expect(share({ team, share: { allowed: true }, canOperate: false })?.[1]).toBe(true);
+  });
+
+  it("leads a team's cloud thread with Branch off and Side chat, and keeps Fork the holder's", () => {
+    const item = (
+      id: CloudThreadMenuItem["id"],
+      label: string,
+      fields: Partial<CloudThreadMenuItem> = {},
+    ): CloudThreadMenuItem => ({
+      id,
+      label,
+      detail: null,
+      disabled: false,
+      disabledReason: null,
+      readOnly: false,
+      group: "thread",
+      ...fields,
+    });
+    const team = { members: [], ownerId: null, canDelete: true, canAssign: true };
+    const menu = (cloud: ReadonlyArray<CloudThreadMenuItem>, allowed: boolean) =>
+      buildThreadActionMenuItems({
+        ...baseState,
+        team,
+        share: { allowed },
+        spaceTask: { canMove: true, canRemove: true },
+        forkToMachine: { blocker: null },
+        cloud,
+      });
+    const summary = (items: ReturnType<typeof menu>) =>
+      items
+        .filter((entry) =>
+          [
+            "branch-off",
+            "side-chat",
+            "share",
+            "space-move-task",
+            "fork-to-machine",
+            "move-to-own-machine",
+          ].includes(entry.id),
+        )
+        .map((entry) => [entry.id, entry.label, entry.disabled ?? false]);
+
+    // Someone else's thread: Side chat is read-only, and Fork is not offered.
+    const theirs = menu(
+      [
+        item("branchOff", "Branch off…"),
+        item("sideChat", "Side chat", { readOnly: true }),
+        item("share", "Share… (owner only)", { disabled: true }),
+        item("assign", "Assign to… (owner only)", { disabled: true }),
+      ],
+      false,
+    );
+    expect(theirs[0]?.id).toBe("branch-off");
+    expect(summary(theirs)).toEqual([
+      ["branch-off", "Branch off…", false],
+      ["side-chat", "Side chat (read-only)", false],
+      ["share", "Share… (owner only)", true],
+      ["space-move-task", "Move to another task…", false],
+    ]);
+
+    // The holder keeps Fork.
+    const own = menu(
+      [
+        item("branchOff", "Branch off…"),
+        item("sideChat", "Side chat"),
+        item("share", "Share…"),
+        item("assign", "Assign to…"),
+        item("fork", "Fork"),
+      ],
+      true,
+    );
+    expect(summary(own)).toEqual([
+      ["branch-off", "Branch off…", false],
+      ["side-chat", "Side chat", false],
+      ["share", "Share…", false],
+      ["space-move-task", "Move to another task…", false],
+      ["fork-to-machine", "Fork to new machine…", false],
+    ]);
+
+    // A branch on someone else's machine shares and moves only after Move to my own machine.
+    const reason = "On Kousik's machine, sharing follows Kousik's list.";
+    const onTheirMachine = menu(
+      [
+        item("sideChat", "Side chat"),
+        item("share", "Share…", { disabled: true, disabledReason: reason }),
+        item("assign", "Assign to…"),
+        item("fork", "Fork"),
+        item("moveToOwnMachine", "Move to my own machine"),
+      ],
+      true,
+    );
+    expect(summary(onTheirMachine)).toEqual([
+      ["side-chat", "Side chat", false],
+      ["share", "Share… (on Kousik's machine, sharing follows Kousik's list)", true],
+      [
+        "space-move-task",
+        "Move to another task… (on Kousik's machine, sharing follows Kousik's list)",
+        true,
+      ],
+      ["move-to-own-machine", "Move to my own machine…", false],
+      ["fork-to-machine", "Fork to new machine…", false],
+    ]);
   });
 
   it("offers Move and Remove only on a thread on a space task, disabled without the right", () => {

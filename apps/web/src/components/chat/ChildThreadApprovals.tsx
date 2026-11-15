@@ -1,29 +1,39 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
-import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
-import { fullAccessOverrideExplanation } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  type ChildThreadApproval,
+  type ThreadPendingApproval,
+  fullAccessOverrideExplanation,
+} from "@t3tools/client-runtime/state/thread-requests";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 
-function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
-  const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
+/** One pending approval of another thread, answered in place: the same answer the thread takes. */
+export function ThreadApprovalCard(props: {
+  readonly thread: ScopedThreadRef;
+  readonly approval: ThreadPendingApproval;
+  readonly label: string;
+  readonly heading: ReactNode;
+  readonly footer?: ReactNode;
+}) {
+  const { approval } = props;
+  const canRespond = useEnvironmentScope(props.thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { approval } = entry;
   return (
     <section
-      aria-label={`Approval from ${entry.title}`}
+      aria-label={props.label}
       className="rounded-lg border border-border bg-background p-3 text-xs"
     >
-      <p className="mb-2 font-medium">Approval needed from {entry.title}</p>
+      <p className="mb-2 font-medium">{props.heading}</p>
       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
         {approval.detail || approval.requestKind}
       </pre>
@@ -52,8 +62,8 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
             setResponding(true);
             setError(null);
             const result = await respond({
-              environmentId: entry.thread.environmentId,
-              input: { threadId: entry.thread.threadId, requestId, decision },
+              environmentId: props.thread.environmentId,
+              input: { threadId: props.thread.threadId, requestId, decision },
             });
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const failure = squashAtomCommandFailure(result);
@@ -71,7 +81,19 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           {error}
         </p>
       ) : null}
+      {props.footer}
     </section>
+  );
+}
+
+function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
+  return (
+    <ThreadApprovalCard
+      thread={entry.thread}
+      approval={entry.approval}
+      label={`Approval from ${entry.title}`}
+      heading={`Approval needed from ${entry.title}`}
+    />
   );
 }
 

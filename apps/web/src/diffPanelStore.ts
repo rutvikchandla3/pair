@@ -1,7 +1,7 @@
 import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { RunId, ScopedThreadRef, ThreadId, TurnItemId } from "@t3tools/contracts";
+import type { OfferId, RunId, ScopedThreadRef, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -18,7 +18,9 @@ export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
   | { kind: "commit"; sha: string; baseRef: string | null }
-  | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
+  | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number }
+  /** An offer card's View changes: only the sender's lines. */
+  | { kind: "offer"; offerId: OfferId };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
@@ -32,6 +34,7 @@ interface DiffPanelStoreState {
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string, keepOnOpen?: boolean) => void;
+  selectOffer: (ref: ScopedThreadRef, offerId: OfferId, keepOnOpen?: boolean) => void;
   consumeKeepSelectionOnOpen: (ref: ScopedThreadRef) => boolean;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
@@ -130,6 +133,13 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
               : state.keepSelectionOnOpenThreadKey,
           };
         }),
+      selectOffer: (ref, offerId, keepOnOpen = false) =>
+        set((state) => ({
+          byThreadKey: { ...state.byThreadKey, [scopedThreadKey(ref)]: { kind: "offer", offerId } },
+          keepSelectionOnOpenThreadKey: keepOnOpen
+            ? scopedThreadKey(ref)
+            : state.keepSelectionOnOpenThreadKey,
+        })),
       consumeKeepSelectionOnOpen: (ref) => {
         if (get().keepSelectionOnOpenThreadKey !== scopedThreadKey(ref)) return false;
         set({ keepSelectionOnOpenThreadKey: null });

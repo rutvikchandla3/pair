@@ -79,3 +79,28 @@ export function useThreadDiscoveredPorts(input: {
       )
     : EMPTY_PORTS;
 }
+
+/**
+ * On a machine, the listeners on other threads' own `PORT`s there. Their thread's owner names
+ * them ("Hanad · :3001"), so a busy port has a visible cause.
+ */
+export function useOtherThreadsMachinePorts(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly threadId: ThreadId | null;
+}): ReadonlyArray<DiscoveredLocalServer> {
+  const machine = useEnvironmentHasMachineBrowser(input.environmentId);
+  const ports = useDiscoveredPortsState(input.environmentId, input.threadId).servers;
+  if (!machine || input.threadId === null) return EMPTY_PORTS;
+  return otherThreadsPorts(ports, input.threadId);
+}
+
+/** Listeners the machine attributes to a thread other than `threadId`. */
+export function otherThreadsPorts(
+  ports: ReadonlyArray<DiscoveredLocalServer>,
+  threadId: ThreadId,
+): ReadonlyArray<DiscoveredLocalServer> {
+  return ports.filter(
+    (port) =>
+      port.terminal === null && port.agent?.threadId != null && port.agent.threadId !== threadId,
+  );
+}
