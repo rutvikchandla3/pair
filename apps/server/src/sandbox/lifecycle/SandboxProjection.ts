@@ -211,6 +211,11 @@ export const applySandboxMembership = Effect.fnUntraced(function* (
     `;
     return;
   }
+  // A thread is on one machine; Move to my own machine leaves the old one's membership.
+  yield* sql`
+    DELETE FROM orchestration_v2_projection_sandbox_threads
+    WHERE thread_id = ${thread.id} AND sandbox_id <> ${thread.sandboxId}
+  `;
   const attachedAt = yield* encodeTimestamp(at);
   yield* sql`
     INSERT INTO orchestration_v2_projection_sandbox_threads (
@@ -218,6 +223,50 @@ export const applySandboxMembership = Effect.fnUntraced(function* (
     )
     VALUES (${thread.sandboxId}, ${thread.id}, ${attachedAt}, ${thread.archivedAt === null ? 0 : 1})
     ON CONFLICT(sandbox_id, thread_id) DO UPDATE SET archived = excluded.archived
+  `;
+  yield* assignSandboxSlot(thread.sandboxId, thread.id);
+});
+
+/** The thread's `PAIR_THREAD_SLOT` on its machine, or null off a machine or while archived. */
+export const slotFor = Effect.fn("SandboxProjection.slotFor")(function* (threadId: ThreadId) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly slot: number | null }>`
+    SELECT slot FROM orchestration_v2_projection_sandbox_threads WHERE thread_id = ${threadId}
+  `;
+  return rows[0]?.slot ?? null;
+});
+
+/**
+ * Keeps a live thread's slot unless another live thread on the machine took it, and otherwise
+ * gives it the smallest free one. An archived thread frees its slot.
+ */
+const assignSandboxSlot = Effect.fnUntraced(function* (sandboxId: SandboxId, threadId: ThreadId) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    UPDATE orchestration_v2_projection_sandbox_threads
+    SET slot = CASE
+      WHEN archived = 1 THEN NULL
+      WHEN slot IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_sandbox_threads AS other
+        WHERE other.sandbox_id = ${sandboxId} AND other.thread_id <> ${threadId}
+          AND other.archived = 0 AND other.slot = orchestration_v2_projection_sandbox_threads.slot
+      ) THEN slot
+      ELSE (
+        SELECT MIN(candidate.value) FROM (
+          SELECT 0 AS value
+          UNION ALL
+          SELECT other.slot + 1 FROM orchestration_v2_projection_sandbox_threads AS other
+          WHERE other.sandbox_id = ${sandboxId} AND other.thread_id <> ${threadId}
+            AND other.archived = 0 AND other.slot IS NOT NULL
+        ) AS candidate
+        WHERE candidate.value NOT IN (
+          SELECT other.slot FROM orchestration_v2_projection_sandbox_threads AS other
+          WHERE other.sandbox_id = ${sandboxId} AND other.thread_id <> ${threadId}
+            AND other.archived = 0 AND other.slot IS NOT NULL
+        )
+      )
+    END
+    WHERE sandbox_id = ${sandboxId} AND thread_id = ${threadId}
   `;
 });
 

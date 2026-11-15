@@ -2,6 +2,7 @@ import {
   type MemberId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadShellBranchLink,
   type SandboxId,
   type SpaceMembershipChange,
   type ServerProvider,
@@ -274,17 +275,33 @@ export function titlesVisibleToViewer(
  * Drops rows the viewer may not open, then reads member rows only for threads the viewer does not
  * hold, in one batch.
  */
-export function overlayForViewer<T extends PersonalStateCarrier>(
+export function overlayForViewer<T extends PersonalStateCarrier & BranchLinkCarrier>(
   viewer: ThreadViewer | null,
   rows: ReadonlyArray<T>,
 ): Effect.Effect<ReadonlyArray<T>, ProjectionStore.ProjectionStoreV2Error> {
   if (viewer === null) return Effect.succeed(rows);
-  if (viewer.access !== undefined) {
+  const access = viewer.access;
+  if (access !== undefined) {
     return Effect.flatMap(visibleToViewer(viewer, rows), (visible) =>
-      overlayVisible(viewer, visible),
+      overlayVisible(
+        viewer,
+        visible.map((row) => sourceForViewer(access, row)),
+      ),
     );
   }
   return overlayVisible(viewer, rows);
+}
+
+type BranchLinkCarrier = { readonly branchLink?: OrchestrationV2ThreadShellBranchLink };
+
+/** A branch whose source the viewer can't open reads "from a thread you can't open". */
+function sourceForViewer<T extends BranchLinkCarrier>(access: ViewerAccess, row: T): T {
+  const source = row.branchLink?.source;
+  if (source == null || access.allowsThreadId(source.threadId)) return row;
+  return {
+    ...row,
+    branchLink: { ...row.branchLink!, source: { ...source, title: null, state: "unavailable" } },
+  };
 }
 
 function overlayVisible<T extends PersonalStateCarrier>(

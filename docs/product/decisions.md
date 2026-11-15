@@ -50,6 +50,9 @@ page says how it must behave. The decisions came from a product design review du
   owner keeps following it. Only the owner or an admin deletes it. On a cloud thread, only the owner
   assigns it, or an admin once the owner has left the team.
 - **Anyone who can open a thread can prompt it.** No locks, no "driver".
+- **Branch off gives anyone who can open a cloud thread their own branch and worktree.** Code moves
+  back only through an offer that the owner applies, between turns. Fork stays the owner's tool, and
+  a non-owner's side chat is read-only.
 - **Never hijack a teammate's turn.** Sending on someone else's running turn queues the message and
   leaves their approvals alone. **Steer now** is the deliberate way to interrupt; it also declines
   their pending approvals. On mobile it is a long-press on Send.
@@ -63,7 +66,8 @@ page says how it must behave. The decisions came from a product design review du
   person's words, so they get no name.
 - **Personal state:** pins, order, unread, snooze, follow, notification settings and drafts.
   **Shared state:** archive, settle, title, tags and linked pull requests.
-- Revert confirms only when it discards someone else's turns. Undo covers only your own action.
+- Revert confirms only when it discards someone else's turns, or someone else's applied changes. Undo
+  covers only your own action.
 - New threads on a team server start in a worktree, so people don't overwrite each other.
 - Timeline rows for renames, archive, settle, permission and model changes, assignments and pull
   requests appear in team mode only, with no backfill. Plan-mode toggles get no row.
@@ -100,7 +104,10 @@ page says how it must behave. The decisions came from a product design review du
 - Members add their provider accounts and connect GitHub on Pair Cloud, separately from their Mac.
   The Mac's own logins can't serve a cloud machine.
 - **In cloud,** a thread's machine gets only its own thread's account credential, in memory, from
-  an allowlisted environment when the provider process starts, never another member's. Pair writes
+  an allowlisted environment when the provider process starts, never another member's, except a
+  branch its owner started there, after the draft says who can reach it. The account still serves
+  only its owner's threads, as licensed per person. Sharing a machine exposes it, and the draft
+  says so. Pair writes
   no credential to a machine's disk or image. Claude works there with a setup token or an API key,
   Codex with a managed ChatGPT account or an API key; an account with neither is "Local only", and
   other providers are not supported in cloud.
@@ -122,6 +129,8 @@ page says how it must behave. The decisions came from a product design review du
   so pushes go out as the owner whoever prompts, and Settings says the agent can read it; else
   nothing, and the thread says "Connect GitHub to push".
 - Each team registers its own GitHub App. Pair never points at upstream's "T3 Code for GitHub" app.
+- Applied changes credit their author with `Co-authored-by`. A branch holds its source's work in
+  commits authored as the source's owner, and pushing a branch warns that it includes them.
 
 ## Workspaces
 
@@ -157,6 +166,7 @@ page says how it must behave. The decisions came from a product design review du
 
 ## Non-goals
 
+- Inbox is attention, not activity. It lists what waits on you and clears itself.
 - Private local threads, per-project permissions, a Viewer role, several teams on one server.
 - An activity feed, and chat or @mentions outside a Space. A Space's room is the one place
   members talk to each other and to `@pair`. There, an @mention notifies only the member named,

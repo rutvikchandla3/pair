@@ -4,6 +4,7 @@ import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
+  runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useRef } from "react";
@@ -11,6 +12,7 @@ import { useRef } from "react";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useRightPanelStore } from "../../rightPanelStore";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { waitForThreadShell } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -93,4 +95,31 @@ export function useSideChat(input: {
     });
   };
   return { available: input.threadRef !== null, open: useStableCallback(open) };
+}
+
+/**
+ * Opens an empty side chat on `threadRef` from a menu, outside the thread's view; the tab shows
+ * when the thread does. Resolves with why it did not start, or null.
+ */
+export async function openSideChatOn(threadRef: ScopedThreadRef): Promise<string | null> {
+  const targetThreadId = newThreadId();
+  const fork = await runAtomCommand(
+    appAtomRegistry,
+    threadEnvironment.forkSideChat,
+    {
+      environmentId: threadRef.environmentId,
+      input: { sourceThreadId: threadRef.threadId, targetThreadId, title: "Side chat" },
+    },
+    { label: "Side chat", reportFailure: false },
+  );
+  if (fork._tag === "Failure") {
+    if (isAtomCommandInterrupted(fork)) return null;
+    const error = squashAtomCommandFailure(fork);
+    return error instanceof Error ? error.message : "Could not start a side chat.";
+  }
+  if (!(await waitForThreadShell(scopeThreadRef(threadRef.environmentId, targetThreadId)))) {
+    return "The side chat was created, but it did not reach this client.";
+  }
+  useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
+  return null;
 }

@@ -60,7 +60,6 @@ import {
   useSandboxActionRunner,
   useSandboxThreadMachine,
 } from "../../state/sandbox";
-import { TEAM_SHELF_EMPTY_LABEL } from "@t3tools/client-runtime/state/share-thread";
 import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
 import { useNavigation } from "@react-navigation/native";
 import { SANDBOX_ACTION_MENU_LABELS } from "@t3tools/client-runtime/state/sandbox";
@@ -282,7 +281,6 @@ type ThreadListV2ShelfHeaderProps = {
 
 const SHELF_LABEL = {
   working: "Working",
-  team: "Team",
   snoozed: "Snoozed",
   settled: "Settled",
 } as const;
@@ -311,28 +309,6 @@ export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingS
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="working" />;
-});
-
-export const ThreadListV2TeamShelfHeader = memo(function ThreadListV2TeamShelfHeader(
-  props: ThreadListV2ShelfHeaderProps,
-) {
-  return (
-    <>
-      <ThreadListV2ShelfHeader {...props} kind="team" />
-      {props.count === 0 && props.expanded ? (
-        <Text
-          className={cn(
-            "pb-2 text-xs",
-            props.pane === "sidebar"
-              ? "px-3 text-drawer-foreground-muted"
-              : "px-5 text-foreground-muted",
-          )}
-        >
-          {TEAM_SHELF_EMPTY_LABEL}
-        </Text>
-      ) : null}
-    </>
-  );
 });
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
@@ -680,6 +656,33 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   );
 });
 
+/** A branch leads with the branch glyph, a thread on a space task with the space glyph. */
+function threadLeadingGlyph(thread: EnvironmentThreadShell) {
+  if (thread.source.branchLink?.source != null) {
+    return { name: "arrow.triangle.branch", label: "Branch" } as const;
+  }
+  if (thread.source.space?.kind === "task")
+    return { name: "person.2", label: "Space task" } as const;
+  return null;
+}
+
+function ThreadLeadingGlyph(props: {
+  readonly glyph: NonNullable<ReturnType<typeof threadLeadingGlyph>>;
+  readonly tintColorClassName: string;
+  readonly height?: number;
+}) {
+  return (
+    <View className="justify-center" style={{ height: props.height }}>
+      <SymbolView
+        name={props.glyph.name}
+        size={13}
+        tintColorClassName={props.tintColorClassName}
+        type="monochrome"
+      />
+    </View>
+  );
+}
+
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
@@ -689,8 +692,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly wokeAt: string | null;
   /** Team mode: the teammate who owns the thread. */
   readonly owner?: Pick<TeamMember, "name" | "color">;
-  /** On the Team shelf: no unread marker, since the thread is not mine. */
-  readonly team?: boolean;
   readonly snoozeWakeLabelText?: string;
   readonly timeLabel: string;
   readonly snoozePresetMinute: string;
@@ -800,7 +801,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
-  const isUnread = status === "ready" && props.team !== true && threadHasUnseenCompletion(thread);
+  const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
   const statusLabel =
@@ -809,7 +810,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
+  const leadingGlyph = threadLeadingGlyph(thread);
+  const rowAccessibilityLabel = `${leadingGlyph ? `${leadingGlyph.label}: ` : ""}${thread.title}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -1286,6 +1288,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
           </View>
         ) : null}
+        {leadingGlyph ? (
+          <ThreadLeadingGlyph
+            glyph={leadingGlyph}
+            height={titleLineHeight}
+            tintColorClassName={
+              selected
+                ? selectedThreadRowColors.mutedIconTintClassName
+                : rowAppearance.mutedIconTintClassName
+            }
+          />
+        ) : null}
         <Text
           className={cn(
             "flex-1 text-base",
@@ -1624,6 +1637,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 workspaceRoot={props.project.workspaceRoot}
               />
             </View>
+          ) : null}
+          {leadingGlyph ? (
+            <ThreadLeadingGlyph
+              glyph={leadingGlyph}
+              tintColorClassName={
+                selected
+                  ? selectedThreadRowColors.mutedIconTintClassName
+                  : rowAppearance.mutedIconTintClassName
+              }
+            />
           ) : null}
           <View className="min-w-0 flex-1">
             <Text

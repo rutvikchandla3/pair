@@ -1,7 +1,12 @@
-import { CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS, PREVIEW_URL_MAX_LENGTH } from "@t3tools/contracts";
+import {
+  CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
+  type DiscoveredLocalServer,
+  PREVIEW_URL_MAX_LENGTH,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boundConfiguredLocalServerUrls } from "./portDiscoveryState";
+import { boundConfiguredLocalServerUrls, otherThreadsPorts } from "./portDiscoveryState";
 
 describe("boundConfiguredLocalServerUrls", () => {
   it("keeps subscription payloads within the discovery RPC bounds", () => {
@@ -31,5 +36,27 @@ describe("boundConfiguredLocalServerUrls", () => {
       "http://localhost:3000/docs#section-0",
       "http://localhost:4000/app",
     ]);
+  });
+});
+
+describe("otherThreadsPorts", () => {
+  it("keeps the listeners the machine gives another thread, not this thread's or its terminals'", () => {
+    const own = ThreadId.make("thread-own");
+    const hanad = ThreadId.make("thread-hanad");
+    const server = (port: number, fields: Partial<DiscoveredLocalServer>) =>
+      ({
+        pid: port,
+        port,
+        url: `http://localhost:${port}`,
+        terminal: null,
+        ...fields,
+      }) as DiscoveredLocalServer;
+    const ports = [
+      server(3000, { agent: { threadId: own } }),
+      server(3001, { agent: { threadId: hanad } }),
+      server(3002, { agent: null }),
+      server(3003, { terminal: { threadId: own } as DiscoveredLocalServer["terminal"] }),
+    ];
+    expect(otherThreadsPorts(ports, own).map((port) => port.port)).toEqual([3001]);
   });
 });

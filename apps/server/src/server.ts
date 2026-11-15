@@ -165,6 +165,13 @@ import * as SpaceAgentTools from "./space/SpaceAgentTools.ts";
 import * as SpaceContext from "./space/SpaceContext.ts";
 import * as SpaceIntake from "./space/SpaceIntake.ts";
 import * as SpaceService from "./space/SpaceService.ts";
+import * as InboxService from "./inbox/InboxService.ts";
+import * as BranchOffServiceLive from "./lineage/BranchOffServiceLive.ts";
+import * as BranchLineageReactor from "./lineage/BranchLineageReactor.ts";
+import * as BranchLineageService from "./lineage/BranchLineageService.ts";
+import * as BranchLineageStepExecutorLive from "./lineage/BranchLineageStepExecutorLive.ts";
+import * as LineageGit from "./lineage/LineageGit.ts";
+import * as LineageReposLive from "./lineage/LineageReposLive.ts";
 import * as SpaceWorkspaces from "./space/SpaceWorkspaces.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as StagedCloudImports from "./cloudMove/StagedCloudImports.ts";
@@ -1076,6 +1083,40 @@ const layerMakeRoutes = Layer.mergeAll(
       ),
     ),
   ),
+  // Each member's Inbox and Shared with you, for WebSocket clients.
+  Layer.provide(InboxService.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  // Branch off, its summary, Start from main and Move to my own machine; LineageRepos carries
+  // commits between machines for every lineage action.
+  Layer.provide(
+    BranchOffServiceLive.layer.pipe(
+      Layer.provideMerge(LineageReposLive.layer),
+      Layer.provide(Layer.mergeAll(ProjectionStoreV2.layer, IdAllocator.layer, LineageGit.layer)),
+    ),
+  ),
+  // Update, Offer, Apply and Revert for WebSocket clients and /mcp agents; it also runs the steps
+  // the effect worker reaches through BranchLineageStepExecutorLive's slot.
+  Layer.provide(
+    Layer.mergeAll(
+      BranchLineageStepExecutorLive.layerRegister,
+      Layer.effectDiscard(
+        Effect.gen(function* () {
+          const reactor = yield* BranchLineageReactor.BranchLineageReactor;
+          yield* reactor.start();
+        }),
+      ).pipe(Layer.provide(BranchLineageReactor.layer)),
+    ).pipe(
+      Layer.provideMerge(BranchLineageService.layer),
+      Layer.provide(LineageReposLive.layer),
+      Layer.provide(
+        Layer.mergeAll(
+          ProjectionStoreV2.layer,
+          IdAllocator.layer,
+          LineageGit.layer,
+          RuntimeLayer.layerCheckpointService,
+        ),
+      ),
+    ),
+  ),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),
@@ -1454,6 +1495,8 @@ const layerMakeServer = Layer.unwrap(
           SpaceAgentAdapterSlot.makeSlot(),
         ),
       ),
+      // The effect worker's lineage step executor, filled once BranchLineageService is built.
+      Layer.provide(BranchLineageStepExecutorLive.layer),
       Layer.provideMerge(
         RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
       ),

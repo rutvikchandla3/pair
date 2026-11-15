@@ -72,7 +72,6 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
-  ThreadListV2TeamShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
@@ -276,12 +275,10 @@ function ThreadNavigationSidebarPane(
     loaded: shelfPreferencesLoaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
-    teamShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
-    toggleTeamShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
   const teamViewers = useTeamViewers();
@@ -324,7 +321,6 @@ function ThreadNavigationSidebarPane(
     shelfPreferencesLoaded,
     workingShelfEnabled,
     workingShelfExpanded,
-    teamShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
     teamViewers,
@@ -556,7 +552,6 @@ function ThreadNavigationSidebarPane(
             pinned={item.item.pinned}
             wokeAt={item.item.wokeAt}
             owner={item.item.owner}
-            team={item.item.team}
             snoozePresetMinute={item.snoozePresetMinute ?? ""}
             snoozeWakeLabelText={item.snoozeWakeLabelText}
             timeLabel={item.timeLabel}
@@ -629,16 +624,6 @@ function ThreadNavigationSidebarPane(
             disabled={item.disabled}
             expanded={item.expanded}
             onToggle={toggleWorkingShelf}
-            pane="sidebar"
-          />
-        );
-      case "v2-team-shelf":
-        return (
-          <ThreadListV2TeamShelfHeader
-            count={item.count}
-            disabled={item.disabled}
-            expanded={item.expanded}
-            onToggle={toggleTeamShelf}
             pane="sidebar"
           />
         );

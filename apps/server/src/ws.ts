@@ -7,6 +7,9 @@ import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceService from "./space/SpaceService.ts";
+import * as BranchOffService from "./lineage/BranchOffService.ts";
+import * as BranchLineageService from "./lineage/BranchLineageService.ts";
+import * as InboxService from "./inbox/InboxService.ts";
 import * as TeamClaudeKey from "./team/TeamClaudeKey.ts";
 
 import * as DateTime from "effect/DateTime";
@@ -1709,6 +1712,9 @@ export const layerWsRpc = (
       const cloudMoves = yield* CloudMoves.CloudMoves;
       const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
       const spaces = yield* SpaceService.SpaceService;
+      const inbox = yield* InboxService.InboxService;
+      const branchOffService = yield* BranchOffService.BranchOffService;
+      const branchLineage = yield* BranchLineageService.BranchLineageService;
       const teamClaudeKey = yield* TeamClaudeKey.TeamClaudeKey;
       const spaceCaller = {
         memberId: currentSession.memberId,
@@ -3148,6 +3154,36 @@ export const layerWsRpc = (
         [WS_METHODS.spacesReply]: (input) => spaces.reply(spaceCaller, input),
         [WS_METHODS.spacesTaskGet]: (input) => spaces.taskGet(spaceCaller, input),
         [WS_METHODS.spacesWorkspacePreview]: (input) => spaces.workspacePreview(spaceCaller, input),
+        [WS_METHODS.inboxList]: (input) => inbox.list(spaceCaller, input),
+        [WS_METHODS.inboxSummary]: () => inbox.summary(spaceCaller),
+        [WS_METHODS.inboxSubscribeSummary]: () => inbox.subscribeSummary(spaceCaller),
+        [WS_METHODS.inboxDismiss]: (input) => inbox.dismiss(spaceCaller, input),
+        [WS_METHODS.inboxSnooze]: (input) => inbox.snooze(spaceCaller, input),
+        [WS_METHODS.inboxUnsnooze]: (input) => inbox.unsnooze(spaceCaller, input),
+        [WS_METHODS.sharedWithYouList]: (input) => inbox.sharedWithYou(spaceCaller, input),
+        [WS_METHODS.myTasksListClosed]: () => inbox.closedTasks(spaceCaller),
+        [WS_METHODS.lineageRead]: (input) => branchLineage.read(spaceCaller, input),
+        [WS_METHODS.threadBranchOffDraft]: (input) => branchOffService.draft(spaceCaller, input),
+        [WS_METHODS.threadBranchOff]: (input) => branchOffService.branchOff(spaceCaller, input),
+        [WS_METHODS.threadUpdatePreview]: (input) =>
+          branchLineage.updatePreview(spaceCaller, input),
+        [WS_METHODS.threadUpdate]: (input) => branchLineage.update(spaceCaller, input),
+        [WS_METHODS.threadAbortUpdate]: (input) => branchLineage.abortUpdate(spaceCaller, input),
+        [WS_METHODS.threadUndoUpdate]: (input) => branchLineage.undoUpdate(spaceCaller, input),
+        [WS_METHODS.threadBringBack]: (input) => branchLineage.bringBack(spaceCaller, input),
+        [WS_METHODS.offerPreview]: (input) => branchLineage.offerPreview(spaceCaller, input),
+        [WS_METHODS.offerDiff]: (input) => branchLineage.offerDiff(spaceCaller, input),
+        [WS_METHODS.offerCreate]: (input) => branchLineage.offerCreate(spaceCaller, input),
+        [WS_METHODS.offerWithdraw]: (input) => branchLineage.offerWithdraw(spaceCaller, input),
+        [WS_METHODS.offerApply]: (input) => branchLineage.offerApply(spaceCaller, input),
+        [WS_METHODS.offerDecline]: (input) => branchLineage.offerDecline(spaceCaller, input),
+        [WS_METHODS.threadRevertOffer]: (input) => branchLineage.revertOffer(spaceCaller, input),
+        [WS_METHODS.threadMoveToOwnMachine]: (input) =>
+          branchOffService.moveToOwnMachine(spaceCaller, input),
+        [WS_METHODS.threadBranchOffSummary]: (input) =>
+          branchOffService.summary(spaceCaller, input),
+        [WS_METHODS.threadStartFromMain]: (input) =>
+          branchOffService.startFromMain(spaceCaller, input),
         [WS_METHODS.teamClaudeKeySubscribe]: () =>
           Stream.concat(Stream.fromEffect(teamClaudeKey.status), teamClaudeKey.changes),
         [WS_METHODS.teamClaudeKeySet]: (input) =>
@@ -4110,6 +4146,9 @@ export const layer = Layer.unwrap(
     const cloudMoves = yield* CloudMoves.CloudMoves;
     const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
     const spaces = yield* SpaceService.SpaceService;
+    const inbox = yield* InboxService.InboxService;
+    const branchOff = yield* BranchOffService.BranchOffService;
+    const branchLineage = yield* BranchLineageService.BranchLineageService;
     const projections = yield* ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -4221,7 +4260,14 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(CloudMoves.CloudMoves, cloudMoves)),
               Layer.provide(Layer.succeed(ChiefOfStaffVoice.ChiefOfStaffVoice, chiefOfStaff)),
-              Layer.provide(Layer.succeed(SpaceService.SpaceService, spaces)),
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(SpaceService.SpaceService, spaces),
+                  Layer.succeed(InboxService.InboxService, inbox),
+                  Layer.succeed(BranchOffService.BranchOffService, branchOff),
+                  Layer.succeed(BranchLineageService.BranchLineageService, branchLineage),
+                ),
+              ),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(ProjectionStoreV2, projections)),
               Layer.provide(

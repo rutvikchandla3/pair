@@ -117,6 +117,7 @@ import {
   ensureSandboxProviderHome,
   sandboxProviderSessionEnvironmentFor,
 } from "../../sandbox/providers/SandboxProviderHome.ts";
+import { threadSlotEnvironment } from "../../sandbox/credentials/SandboxProcessEnvironment.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -1444,9 +1445,10 @@ function codexThreadRuntimeParams(input: {
         ? {}
         : { [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId }),
       ...Object.fromEntries(
-        Object.entries(ProviderAdapter.gitAuthorEnvironment(input.runtimePolicy)).map(
-          ([name, value]) => [`shell_environment_policy.set.${name}`, value],
-        ),
+        Object.entries({
+          ...ProviderAdapter.gitAuthorEnvironment(input.runtimePolicy),
+          ...threadSlotEnvironment(input.runtimePolicy?.threadSlot ?? null),
+        }).map(([name, value]) => [`shell_environment_policy.set.${name}`, value]),
       ),
       ...(t3Server === undefined
         ? {}

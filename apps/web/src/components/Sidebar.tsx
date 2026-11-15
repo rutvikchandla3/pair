@@ -2,12 +2,10 @@ import { useThreadViewers } from "../state/presence";
 import { useTeamViewers } from "../state/team";
 import {
   isSidebarThreadMine,
-  sortTeamThreadsByActivity,
   teamOwnerOf,
   type TeamViewer,
 } from "@t3tools/client-runtime/state/team";
 import { sandboxAccessSummary } from "@t3tools/client-runtime/state/sandbox";
-import { TEAM_SHELF_EMPTY_LABEL } from "@t3tools/client-runtime/state/share-thread";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
@@ -172,7 +170,6 @@ import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { readCanDeleteThread, readThreadShareOrigin, readThreadTeamMenu } from "../state/team";
-import { MemberAvatar } from "./team/MemberAvatar";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -198,6 +195,9 @@ import {
 } from "./threadActionMenu.logic";
 import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
 import { openForkToMachineDialog } from "./sandbox/ForkToMachineDialog";
+import { branchOffRoute, readCloudThreadMenu } from "./branchOff/branchOffTarget";
+import { openMoveToOwnMachineDialog } from "./branchOff/MoveToOwnMachineDialog";
+import { openSideChatOn } from "./chat/useSideChat";
 import { useContinueLocally } from "../hooks/useContinueLocally";
 import { readSandboxThreadMachine, useSandboxActionRunner } from "./sandbox/useSandboxThreadStatus";
 import {
@@ -283,6 +283,8 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarSpaces } from "./sidebar/SidebarSpaces";
+import { sidebarBranchOwnersBySource, sidebarThreadLead } from "./sidebar/SidebarSpaces.logic";
+import { useSpaceEnvironmentIds, useSpaceTaskNames } from "../state/spaces";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -361,7 +363,6 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
-const TEAM_SHELF_EXPANDED_KEY = "t3code:sidebar:team-expanded";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -497,11 +498,6 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
-  const [teamShelfExpanded, setTeamShelfExpanded] = useLocalStorage(
-    TEAM_SHELF_EXPANDED_KEY,
-    false,
-    Schema.Boolean,
-  );
   const teamViewers = useTeamViewers([...serverConfigs.keys()]);
   const ownerFilters = useUiStateStore((store) => store.sidebarOwnerFilterByEnvironmentId);
   // Shared with the old per-project sidebar, so folders keep their open state.
@@ -531,14 +527,8 @@ function useSidebarThreads(input: {
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
-  const {
-    pinnedThreads,
-    activeThreads,
-    workingThreads,
-    teamThreads,
-    snoozedThreads,
-    settledThreads,
-  } = partition;
+  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
+    partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys, teamViewers),
@@ -571,9 +561,6 @@ function useSidebarThreads(input: {
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
-  const visibleTeamThreads = teamShelfExpanded
-    ? teamThreads
-    : routeThreadOnly(teamThreads, routeRowThreadKey);
   const projectFolders =
     folderGroups === null
       ? null
@@ -600,7 +587,6 @@ function useSidebarThreads(input: {
       ? activeThreads
       : projectFolders.flatMap((folder) => folder.threads)),
     ...visibleWorkingThreads,
-    ...visibleTeamThreads,
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
   ];
@@ -609,7 +595,6 @@ function useSidebarThreads(input: {
     [pinnedThreads, "pinned"],
     [activeThreads, "active"],
     [workingThreads, "working"],
-    [teamThreads, "team"],
     [snoozedThreads, "snoozed"],
     [settledThreads, "settled"],
   ] as const) {
@@ -623,7 +608,6 @@ function useSidebarThreads(input: {
       ...pinnedThreads,
       ...activeThreads,
       ...workingThreads,
-      ...teamThreads,
       ...snoozedThreads,
       ...settledThreads,
     ],
@@ -643,9 +627,6 @@ function useSidebarThreads(input: {
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     teamViewers,
-    teamShelfExpanded,
-    toggleTeamShelf: () => setTeamShelfExpanded((value) => !value),
-    expandTeamShelf: () => setTeamShelfExpanded(true),
     projectFolders,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
@@ -654,7 +635,6 @@ function useSidebarThreads(input: {
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
-    visibleTeamThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
@@ -684,12 +664,12 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     ownerFilters,
   } = input;
   const preciseNow = new Date().toISOString();
-  // Rooms and their tasks are listed under Spaces, not their project.
+  // Rooms are listed under Spaces, not their project.
   const visible = filterSidebarV2VisibleThreads(
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
-  ).filter((thread) => thread.source.space == null);
+  ).filter((thread) => thread.source.space?.kind !== "room");
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -699,7 +679,6 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
       ? working
       : active;
-  const team: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const { draggableThreadKeys, activeReorderableThreadKeys } = resolveSidebarReorderableThreadKeys({
@@ -746,9 +725,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           ? settled
           : section === "pinned"
             ? pinned
-            : section === "team"
-              ? team
-              : inbox(thread)
+            : inbox(thread)
       ).push(thread);
     }
   }
@@ -779,7 +756,6 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
     workingThreads: sortWorkingThreadsBySend(working),
-    teamThreads: sortTeamThreadsByActivity(team),
     snoozedThreads: snoozed.toSorted(
       (left, right) =>
         firstValidTimestampMs(left.snoozedUntil ?? null) -
@@ -846,10 +822,7 @@ function isOptimisticDropReleased(input: {
       ? "settled"
       : thread.pinnedAt != null
         ? "pinned"
-        : // A Team row dropped into Active stays held until its follow lands.
-          optimisticDrop.sourceSection === "team" && thread.followedAt == null
-          ? "team"
-          : "active";
+        : "active";
   if (
     canonicalSection !== optimisticDrop.sourceSection &&
     canonicalSection !== optimisticDrop.section
@@ -1389,7 +1362,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeReorderableThreadKeys,
     activeThreads,
     workingThreads,
-    teamThreads,
     snoozedThreads,
     settledThreads,
     snoozeNow,
@@ -1406,15 +1378,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     workingShelfExpanded,
     toggleWorkingShelf,
     teamViewers,
-    teamShelfExpanded,
-    toggleTeamShelf,
-    expandTeamShelf,
     projectFolders,
     toggleProjectFolder,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
-    visibleTeamThreads,
     orderedThreadKeys,
     threadByKey,
     settledThreadKeys,
@@ -1442,15 +1410,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
-  const showTeamShelf = teamThreads.length > 0 || teamViewers.size > 0;
   const threadViewers = useThreadViewers([...serverConfigs.keys()]);
+  const spaceTaskNames = useSpaceTaskNames(
+    useSpaceEnvironmentIds().filter((environmentId) => teamViewers.has(environmentId)),
+  );
+  const branchOwnersBySource = sidebarBranchOwnersBySource(threads);
   const ownerFilters = useUiStateStore((store) => store.sidebarOwnerFilterByEnvironmentId);
   const setOwnerFilters = useUiStateStore((store) => store.setSidebarOwnerFilters);
-  const ownerScopeItems = buildSidebarOwnerScopeItems({
-    teamViewers,
-    filters: ownerFilters,
-    environmentLabel: (environmentId) => environmentLabelById.get(environmentId),
-  });
+  const ownerScopeItems = buildSidebarOwnerScopeItems({ teamViewers, filters: ownerFilters });
   const ownerScopeItemByValue = new Map(ownerScopeItems.map((item) => [item.value, item]));
   const ownerFilterLabel = ownerScopeItems.find(
     (item) => item.selected && !item.value.endsWith("anyone"),
@@ -2040,7 +2007,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       pinnedThreads.length +
         activeThreads.length +
         workingThreads.length +
-        teamThreads.length +
         snoozedThreads.length +
         settledCount ===
         0
@@ -2057,10 +2023,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (workingThreads.length > 0) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
-    }
-    if (showTeamShelf) {
-      items.push({ kind: "marker", marker: "team-header" });
-      items.push(...rowsOf(visibleTeamThreads, "team"));
     }
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
@@ -2107,12 +2069,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragState === null && sidebarListItems.length + visibleDraftSessionCount > 0;
   // Cache on both fields so layout-key changes trigger the effect even when animate is unchanged.
   const listMotionPass = { layoutKey: listMotionLayoutKey, animate: listMotionAnimate };
-  const shelfExpansionKey = [
-    workingShelfExpanded,
-    teamShelfExpanded,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
-  ].join(":");
+  const shelfExpansionKey = [workingShelfExpanded, snoozedShelfExpanded, settledShelfExpanded].join(
+    ":",
+  );
   const previousShelfExpansionKeyRef = useRef(shelfExpansionKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the list motion controller to animate or not after each layout-affecting commit
   useLayoutEffect(() => {
@@ -2290,11 +2249,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         case "move-active":
-          if (
-            plan.follow &&
-            !(await run(setThreadFollowed(threadRef, true), "Failed to follow thread"))
-          )
-            return;
           if (plan.unpin && !(await run(unpinThread(threadRef), "Failed to unpin thread"))) return;
           if (
             plan.unsettle &&
@@ -2310,12 +2264,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               pinThread(threadRef, plan.orderKey === undefined ? {} : { orderKey: plan.orderKey }),
               "Failed to pin thread",
             ))
-          )
-            return;
-          // After the pin, so the row never lands in Active on its way to Pinned.
-          if (
-            plan.follow &&
-            !(await run(setThreadFollowed(threadRef, true), "Failed to follow thread"))
           )
             return;
           break;
@@ -2754,6 +2702,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const forkOffer = readForkToMachineOffer(threadRef);
         const moveOffer = continueLocally.offerFor(threadRef);
         const spaceActions = readSpaceThreadActions(threadRef.environmentId, threadRef.threadId);
+        const cloud = readCloudThreadMenu(threadRef);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2792,6 +2741,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   }
                 : {}),
               ...(machine ? { machine } : {}),
+              ...(cloud ? { cloud } : {}),
               ...(forkOffer ? { forkToMachine: forkOffer } : {}),
               ...(cloudOffer.kind === "hidden"
                 ? {}
@@ -2857,6 +2807,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "branch-off":
+            void router.navigate(branchOffRoute(threadRef));
+            return;
+          case "side-chat": {
+            const error = await openSideChatOn(threadRef);
+            if (error !== null) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Could not start a side chat",
+                  description: error,
+                }),
+              );
+              return;
+            }
+            void router.navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(threadRef),
+            });
+            return;
+          }
+          case "move-to-own-machine":
+            openMoveToOwnMachineDialog(threadRef);
+            return;
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(
@@ -3229,8 +3203,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     const ownerItem = ownerScopeItemByValue.get(item.value);
                     if (ownerItem) {
                       setOwnerFilters(ownerItem.filters);
-                      // Another member's threads are Team threads, so show them.
-                      if (ownerItem.member !== null) expandTeamShelf();
                     } else if (item.value === "all") {
                       setProjectScopeKeys([]);
                     } else if (
@@ -3352,9 +3324,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               data-selected={undefined}
                             >
                               <ProjectScopeRowIcon isSelected={ownerItem.selected}>
-                                {ownerItem.member ? (
-                                  <MemberAvatar member={ownerItem.member} className="size-4" />
-                                ) : ownerItem.value.endsWith("anyone") ? (
+                                {ownerItem.value.endsWith("anyone") ? (
                                   <UsersIcon className="size-4 shrink-0" />
                                 ) : (
                                   <UserIcon className="size-4 shrink-0" />
@@ -3601,6 +3571,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                         const isCard =
                           section === "active" || section === "pinned" || section === "working";
+                        const lead = teamViewers.has(thread.environmentId)
+                          ? sidebarThreadLead(thread.source, spaceTaskNames)
+                          : null;
                         const rowVariant = folderRow
                           ? folderRowsMultiline
                             ? "folder-multiline"
@@ -3624,7 +3597,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             navigationParent={
                               folderRow ??
                               (section === "working" ||
-                              section === "team" ||
                               section === "snoozed" ||
                               section === "settled"
                                 ? `shelf:${section}`
@@ -3643,6 +3615,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             isPinned={thread.pinnedAt != null}
                             owner={ownerOfThread(thread)}
                             sharedWith={sharedWithOf(thread)}
+                            leadGlyph={lead?.glyph ?? null}
+                            leadLabel={lead?.label ?? null}
+                            branchOwnerIds={branchOwnersBySource.get(threadKey) ?? null}
+                            branchOffers={(thread.source.branchLink?.openOffers ?? 0) > 0}
                             viewers={threadViewers.get(threadKey)}
                             dropVerb={
                               dragState?.activeKey === threadKey
@@ -3814,30 +3790,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             break;
-                          case "team-header":
-                            items.push(
-                              <SidebarSectionHeader
-                                key="team-shelf-header"
-                                marker="team-header"
-                                className={cn(workingThreads.length === 0 && "mt-auto")}
-                                label="Team"
-                                count={teamThreads.length}
-                                emptyLabel={TEAM_SHELF_EMPTY_LABEL}
-                                toggle={{
-                                  expanded: teamShelfExpanded,
-                                  onToggle: toggleTeamShelf,
-                                }}
-                              />,
-                            );
-                            break;
                           case "snoozed-header":
                             items.push(
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
-                                className={cn(
-                                  workingThreads.length === 0 && !showTeamShelf && "mt-auto",
-                                )}
+                                className={cn(workingThreads.length === 0 && "mt-auto")}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
                                 toggle={{
@@ -3853,9 +3811,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="settled-shelf-header"
                                 marker="settled-header"
                                 className={cn(
-                                  workingThreads.length + snoozedThreads.length === 0 &&
-                                    !showTeamShelf &&
-                                    "mt-auto",
+                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
                                 )}
                                 label="Settled"
                                 count={settledCount}
@@ -3924,7 +3880,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +
-            teamThreads.length +
             snoozedThreads.length +
             settledCount ===
             0 ? (

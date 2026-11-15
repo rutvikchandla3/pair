@@ -96,6 +96,10 @@ vi.mock("../state/threads", () => ({
     ].map((action) => [action, action]),
   ),
 }));
+vi.mock("../components/branchOff/machineRules", () => ({
+  sourceKeepsMachinePrompt: () => null,
+  confirmMachinePrompt: vi.fn(),
+}));
 vi.mock("../state/vcs", () => ({
   vcsEnvironment: { removeWorktree: "removeWorktree", refreshStatus: "refreshStatus" },
 }));

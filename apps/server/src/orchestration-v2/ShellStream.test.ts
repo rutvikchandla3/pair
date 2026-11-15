@@ -131,6 +131,37 @@ describe("sandbox shell events", () => {
   });
 });
 
+describe("branch off shell events", () => {
+  it("re-sends both the source and the branch for an offer or a lineage change", () => {
+    const events = [
+      {
+        sequence: 1,
+        event: {
+          threadId: "source",
+          type: "thread.offer.updated",
+          payload: { sourceThreadId: "source", branchThreadId: "branch" },
+        },
+      },
+      {
+        sequence: 2,
+        event: {
+          threadId: "branch",
+          type: "thread.branch-lineage.updated",
+          payload: { sourceThreadId: "source", branchThreadId: "branch" },
+        },
+      },
+    ].map((stored) => toShellApplicationEvent(stored as ApplicationStoredEvent));
+    const expanded = expandSandboxShellEvents(events, new Map());
+    expect(expanded.map((stored) => ("event" in stored ? stored.event.threadId : null))).toEqual([
+      "source",
+      "branch",
+      "branch",
+      "source",
+    ]);
+    expect(coalesceShellApplicationEvents(expanded).length).toBe(2);
+  });
+});
+
 describe("shell events for a member on a cloud-only server", () => {
   const alice = MemberId.make("member-alice");
   const bob = MemberId.make("member-bob");

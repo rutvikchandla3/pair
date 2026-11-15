@@ -152,6 +152,7 @@ export function withActor(
     case "thread.model-selection.set":
     case "provider.switch":
     case "thread.runtime-mode.set":
+    case "thread.interaction-mode.set":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "sandbox.wake":
@@ -179,6 +180,7 @@ function existingThreadIdsForCommand(
     case "thread.mark-unread":
       return [];
     case "thread.fork":
+    case "thread.branch-off":
       return [command.sourceThreadId];
     case "thread.merge_back":
       return command.sourceThreadId === command.targetThreadId

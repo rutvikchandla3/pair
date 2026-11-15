@@ -203,6 +203,7 @@ import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
+import { ThreadLineageComposerRows, ThreadLineagePill } from "../lineage/ThreadLineageChrome";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
@@ -1507,6 +1508,14 @@ function ThreadDetailBody(
         />
       ) : null}
 
+      {showContent && !props.draftMode ? (
+        <ThreadLineagePill
+          environmentId={props.environmentId}
+          threadId={props.selectedThread.id}
+          top={navigationHeaderHeight + 8}
+        />
+      ) : null}
+
       {showContent ? (
         <KeyboardStickyView
           enabled={keyboardStickyEnabled}
@@ -1647,6 +1656,9 @@ function ThreadDetailBody(
                         serverConfig={props.serverConfig}
                         onStartNewMachine={() => composerEditorRef.current?.focus()}
                       />
+                    )}
+                    {props.draftMode ? null : (
+                      <ThreadLineageComposerRows thread={props.selectedThread} />
                     )}
                     {props.canOperateThread ? (
                       <ManagedRuntimeModeNotice

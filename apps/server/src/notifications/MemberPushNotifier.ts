@@ -2,8 +2,11 @@ import {
   isListedThreadLineage,
   type MemberId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Sandbox,
   type OrchestrationV2ThreadShell,
   type SandboxAccessChange,
+  type SandboxId,
+  type SandboxState,
   type Space,
   type SpaceId,
   type SpaceRoomEntry,
@@ -33,6 +36,7 @@ import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { holderOf, isMemberThreadEvent } from "../orchestration-v2/MemberThreadState.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as TeamImageService from "../sandbox/image/TeamImageService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -94,6 +98,7 @@ const spaceTaskDeepLink = (environmentId: string, spaceId: SpaceId, taskId: Spac
 
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const team = yield* TeamState.TeamState;
   const presence = yield* Presence.Presence;
   const devices = yield* MemberPushDevices.MemberPushDevices;
@@ -112,6 +117,8 @@ export const make = Effect.gen(function* () {
   // Each thread's holder as last seen, so a metadata update can tell an Assign apart.
   const holders = new Map<ThreadId, MemberId>();
   const spaces = new Map<SpaceId, Space>();
+  // Each machine's state as last seen, so only the move into destroyed counts as a discard.
+  const sandboxStates = new Map<SandboxId, SandboxState>();
   // Every task line commits after its `space.task.updated`, so this holds the task it names.
   const tasks = new Map<SpaceTaskId, SpaceTask>();
   const seeded = yield* Ref.make(false);
@@ -243,6 +250,44 @@ export const make = Effect.gen(function* () {
           thread: shell.value,
         };
       }
+      case "thread.offer.updated": {
+        const offer = event.payload;
+        if (offer.state === "withdrawn" || (offer.state === "open" && offer.armedAt !== null)) {
+          return null;
+        }
+        if (!firstSighting(`offer:${offer.id}:${offer.state}`)) return null;
+        if (offer.state === "open") {
+          const source = yield* readShell(offer.sourceThreadId);
+          if (Option.isNone(source) || source.value.archivedAt !== null) return null;
+          return {
+            kind: "offer",
+            actorId: offer.senderId,
+            prompterId: null,
+            ownerId: holderOf(source.value, team.ownerId),
+            threadId: source.value.id,
+            threadTitle: source.value.title,
+            thread: source.value,
+          };
+        }
+        // An outcome is the sender's news, so it opens their branch.
+        const branch = yield* readShell(offer.branchThreadId);
+        if (Option.isNone(branch)) return null;
+        return {
+          kind:
+            offer.state === "applied"
+              ? "offer-applied"
+              : offer.state === "declined"
+                ? "offer-declined"
+                : "offer-returned",
+          actorId: offer.state === "returned" ? null : offer.decidedBy,
+          prompterId: null,
+          ownerId: holderOf(branch.value, team.ownerId),
+          senderId: offer.senderId,
+          threadId: branch.value.id,
+          threadTitle: branch.value.title,
+          thread: branch.value,
+        };
+      }
       case "thread.created":
       case "thread.metadata-updated":
       case "thread.archived":
@@ -358,6 +403,40 @@ export const make = Effect.gen(function* () {
       body: notification.threadTitle,
       deepLink,
     });
+  });
+
+  /** A discarded machine tells the holders of its other threads; its owner discarded it. */
+  const sendDiscarded = Effect.fn("MemberPushNotifier.sendDiscarded")(function* (
+    sandbox: OrchestrationV2Sandbox,
+  ) {
+    const previous = sandboxStates.get(sandbox.id);
+    sandboxStates.set(sandbox.id, sandbox.state);
+    if (sandbox.state !== "destroyed" || previous === "destroyed") return;
+    if (!firstSighting(`discard:${sandbox.id}:${sandbox.generation}`)) return;
+    const rows = yield* projections
+      .listSandboxThreads(sandbox.id)
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not read a machine's threads for push.", { cause }).pipe(
+            Effect.as([]),
+          ),
+        ),
+      );
+    for (const row of rows) {
+      if (row.threadId === sandbox.ownerThreadId || row.archived) continue;
+      const shell = yield* readShell(row.threadId);
+      if (Option.isNone(shell) || shell.value.archivedAt !== null) continue;
+      if (shell.value.deletedAt !== null) continue;
+      yield* send({
+        kind: "machine-discarded",
+        actorId: sandbox.ownerMemberId ?? team.ownerId,
+        prompterId: null,
+        ownerId: holderOf(shell.value, team.ownerId),
+        threadId: shell.value.id,
+        threadTitle: shell.value.title,
+        thread: shell.value,
+      });
+    }
   });
 
   /** Each member an access change adds hears of it once; a removal or a team audience is quiet. */
@@ -503,6 +582,10 @@ export const make = Effect.gen(function* () {
       spaces.set(event.payload.id, event.payload);
       return;
     }
+    if (event.type === "sandbox.updated") {
+      yield* sendDiscarded(event.payload);
+      return;
+    }
     if (event.type === "space.task.updated") {
       yield* sendRemind(event.payload);
       return;
@@ -547,4 +630,6 @@ export const make = Effect.gen(function* () {
   return MemberPushNotifier.of({ drain: worker.drain, start });
 });
 
-export const layer = Layer.effect(MemberPushNotifier, make);
+export const layer = Layer.effect(MemberPushNotifier, make).pipe(
+  Layer.provide(ProjectionStore.layer),
+);

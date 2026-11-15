@@ -120,6 +120,11 @@ export const layer: Layer.Layer<
             ordinalWithinScope: baselineOrdinalWithinScope,
             forceMissing: sideChat,
           });
+      // Only a thread in a lineage can have a step's turn base; others skip the ref lookup.
+      const inLineage =
+        !sideChat &&
+        ((yield* projections.getBranchLineage(input.threadId)) !== null ||
+          (yield* projections.listOffersForSource(input.threadId, 1)).length > 0);
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
@@ -128,6 +133,7 @@ export const layer: Layer.Layer<
         appRunOrdinal: run.ordinal,
         capturedAt,
         forceMissing: sideChat,
+        turnBase: inLineage,
       });
       // Cloud threads only; bounded and never failing, so a local capture is unchanged.
       yield* mirrorHooks.afterCapture({

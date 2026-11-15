@@ -144,6 +144,9 @@ function shouldPublishAgentAwarenessEvent(event: OrchestrationV2DomainEvent): bo
     case "space.action.updated":
     case "space.notes.changed":
     case "space.task.updated":
+    case "thread.branch-lineage.updated":
+    case "thread.offer.updated":
+    case "thread.lineage-step.updated":
       return false;
   }
 }

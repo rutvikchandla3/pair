@@ -135,6 +135,12 @@ export const snapshotNamers = (
   return namers;
 };
 
+/**
+ * Set beside a thread's branch when its first checkout on a machine comes from the mirror (Branch
+ * off on a new machine, Move to my own machine), so the checkout reads as a start, not a rebuild.
+ */
+export const sandboxSeedRef = (threadId: ThreadId) => `${sandboxThreadRefPrefix(threadId)}seed`;
+
 /** The JSON `SandboxHeadContext` PR discovery reads while the machine sleeps. */
 export const sandboxHeadRef = (threadId: ThreadId) => `${sandboxThreadRefPrefix(threadId)}head`;
 

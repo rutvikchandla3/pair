@@ -477,6 +477,8 @@ export type ShellApplicationEvent =
          * viewer's reach: a thread the viewer can no longer open is removed.
          */
         readonly accessChanged?: true;
+        /** Branch off: the other thread whose `branchLink` the event changes. */
+        readonly alsoThreadId?: ThreadId;
       };
     };
 
@@ -527,6 +529,9 @@ export function mayShowShellEvent(stored: ApplicationStoredEvent, access: Viewer
   const { event } = stored;
   if (event.type === "sandbox.access-changed") return access.affectedBy(event.payload);
   if (event.type === "sandbox.updated") return access.allowsSandbox(event.payload.id);
+  const lineageOther = lineageOtherThreadId(event);
+  if (lineageOther !== undefined)
+    return access.mayAllowThreadId(event.threadId) || access.mayAllowThreadId(lineageOther);
   if (isMembershipChangeFor(event, access)) return true;
   // Names this viewer (`isOtherMembersShellEvent` drops the rest), who knew the thread: an owner
   // change demotes the old owner this way, and the read removes a thread they lost.
@@ -548,6 +553,18 @@ function isMembershipChangeFor(
   );
 }
 
+/** A lineage event changes two shells: the source's offer count and the branch's chip. */
+function lineageOtherThreadId(event: OrchestrationV2StoredEvent["event"]): ThreadId | undefined {
+  switch (event.type) {
+    case "thread.offer.updated":
+      return event.payload.branchThreadId;
+    case "thread.branch-lineage.updated":
+      return event.payload.sourceThreadId;
+    default:
+      return undefined;
+  }
+}
+
 /** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
 export function toShellApplicationEvent(
   stored: ApplicationStoredEvent,
@@ -562,6 +579,9 @@ export function toShellApplicationEvent(
     };
   }
   const { event } = stored;
+  const alsoThreadId = lineageOtherThreadId(event);
+  if (alsoThreadId !== undefined)
+    return { sequence: stored.sequence, event: { threadId: event.threadId, alsoThreadId } };
   return {
     sequence: stored.sequence,
     event:
@@ -590,7 +610,15 @@ export function expandSandboxShellEvents(
 ): ReadonlyArray<ShellApplicationEvent> {
   return events.flatMap((stored): ReadonlyArray<ShellApplicationEvent> => {
     if ("aggregateKind" in stored) return [stored];
-    const { spaceId } = stored.event;
+    const { spaceId, alsoThreadId } = stored.event;
+    if (alsoThreadId !== undefined) {
+      return [
+        stored,
+        ...(alsoThreadId === stored.event.threadId
+          ? []
+          : [{ sequence: stored.sequence, event: { threadId: alsoThreadId } }]),
+      ];
+    }
     if (spaceId !== undefined) {
       return [
         stored,

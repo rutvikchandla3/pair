@@ -1,4 +1,4 @@
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 import type {
   MemberId,
   OrchestrationV2AppThread,
@@ -51,24 +51,72 @@ export function personalStateOf(row: PersonalStateCarrier): ThreadMemberState {
     lastSnoozeWakeAt: isShell(row) ? null : (row.lastSnoozeWakeAt ?? null),
     opens: row.opens ?? null,
     followedAt: row.followedAt ?? null,
+    ...(isShell(row) || row.followSource == null ? {} : { followSource: row.followSource }),
   };
 }
 
-/** `followedAt` is written only when set, so holder rows and solo payloads never carry the key. */
+/**
+ * `followedAt` and `followSource` are written only when set, so holder rows and solo payloads
+ * never carry the keys. Shells never carry `followSource`.
+ */
 export function withPersonalState<T extends PersonalStateCarrier>(
   row: T,
   state: ThreadMemberState,
 ): T {
-  const { lastSnoozeWakeAt, followedAt, ...shared } = state;
+  const { lastSnoozeWakeAt, followedAt, followSource, ...shared } = state;
   const { followedAt: _previous, ...rest } = row;
   const next = { ...rest, ...shared, ...(followedAt === null ? {} : { followedAt }) };
-  return (isShell(row) ? next : { ...next, lastSnoozeWakeAt }) as T;
+  if (isShell(row)) return next as T;
+  const { followSource: _previousSource, ...thread } = next as OrchestrationV2AppThread;
+  return {
+    ...thread,
+    lastSnoozeWakeAt,
+    ...(followSource == null ? {} : { followSource }),
+  } as T;
 }
 
 /** Following baselines the visit watermark, so the next completion reads as unread. */
 export function followedView<T extends PersonalStateCarrier>(view: T, now: DateTime.Utc): T {
   if (view.followedAt != null) return view;
   return { ...view, followedAt: now, lastVisitedAt: view.lastVisitedAt ?? now };
+}
+
+/** Sending follows, marked to end on its own; an existing follow keeps its kind. */
+export function promptFollowedView(
+  view: OrchestrationV2AppThread,
+  now: DateTime.Utc,
+): OrchestrationV2AppThread {
+  if (view.followedAt != null) return view;
+  return { ...followedView(view, now), followSource: "prompt" };
+}
+
+/** An explicit Follow or Pin keeps a prompt's follow until the member undoes it. */
+export function permanentFollowView(view: OrchestrationV2AppThread): OrchestrationV2AppThread {
+  if (view.followSource == null) return view;
+  const { followSource: _source, ...rest } = view;
+  return rest;
+}
+
+/**
+ * A prompt's follow ends once the member's latest run on the thread has ended and they have read
+ * the thread since. `latestRun` is null when they have no run there.
+ */
+export function promptFollowEnds(
+  view: Pick<OrchestrationV2AppThread, "followedAt" | "followSource" | "lastVisitedAt">,
+  latestRun: { readonly completedAt: DateTime.Utc | null } | null,
+): boolean {
+  if (view.followedAt == null || view.followSource !== "prompt") return false;
+  if (latestRun === null) return true;
+  return (
+    latestRun.completedAt !== null &&
+    view.lastVisitedAt != null &&
+    DateTime.toEpochMillis(view.lastVisitedAt) >= DateTime.toEpochMillis(latestRun.completedAt)
+  );
+}
+
+export function unfollowedView(view: OrchestrationV2AppThread): OrchestrationV2AppThread {
+  const { followSource: _source, ...rest } = view;
+  return { ...rest, followedAt: null };
 }
 
 export function holderOf(
@@ -103,15 +151,27 @@ export function hasPersonalState(state: ThreadMemberState): boolean {
   );
 }
 
+/** Settling also ends a follow that prompting added. */
 export function clearedForSettle(state: ThreadMemberState): ThreadMemberState {
+  const { followSource, ...rest } = state;
   return {
-    ...state,
+    ...rest,
     pinnedAt: null,
     pinOrderKey: null,
     activeOrderKey: null,
     snoozedUntil: null,
     snoozedAt: null,
+    ...(followSource === "prompt" ? { followedAt: null } : {}),
   };
+}
+
+function permanentState(state: ThreadMemberState): ThreadMemberState {
+  const { followSource: _source, ...rest } = state;
+  return rest;
+}
+
+export function changesOnSettle(state: ThreadMemberState): boolean {
+  return hasPersonalState(state) || state.followSource === "prompt";
 }
 
 /**
@@ -129,8 +189,14 @@ export function transferHolder<T extends PersonalStateCarrier>(
   readonly demoted: { readonly memberId: MemberId; readonly state: ThreadMemberState };
 } {
   return {
-    row: withPersonalState(row, { ...(newHolderState ?? EMPTY_MEMBER_STATE), followedAt: null }),
-    demoted: { memberId: oldHolderId, state: { ...personalStateOf(row), followedAt: now } },
+    row: withPersonalState(row, {
+      ...permanentState(newHolderState ?? EMPTY_MEMBER_STATE),
+      followedAt: null,
+    }),
+    demoted: {
+      memberId: oldHolderId,
+      state: { ...permanentState(personalStateOf(row)), followedAt: now },
+    },
   };
 }
 

@@ -40,7 +40,6 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
-  EyeIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -127,6 +126,8 @@ import type { PresentMember } from "@t3tools/client-runtime/state/presence";
 import { MemberAvatar } from "../team/MemberAvatar";
 import { MemberAvatarStack } from "../team/MemberAvatarStack";
 import { MiddleTruncate } from "../ui/middle-truncate";
+import type { SidebarThreadLead } from "./SidebarSpaces.logic";
+import { SidebarThreadBranches, SidebarThreadLeadGlyph } from "./SidebarThreadLineage";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
@@ -551,12 +552,6 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
       Wake
     </>
   ),
-  follow: (
-    <>
-      <EyeIcon aria-hidden className="size-3" />
-      Follow
-    </>
-  ),
 };
 
 const TOP_STATUS_ICONS = {
@@ -592,6 +587,13 @@ type SidebarThreadRowProps = {
   viewers?: ReadonlyArray<PresentMember> | undefined;
   /** The viewer's own shared cloud thread: who else can open it. */
   sharedWith?: string | null | undefined;
+  /** Team mode: a branch's or a space task thread's glyph before the title, and its tooltip. */
+  leadGlyph?: SidebarThreadLead["glyph"] | null | undefined;
+  leadLabel?: string | null | undefined;
+  /** Who branched this thread, member ids joined with commas; null when no one has. */
+  branchOwnerIds?: string | null | undefined;
+  /** Offers to this thread wait on its owner. */
+  branchOffers?: boolean | undefined;
   sortable?: SortableThreadRowBag | undefined;
   dropVerb: SidebarDropVerb | null;
   dragOverPinned: boolean;
@@ -1265,6 +1267,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <TooltipPopup side="top">{props.sharedWith}</TooltipPopup>
       </Tooltip>
     );
+  const leadIndicator =
+    props.leadGlyph == null || props.leadLabel == null ? null : (
+      <SidebarThreadLeadGlyph glyph={props.leadGlyph} label={props.leadLabel} />
+    );
+  const branchesIndicator =
+    props.branchOwnerIds == null ? null : (
+      <SidebarThreadBranches
+        environmentId={thread.environmentId}
+        ownerIds={props.branchOwnerIds}
+        offers={props.branchOffers === true}
+      />
+    );
   const viewersStack =
     props.viewers === undefined ? null : (
       <MemberAvatarStack
@@ -1343,6 +1357,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </span>
               )}
               {draftIndicator}
+              {leadIndicator}
               {title}
               {multiline ? titleLineIcons : null}
               {pinIndicator}
@@ -1354,6 +1369,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : null}
               {multiline ? null : cloudDriverIcon}
               {sharedIndicator}
+              {branchesIndicator}
               {ownerAvatar}
               {viewersStack}
               {sortable?.isDragging ? (
@@ -1544,6 +1560,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <span className="flex-1" />
               )}
               {sharedIndicator}
+              {branchesIndicator}
               {ownerAvatar}
               {viewersStack}
               {sortable?.isDragging ? (
@@ -1675,6 +1692,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              {leadIndicator}
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">

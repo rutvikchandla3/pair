@@ -181,9 +181,27 @@ it("attributes client commands to the session's member, never to a member the cl
       ),
     ).toEqual({ type, commandId, threadId, sandboxId, actorId: alice });
   }
+  // A side chat's mode is read-only for anyone but its holder, so intake needs who set it.
   expect(
     ThreadManagementService.withActor(
-      { type: "thread.interaction-mode.set", commandId, threadId, interactionMode: "plan" },
+      {
+        type: "thread.interaction-mode.set",
+        commandId,
+        threadId,
+        interactionMode: "plan",
+        actorId: forged,
+      },
+      alice,
+    ),
+  ).toHaveProperty("actorId", alice);
+  expect(
+    ThreadManagementService.withActor(
+      {
+        type: "provider-session.detach",
+        commandId,
+        threadId,
+        providerSessionId: ProviderSessionId.make("session"),
+      },
       alice,
     ),
   ).not.toHaveProperty("actorId");

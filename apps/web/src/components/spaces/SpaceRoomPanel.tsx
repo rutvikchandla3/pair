@@ -26,7 +26,7 @@ import {
   PanelRightCloseIcon,
   PlusIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { spaceAgentEnvironment } from "../../state/spaceAgent";
@@ -119,13 +119,15 @@ export function SpaceOverview(props: {
 }
 
 /** Line 1: status, title, time; line 2: owner and live activity. 1–5 set the status. */
-function SpaceOverviewTaskRow(props: {
+export function SpaceOverviewTaskRow(props: {
   readonly environmentId: EnvironmentId;
   readonly space: Space;
   readonly row: SpaceOverviewRow<OrchestrationV2ThreadShell>;
   readonly viewer: SpaceViewer;
   readonly canSetStatus: boolean;
   readonly selected: boolean;
+  /** Before the time on line 1: My tasks names the space here. */
+  readonly trailing?: ReactNode;
 }) {
   const { row, viewer } = props;
   const members = useTeamMembers(props.environmentId);
@@ -172,6 +174,7 @@ function SpaceOverviewTaskRow(props: {
         >
           {row.task.title}
         </Link>
+        {props.trailing}
         <span
           className={cn(
             "shrink-0 text-muted-foreground text-xs tabular-nums",

@@ -38,6 +38,7 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 import type {
   ChatAttachment,
+  LineageNotice,
   MemberId,
   MessageId,
   OrchestrationV2Actor,
@@ -395,6 +396,13 @@ export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): bool
   return (
     entry.activities.length === 1 && entry.activities[0]?.projectedItem.item.type === "link_request"
   );
+}
+
+/** A Branch off row (`system_notice` with `lineage`); null for every other group. */
+export function lineageNoticeOfActivityGroup(entry: ThreadFeedActivityGroup): LineageNotice | null {
+  if (entry.activities.length !== 1) return null;
+  const item = entry.activities[0]?.projectedItem.item;
+  return item?.type === "system_notice" ? (item.lineage ?? null) : null;
 }
 
 function isUserInputActivityGroup(entry: ThreadFeedActivityGroup): boolean {

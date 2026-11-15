@@ -21,8 +21,10 @@ import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { SpaceDialogHost } from "../components/spaces/SpaceDialogs";
 import { AssignThreadDialogHost } from "../components/team/AssignThreadDialog";
 import { ShareThreadDialogHost } from "../components/team/ShareThreadDialog";
+import { LineageDialogHost } from "../components/lineage/LineageDialogs";
 import { ContinueInCloudDialogHost } from "../components/sandbox/ContinueInCloudDialog";
 import { ForkToMachineDialogHost } from "../components/sandbox/ForkToMachineDialog";
+import { MoveToOwnMachineDialogHost } from "../components/branchOff/MoveToOwnMachineDialog";
 import { PresenceWatch } from "../components/team/PresenceWatch";
 import { ViewerLeaseWatch } from "../components/sandbox/ViewerLeaseWatch";
 import { TeamMembersWatch } from "../components/team/TeamMembersWatch";
@@ -227,8 +229,10 @@ function RootRouteBranch() {
         <ViewerLeaseWatch />
         <AssignThreadDialogHost />
         <ShareThreadDialogHost />
+        <LineageDialogHost />
         <ContinueInCloudDialogHost />
         <ForkToMachineDialogHost />
+        <MoveToOwnMachineDialogHost />
         <ProjectCloneToastCoordinator />
         <TeamImageBuildToasts />
         <AddProjectToMachineDialogHost />

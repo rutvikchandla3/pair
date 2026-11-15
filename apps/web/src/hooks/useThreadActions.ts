@@ -34,6 +34,10 @@ import { projectEnvironment } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import {
+  confirmMachinePrompt,
+  sourceKeepsMachinePrompt,
+} from "../components/branchOff/machineRules";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
@@ -403,6 +407,10 @@ export function useThreadActions() {
       );
     }
 
+    const keepsMachine = sourceKeepsMachinePrompt(threadRef, "Archive");
+    if (keepsMachine !== null && !(await confirmMachinePrompt(keepsMachine))) {
+      return AsyncResult.failure(Cause.interrupt());
+    }
     const requestingRouteHref = router.state.location.href;
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToDraft =
@@ -777,6 +785,10 @@ export function useThreadActions() {
           }),
         ),
       );
+    }
+    const keepsMachine = sourceKeepsMachinePrompt(target, "Settle");
+    if (keepsMachine !== null && !(await confirmMachinePrompt(keepsMachine))) {
+      return AsyncResult.failure(Cause.interrupt());
     }
     const resolved = resolveThreadTarget(target);
     // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)

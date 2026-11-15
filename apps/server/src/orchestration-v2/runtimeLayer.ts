@@ -146,6 +146,8 @@ const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
 const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
   Layer.provide(IdAllocator.layer),
 );
+/** The same instance the runtime captures with, so its per-workspace lock is shared. */
+export const layerCheckpointService = layerCheckpointServiceProvided;
 const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
   Layer.provide(IdAllocator.layer),
 );

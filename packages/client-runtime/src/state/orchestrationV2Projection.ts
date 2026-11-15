@@ -428,6 +428,10 @@ export function applyOrchestrationV2ProjectionEvent(
     case "space.task.updated":
     case "space.action.updated":
     case "space.notes.changed":
+    // Lineage reaches clients through the shell's `branchLink` and `lineage.read`.
+    case "thread.branch-lineage.updated":
+    case "thread.offer.updated":
+    case "thread.lineage-step.updated":
       return projection;
   }
 }

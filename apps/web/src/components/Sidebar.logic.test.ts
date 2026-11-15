@@ -1442,17 +1442,17 @@ describe("Working shelf (beta)", () => {
   });
 });
 
-describe("Team shelf", () => {
+describe("team-mode sections", () => {
   const me = MemberId.make("member-me");
   const bob = MemberId.make("member-bob");
-  const member = (id: MemberId, name: string, removedAt: string | null = null): TeamMember => ({
+  const member = (id: MemberId, name: string): TeamMember => ({
     id,
     name,
     role: "member",
     color: "#888",
     isOwner: false,
     createdAt: "2026-01-01T00:00:00.000Z",
-    removedAt,
+    removedAt: null,
   });
   const viewer: TeamViewer = { memberId: me, ownerId: bob, members: new Map() };
   const sectionOf = (
@@ -1482,58 +1482,54 @@ describe("Team shelf", () => {
   };
 
   it.each([
-    ["Anyone keeps everything", undefined, ["active", "team", "settled", "snoozed"]],
-    ["Me keeps only my own threads, and my Settled", "me", ["active", null, "settled", null]],
-    ["a member keeps only theirs, and my Settled", bob, [null, "team", "settled", "snoozed"]],
-    ["a purged member reads as Anyone", "member-gone", ["active", "team", "settled", "snoozed"]],
-  ] as const)("owner filter: %s", (_name, filter, expected) => {
-    const team = { ...viewer, members: new Map([[bob, member(bob, "Bob")]]) };
-    expect(
-      [
-        { ownerId: me },
-        { ownerId: bob },
-        { ownerId: bob, followedAt: "t", settled: true },
-        { ownerId: bob, snoozed: true },
-      ].map((thread) => sectionOf(thread, team, filter)),
-    ).toEqual(expected);
-  });
+    ["Anyone", undefined, ["active", null, "active", "pinned", "settled", "snoozed"]],
+    ["Me keeps only my own threads", "me", ["active", null, null, null, "settled", null]],
+    // Older clients stored a member id; it reads as Anyone now that members have no row.
+    [
+      "a stored member id reads as Anyone",
+      bob,
+      ["active", null, "active", "pinned", "settled", "snoozed"],
+    ],
+  ] as const)(
+    "a teammate's thread is a row only once pinned, followed or snoozed: %s",
+    (_name, filter, expected) => {
+      expect(
+        [
+          { ownerId: me },
+          { ownerId: bob },
+          { ownerId: bob, followedAt: "t" },
+          { ownerId: bob, pinnedAt: "t" },
+          { ownerId: bob, followedAt: "t", settled: true },
+          { ownerId: bob, snoozed: true },
+        ].map((thread) => sectionOf(thread, viewer, filter)),
+      ).toEqual(expected);
+    },
+  );
 
-  it("offers owner rows only in team mode, one per other member", () => {
+  it("offers Anyone and Me owner rows only in team mode", () => {
     const viewers = new Map([
       [
         localEnvironmentId,
         {
           ...viewer,
           members: new Map(
-            [
-              member(me, "Me"),
-              member(bob, "Bob"),
-              member(MemberId.make("member-gone"), "Gone", "2026-02-01T00:00:00.000Z"),
-            ].map((entry) => [entry.id, entry]),
+            [member(me, "Me"), member(bob, "Bob")].map((entry) => [entry.id, entry]),
           ),
         },
       ],
     ]);
     const rows = (filters: Record<string, string>) =>
-      buildSidebarOwnerScopeItems({
-        teamViewers: viewers,
-        filters,
-        environmentLabel: () => "Laptop",
-      }).map((item) => [item.label, item.selected, item.filters]);
-    expect(
-      buildSidebarOwnerScopeItems({
-        teamViewers: new Map(),
-        filters: {},
-        environmentLabel: () => undefined,
-      }),
-    ).toEqual([]);
+      buildSidebarOwnerScopeItems({ teamViewers: viewers, filters }).map((item) => [
+        item.label,
+        item.selected,
+        item.filters,
+      ]);
+    expect(buildSidebarOwnerScopeItems({ teamViewers: new Map(), filters: {} })).toEqual([]);
     expect(rows({})).toEqual([
       ["Owner: Anyone", true, {}],
       ["Owner: Me", false, { [localEnvironmentId]: "me" }],
-      ["Owner: Bob", false, { [localEnvironmentId]: bob }],
     ]);
-    expect(rows({ [localEnvironmentId]: bob }).map(([, selected]) => selected)).toEqual([
-      false,
+    expect(rows({ [localEnvironmentId]: "me" }).map(([, selected]) => selected)).toEqual([
       false,
       true,
     ]);
@@ -1556,61 +1552,6 @@ describe("Team shelf", () => {
       );
     }
     expect(sectionOf({ ownerId: bob }, null)).toBe("active");
-  });
-
-  it("rejects drops into Team, and follows a Team row dropped into Active or Pinned", () => {
-    const row = (key: string, section: SidebarSection): SidebarListItem => ({
-      kind: "thread",
-      key,
-      section,
-    });
-    const marker = (name: SidebarListMarker): SidebarListItem => ({ kind: "marker", marker: name });
-    const items: readonly SidebarListItem[] = [
-      marker("pinned-header"),
-      row("p1", "pinned"),
-      marker("pinned-divider"),
-      row("a1", "active"),
-      marker("team-header"),
-      row("t1", "team"),
-      marker("settled-header"),
-      row("s1", "settled"),
-    ];
-    expect(resolveSidebarDropTarget(items, "a1", "t1")).toBeNull();
-    expect(resolveSidebarDropVerb("active", "team")).toBeNull();
-    expect(resolveSidebarDropVerb("team", "pinned")).toBe("follow");
-    expect(resolveSidebarDropVerb("team", "active")).toBe("follow");
-    expect(resolveSidebarDropVerb("team", "settled")).toBeNull();
-    const plan = (overKey: string, activeTimeOrdered = false) =>
-      planSidebarThreadDrop({
-        activeKey: "t1",
-        activeSection: "team",
-        target: resolveSidebarDropTarget(items, "t1", overKey)!,
-        pinnedOrder: ["p1"],
-        pinnedKeysById: new Map([["p1", "m"]]),
-        activeOrder: ["a1"],
-        activeKeysById: new Map(),
-        activeTimeOrdered,
-      });
-    expect(resolveSidebarDropTarget(items, "t1", "a1")?.activeOrder).toEqual(["t1", "a1"]);
-    expect(plan("a1")).toMatchObject({
-      kind: "move-active",
-      order: ["t1", "a1"],
-      unpin: false,
-      unsettle: false,
-      unsnooze: false,
-      follow: true,
-    });
-    expect(plan("a1", true)).toEqual({
-      kind: "move-active",
-      order: null,
-      assignments: [],
-      unpin: false,
-      unsettle: false,
-      unsnooze: false,
-      follow: true,
-    });
-    expect(plan("p1")).toMatchObject({ kind: "pin", order: ["t1", "p1"], follow: true });
-    expect(plan("s1")).toEqual({ kind: "none" });
   });
 });
 

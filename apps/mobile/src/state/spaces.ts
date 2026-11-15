@@ -43,6 +43,8 @@ const spaceShells = createSpaceShellAtoms({
 });
 
 export const spaceEnvironment = createSpaceEnvironmentAtoms(connectionAtomRuntime, spaceShells);
+/** Moves on every space or task write here; My tasks' closed tasks refetch on it. */
+export const spaceTasksKeyAtom = spaceShells.roomsKeyAtom;
 
 export const teamClaudeKeyEnvironment = createTeamClaudeKeyEnvironmentAtoms(connectionAtomRuntime);
 export const spaceAgentEnvironment = createSpaceAgentEnvironmentAtoms(connectionAtomRuntime);
@@ -64,6 +66,7 @@ export function useSpaceList(environmentId: EnvironmentId | null) {
   return {
     spaces: query.data?.spaces ?? EMPTY_SPACES,
     tasks: query.data?.tasks ?? EMPTY_TASKS,
+    loaded: query.data !== null,
     refresh: query.refresh,
   };
 }

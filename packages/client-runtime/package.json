@@ -331,6 +331,18 @@
       "types": "./src/state/spaces.ts",
       "default": "./src/state/spaces.ts"
     },
+    "./state/inbox": {
+      "types": "./src/state/inbox.ts",
+      "default": "./src/state/inbox.ts"
+    },
+    "./state/branch-lineage": {
+      "types": "./src/state/branchLineage.ts",
+      "default": "./src/state/branchLineage.ts"
+    },
+    "./branch-lineage": {
+      "types": "./src/branchLineage.ts",
+      "default": "./src/branchLineage.ts"
+    },
     "./state/spaceAgent": {
       "types": "./src/state/spaceAgent.ts",
       "default": "./src/state/spaceAgent.ts"
@@ -502,6 +514,10 @@
     "./spaces": {
       "types": "./src/spaces.ts",
       "default": "./src/spaces.ts"
+    },
+    "./inbox": {
+      "types": "./src/inbox.ts",
+      "default": "./src/inbox.ts"
     },
     "./spaceAgent": {
       "types": "./src/spaceAgent.ts",

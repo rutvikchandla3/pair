@@ -329,68 +329,6 @@ export function groupSpaceOverview<T extends SpaceTaskThread>(
   });
 }
 
-// The sidebar: Assigned to me, and each space's Needs-you sub-rows.
-
-export interface SpaceSidebarSpace<T> {
-  readonly spaceId: SpaceId;
-  /** Up to two tasks that need the viewer, most recent first. */
-  readonly needsYou: ReadonlyArray<SpaceOverviewRow<T>>;
-  /** The space's other open tasks: "N more tasks". */
-  readonly more: number;
-}
-
-export interface SpaceSidebarTasks<T> {
-  readonly spaces: ReadonlyMap<SpaceId, SpaceSidebarSpace<T>>;
-  /** Open tasks the viewer owns, in non-archived spaces they are still in. */
-  readonly assignedToMe: ReadonlyArray<SpaceTask>;
-}
-
-const SIDEBAR_NEEDS_YOU_LIMIT = 2;
-
-export function spaceSidebarTasks<T extends SpaceTaskThread>(
-  list: SpaceListResult,
-  threads: ReadonlyArray<T>,
-  viewer: SpaceViewer,
-): SpaceSidebarTasks<T> {
-  const threadsByTask = spaceThreadsByTask(threads);
-  const activeSpaces = new Map(
-    list.spaces
-      .filter(
-        (space) =>
-          space.archivedAt === null &&
-          space.members.some(
-            (member) => member.memberId === viewer.memberId && member.removedAt === null,
-          ),
-      )
-      .map((space) => [space.id, space]),
-  );
-  const rowsBySpace = new Map<SpaceId, SpaceOverviewRow<T>[]>();
-  const openBySpace = new Map<SpaceId, number>();
-  const assignedToMe: SpaceTask[] = [];
-  for (const task of list.tasks) {
-    if (task.deletedAt !== null || !spaceTaskIsOpen(task.status)) continue;
-    if (!activeSpaces.has(task.spaceId)) continue;
-    openBySpace.set(task.spaceId, (openBySpace.get(task.spaceId) ?? 0) + 1);
-    if (viewer.memberId !== null && task.ownerId === viewer.memberId) assignedToMe.push(task);
-    const row = spaceOverviewRow(task, threadsByTask.get(task.id) ?? NO_THREADS, viewer);
-    if (!row.activity.needsViewer) continue;
-    const rows = rowsBySpace.get(task.spaceId);
-    if (rows === undefined) rowsBySpace.set(task.spaceId, [row]);
-    else rows.push(row);
-  }
-  const spaces = new Map<SpaceId, SpaceSidebarSpace<T>>();
-  for (const [spaceId, open] of openBySpace) {
-    const needsYou = (rowsBySpace.get(spaceId) ?? [])
-      .sort((a, b) => b.activityAt - a.activityAt)
-      .slice(0, SIDEBAR_NEEDS_YOU_LIMIT);
-    spaces.set(spaceId, { spaceId, needsYou, more: open - needsYou.length });
-  }
-  return {
-    spaces,
-    assignedToMe: assignedToMe.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
-  };
-}
-
 /** The header's avatar stack: the owner, then the others in the order they joined. */
 export function orderSpaceMembers(
   space: Pick<Space, "members" | "ownerId">,

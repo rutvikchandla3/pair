@@ -295,6 +295,8 @@ type SandboxCheckout = Effect.Success<ReturnType<typeof CloudPreparation.checkou
 
 /** The timeline row that tells a rebuilt checkout from a kept disk (07 §9). */
 const rebuildNotice = (checkout: SandboxCheckout) => {
+  // A checkout seeded for a branch or a move lost nothing.
+  if (checkout.restoredFrom === "seed") return null;
   if (checkout.restoredFrom === "mirror" && checkout.snapshotAt !== null) {
     const at = DateTime.formatIso(checkout.snapshotAt).slice(0, 16).replace("T", " ");
     return `Rebuilt from the snapshot of ${at} UTC: the machine's disk was lost. Ignored files and caches were not kept.`;

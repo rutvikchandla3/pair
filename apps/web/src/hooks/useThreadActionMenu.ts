@@ -32,6 +32,9 @@ import {
 } from "../components/threadActionMenu.logic";
 import { openContinueInCloudDialog } from "../components/sandbox/ContinueInCloudDialog";
 import { openForkToMachineDialog } from "../components/sandbox/ForkToMachineDialog";
+import { branchOffRoute, readCloudThreadMenu } from "../components/branchOff/branchOffTarget";
+import { openMoveToOwnMachineDialog } from "../components/branchOff/MoveToOwnMachineDialog";
+import { openSideChatOn } from "../components/chat/useSideChat";
 import {
   readSandboxThreadMachine,
   useSandboxActionRunner,
@@ -165,6 +168,7 @@ export function useThreadActionMenu(input: {
       const cloudOffer = readContinueInCloudOffer(threadRef);
       const forkOffer = readForkToMachineOffer(threadRef);
       const spaceActions = readSpaceThreadActions(threadRef.environmentId, threadRef.threadId);
+      const cloud = readCloudThreadMenu(threadRef);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -189,6 +193,7 @@ export function useThreadActionMenu(input: {
             }
           : {}),
         ...(machine ? { machine } : {}),
+        ...(cloud ? { cloud } : {}),
         ...(forkOffer ? { forkToMachine: forkOffer } : {}),
         ...(cloudOffer.kind === "hidden"
           ? {}
@@ -256,6 +261,17 @@ export function useThreadActionMenu(input: {
         return;
       }
       switch (action) {
+        case "branch-off":
+          void router.navigate(branchOffRoute(threadRef));
+          return;
+        case "side-chat": {
+          const error = await openSideChatOn(threadRef);
+          if (error !== null) failureToast("Could not start a side chat", new Error(error));
+          return;
+        }
+        case "move-to-own-machine":
+          openMoveToOwnMachineDialog(threadRef);
+          return;
         case "find":
           onFind?.(threadRef);
           return;

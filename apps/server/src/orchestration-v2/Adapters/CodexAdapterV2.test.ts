@@ -2964,6 +2964,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const authoredPolicy = {
           ...CODEX_TEST_RUNTIME_POLICY,
           gitAuthor: { name: "Bob", email: "bob@example.com" },
+          threadSlot: 2,
         };
         const resumed = yield* harness.runtime.resumeThread({
           providerThread: harness.providerThread,
@@ -2991,7 +2992,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
         assert.equal(resumed.status, "idle");
         assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
-        const authorEnv = { GIT_AUTHOR_NAME: "Bob", GIT_AUTHOR_EMAIL: "bob@example.com" };
+        // One app-server serves the machine's threads, so each gets its own slot here.
+        const authorEnv = {
+          GIT_AUTHOR_NAME: "Bob",
+          GIT_AUTHOR_EMAIL: "bob@example.com",
+          PAIR_THREAD_SLOT: "2",
+          PORT: "3002",
+        };
         assert.deepEqual(resumeThreadEnvs, [
           { T3CODE_THREAD_ID: harness.threadId },
           {},

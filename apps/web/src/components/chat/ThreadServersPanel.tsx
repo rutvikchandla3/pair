@@ -17,12 +17,13 @@ import { type MouseEvent, useState } from "react";
 import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
 import { readLocalApi } from "../../localApi";
 import { cn, isMacPlatform } from "../../lib/utils";
-import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
+import { useOtherThreadsMachinePorts, useThreadDiscoveredPorts } from "../../portDiscoveryState";
 import { useEnvironmentHasMachineBrowser } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { OtherThreadPortLabel } from "../branchOff/OtherThreadPortLabel";
 import { MorphIcon } from "../MorphIcon";
 import { openDiscoveredPort } from "../preview/openDiscoveredPort";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -50,7 +51,10 @@ export function ThreadServersPanel(props: ThreadServersPanelProps) {
 }
 
 function ThreadServersList(props: ThreadServersPanelProps) {
-  const servers = useThreadDiscoveredPorts(props);
+  const ownServers = useThreadDiscoveredPorts(props);
+  // Other people's threads on this machine, after the thread's own, labelled with their owner.
+  const others = useOtherThreadsMachinePorts(props);
+  const servers = others.length === 0 ? ownServers : [...ownServers, ...others];
   const machineBrowser = useEnvironmentHasMachineBrowser(props.environmentId);
   const canOpen = useEnvironmentScope(props.environmentId, AuthPreviewOperateScope);
   const canStop = useAtomValue(
@@ -121,7 +125,12 @@ function ThreadServersList(props: ThreadServersPanelProps) {
       <ul className="m-0 list-none p-0">
         {servers.slice(0, visibleCount).map((server, index) => {
           const key = serverKey(server);
-          const stoppable = canStop && supportsStop && server.pid !== null;
+          const otherThreadId =
+            server.agent != null && server.agent.threadId !== props.threadId
+              ? server.agent.threadId
+              : null;
+          const stoppable =
+            canStop && supportsStop && server.pid !== null && otherThreadId === null;
           return (
             <li
               key={key}
@@ -147,7 +156,14 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                   {/* The end padding keeps text clear of the stop button. */}
                   <span className={cn("flex min-w-0 flex-1 flex-col gap-0.5", stoppable && "pe-6")}>
                     <span className="truncate text-sm font-medium leading-4 text-foreground/85">
-                      localhost:{server.port}
+                      {otherThreadId === null ? (
+                        `localhost:${server.port}`
+                      ) : (
+                        <OtherThreadPortLabel
+                          threadRef={scopeThreadRef(props.environmentId, otherThreadId)}
+                          port={server.port}
+                        />
+                      )}
                     </span>
                     <span className="truncate text-2xs font-normal leading-4 text-muted-foreground">
                       {[serverSource(server, machineBrowser), server.processName]

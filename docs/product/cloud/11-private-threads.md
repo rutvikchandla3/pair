@@ -13,10 +13,11 @@ the UX, sections 3 to 6 are the backend, and section 8 is the pull request list.
 
 - A cloud thread is **private by default**. Only its owner sees it, in every client.
 - The owner **shares it with named members**, as in Google Docs: open **Share**, pick people, done.
-  There is no accept step; the thread appears in each person's **Team** shelf at once. An accept or
-  request flow is Later.
-- Everyone it is shared with can do what any teammate can do on a thread today: read it, prompt
-  it, use its terminal, fork it, and continue it locally.
+  There is no accept step; the thread appears on each person's **Shared with you** page at once. An
+  accept or request flow is Later.
+- Everyone it is shared with can read it, prompt it, use its terminal, continue it locally, and
+  **Branch off** it into a thread and worktree of their own. Fork stays the owner's, and their side
+  chat is read-only ([Spaces redesign](../spaces-redesign.md#part-2-building-together)).
 - The owner can also choose **Everyone on the team**, which is today's behaviour for that thread.
 - Sharing covers the **session**: the machine and every thread on it (side chats, subagent threads
   and forks), because they share one disk and one set of credentials.
@@ -87,9 +88,11 @@ project's existence.
   "+2" when shared with people, or "Team" when shared with everyone. Hover or tap lists the names.
 - **Sidebar row.** The owner's row shows a small people glyph when the thread is shared, with the
   names as its tooltip. No animation, no badge counts.
-- **Team shelf.** A member's **Team** shelf lists only threads shared with them (by name or through
-  Everyone on the team), newest activity first, with the owner's avatar, as today. Its empty state
-  reads "Threads teammates share with you show up here."
+- **Shared with you.** A member's **Shared with you** page lists only threads shared with them (by
+  name or through Everyone on the team), grouped by person and ordered by last activity. A thread
+  shared by name also lands in Inbox's For you. Its empty state reads "Nothing is shared with you by
+  name. Your spaces' threads are in each space." A teammate's thread is a sidebar row only once you
+  pin, follow or prompt it.
 - **Composer footer on a new cloud thread.** No control. A new thread is private; sharing happens
   after it exists. Proposed: this keeps the launch path unchanged. If overruled, the footer gains a
   "Private" chip that opens the picker before the first message.
@@ -153,16 +156,17 @@ on a server with more than one member.
 
 ### What each person sees
 
-| Event                              | Owner                                                             | The member added or removed                                                                                                                                     | Everyone else |
-| ---------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| Owner adds Ada                     | Quiet line in the thread: "Rutvik shared this thread with Ada"    | The thread appears in her **Team** shelf, unread, with the same quiet line. A push titled "Shared with you": "Rutvik shared "Fix flaky checkout test" with you" | Nothing       |
-| Owner removes Ada                  | Quiet line: "Rutvik removed Ada"                                  | The row leaves her sidebar. If she has it open: "You no longer have access to this thread." and a **Back to threads** button. No push                           | Nothing       |
-| Owner chooses Everyone             | Quiet line: "Rutvik shared this thread with everyone on the team" | It appears in every member's Team shelf, not marked unread, and with no push                                                                                    | Same          |
-| A link to a thread you cannot open | n/a                                                               | "This thread is private, or it no longer exists. Ask its owner to share it with you." The page does not say which, and names nobody                             | Same          |
+| Event                              | Owner                                                             | The member added or removed                                                                                                                                                                | Everyone else |
+| ---------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
+| Owner adds Ada                     | Quiet line in the thread: "Rutvik shared this thread with Ada"    | The thread appears on their **Shared with you** page and in Inbox's For you, with the same quiet line. A push titled "Shared with you": "Rutvik shared "Fix flaky checkout test" with you" | Nothing       |
+| Owner removes Ada                  | Quiet line: "Rutvik removed Ada"                                  | The row leaves her sidebar. If she has it open: "You no longer have access to this thread." and a **Back to threads** button. No push                                                      | Nothing       |
+| Owner chooses Everyone             | Quiet line: "Rutvik shared this thread with everyone on the team" | It appears on every member's Shared with you page, not in Inbox, and with no push                                                                                                          | Same          |
+| A link to a thread you cannot open | n/a                                                               | "This thread is private, or it no longer exists. Ask its owner to share it with you." The page does not say which, and names nobody                                                        | Same          |
 
 A member it is shared with gets today's teammate experience unchanged: **Follow**, **Pin**, the
-queue and **Steer now** on someone else's turn, `Message from <name>:` for the agent, forks and
-side chats on the same machine, and **Continue locally**, which gives them a copy.
+queue and **Steer now** on someone else's turn, `Message from <name>:` for the agent, a read-only
+side chat, **Continue locally**, which gives them a copy, and **Branch off**, which gives them their
+own thread, branch and worktree on the owner's machine or a new one. Only the owner forks.
 
 ### Assign, remove and archive
 
@@ -186,7 +190,7 @@ side chats on the same machine, and **Continue locally**, which gives them a cop
 
 ### Admins
 
-An admin does not see other members' private threads: not in the sidebar, the Team shelf, search
+An admin does not see other members' private threads: not in the sidebar, Shared with you, search
 or the archive. Settings → Cloud still lists every machine, because machines cost money:
 
 - A machine the admin cannot open shows "Private thread", its owner, state, size, driver and age,

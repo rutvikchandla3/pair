@@ -1,109 +1,119 @@
 import {
-  type SpaceOverviewRow,
-  isSpaceOwner,
-  spaceSidebarTasks,
-  spaceTaskStatusInfo,
-} from "@t3tools/client-runtime/spaces";
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Space,
-  SpaceId,
-  SpaceTask,
-} from "@t3tools/contracts";
+  type SidebarSpaceRow,
+  type SidebarSpaceRows,
+  sidebarSpaceRows,
+} from "@t3tools/client-runtime/inbox";
+import { isSpaceOwner } from "@t3tools/client-runtime/spaces";
+import type { EnvironmentId, MemberId, SpaceId } from "@t3tools/contracts";
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Link, useParams } from "@tanstack/react-router";
-import { ArchiveRestoreIcon, MoreHorizontalIcon, PlusIcon, UsersRoundIcon } from "lucide-react";
-import { useState } from "react";
+import {
+  ArchiveRestoreIcon,
+  ChevronRightIcon,
+  InboxIcon,
+  ListTodoIcon,
+  MoreHorizontalIcon,
+  PlusIcon,
+  Share2Icon,
+  UsersRoundIcon,
+} from "lucide-react";
+import { type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { openSpaceDialog } from "../../spaceDialogStore";
+import { useInboxNeedsYouTotal, useInboxSummary, useTeamEnvironmentIds } from "../../state/inbox";
 import {
   spaceEnvironment,
   useCanOperateSpaces,
   useSpaceEnvironmentIds,
   useSpaceListWithOpenRoom,
   useSpaceSidebarShells,
-  useSpaceViewer,
 } from "../../state/spaces";
+import { useCurrentMemberId } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SpaceTaskStatusGlyph } from "../spaces/SpaceStatusIcon";
+import { useUiStateStore } from "../../uiStateStore";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { reorderSidebarSpaces, sidebarSelectedSpaceId } from "./SidebarSpaces.logic";
 
 const rowClass =
-  "group/space-row flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground hover:bg-sidebar-row-hover data-[status=active]:bg-sidebar-row-active";
+  "group/space-row flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground hover:bg-sidebar-row-hover";
+const iconClass = "size-3.5 shrink-0 text-sidebar-muted-foreground";
+const NO_ORDER: ReadonlyArray<SpaceId> = [];
 
-/** Spaces live on Pair Cloud, so the section shows only where one is connected. */
+/**
+ * Team mode's places: Inbox, My tasks and Shared with you, then one row per space. Solo shows
+ * none of it.
+ */
 export function SidebarSpaces() {
-  const environmentIds = useSpaceEnvironmentIds();
+  const teamEnvironmentIds = useTeamEnvironmentIds();
+  const spaceEnvironmentIds = useSpaceEnvironmentIds();
+  const inboxCount = useInboxNeedsYouTotal(teamEnvironmentIds);
+  if (teamEnvironmentIds.length === 0) return null;
   return (
-    <>
-      {environmentIds.map((environmentId) => (
-        <SidebarSpacesForEnvironment key={environmentId} environmentId={environmentId} />
-      ))}
-    </>
+    <div className="mb-2 flex flex-col gap-px" role="presentation">
+      <SidebarPlaces inboxCount={inboxCount} />
+      {spaceEnvironmentIds
+        .filter((environmentId) => teamEnvironmentIds.includes(environmentId))
+        .map((environmentId) => (
+          <SidebarSpacesForEnvironment key={environmentId} environmentId={environmentId} />
+        ))}
+    </div>
   );
 }
 
-function TaskLink(props: {
-  readonly environmentId: EnvironmentId;
-  readonly task: SpaceTask;
-  readonly needsYou?: boolean;
+function PlaceLink(props: {
+  readonly to: "/inbox" | "/my-tasks" | "/shared";
+  readonly icon: ReactNode;
+  readonly label: string;
+  readonly trailing?: ReactNode;
 }) {
-  const { task } = props;
-  const status = spaceTaskStatusInfo(task.status);
   return (
     <Link
-      to="/spaces/$environmentId/$spaceId/tasks/$taskId"
-      params={{ environmentId: props.environmentId, spaceId: task.spaceId, taskId: task.id }}
-      className={cn(rowClass, "ps-7")}
+      to={props.to}
+      activeOptions={{ exact: true }}
+      className={cn(rowClass, "data-[status=active]:bg-sidebar-row-active")}
     >
-      <SpaceTaskStatusGlyph icon={status.icon} tone={status.tone} label={status.label} />
-      <span className="min-w-0 flex-1 truncate">{task.title}</span>
-      {props.needsYou ? (
-        <span className="shrink-0 text-input-foreground text-xs">Needs you</span>
-      ) : null}
+      {props.icon}
+      <span className="min-w-0 flex-1 truncate">{props.label}</span>
+      {props.trailing}
     </Link>
   );
 }
 
-/** A task that needs the viewer, with the threads on it; others' say whose they are. */
-function NeedsYouRow(props: {
-  readonly environmentId: EnvironmentId;
-  readonly row: SpaceOverviewRow<OrchestrationV2ThreadShell>;
-  readonly viewerId: string | null;
-  readonly nameOf: (memberId: NonNullable<OrchestrationV2ThreadShell["ownerId"]>) => string;
-}) {
+/** The three fixed rows. Inbox's count is the only indigo number in the sidebar. */
+function SidebarPlaces(props: { readonly inboxCount: number }) {
   return (
-    <li>
-      <TaskLink environmentId={props.environmentId} task={props.row.task} needsYou />
-      {props.row.threads.length > 0 ? (
-        <ul className="flex flex-col gap-px">
-          {props.row.threads.map((thread) => {
-            const ownerId = thread.ownerId;
-            const theirs = ownerId != null && ownerId !== props.viewerId;
-            return (
-              <li key={thread.id}>
-                <Link
-                  to="/$environmentId/$threadId"
-                  params={{ environmentId: props.environmentId, threadId: thread.id }}
-                  className={cn(rowClass, "h-auto min-h-7 flex-col items-start gap-0 py-1 ps-12")}
-                >
-                  <span className="w-full truncate">{thread.title}</span>
-                  {theirs && ownerId != null ? (
-                    <span className="w-full truncate text-sidebar-muted-foreground text-xs">
-                      {props.nameOf(ownerId)}'s thread
-                    </span>
-                  ) : null}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-    </li>
+    <div className="mb-2 flex flex-col gap-px">
+      <PlaceLink
+        to="/inbox"
+        icon={<InboxIcon className={iconClass} />}
+        label="Inbox"
+        trailing={
+          props.inboxCount > 0 ? (
+            <span
+              aria-label={`${props.inboxCount} need you`}
+              className="rounded-full bg-input-foreground/12 px-1.5 text-input-foreground text-xs tabular-nums"
+            >
+              {props.inboxCount}
+            </span>
+          ) : null
+        }
+      />
+      <PlaceLink to="/my-tasks" icon={<ListTodoIcon className={iconClass} />} label="My tasks" />
+      <PlaceLink to="/shared" icon={<Share2Icon className={iconClass} />} label="Shared with you" />
+    </div>
   );
 }
 
@@ -115,55 +125,72 @@ function SidebarSpacesForEnvironment(props: { readonly environmentId: Environmen
       ? (params.spaceId as SpaceId)
       : null;
   const list = useSpaceListWithOpenRoom(environmentId, routeSpaceId);
-  const spaces = list.spaces;
   const shells = useSpaceSidebarShells(environmentId);
-  const viewer = useSpaceViewer(environmentId);
+  const summary = useInboxSummary(environmentId);
+  const viewerId = useCurrentMemberId(environmentId);
   const canOperate = useCanOperateSpaces(environmentId);
-  const [assignedOpen, setAssignedOpen] = useState(false);
-  const [spacesOpen, setSpacesOpen] = useState(true);
-  const [archivedOpen, setArchivedOpen] = useState(false);
+  const order = useUiStateStore(
+    (store) => store.sidebarSpaceOrderByEnvironmentId[environmentId] as SpaceId[] | undefined,
+  );
+  const setOrder = useUiStateStore((store) => store.setSidebarSpaceOrder);
+  const rows = sidebarSpaceRows(
+    list.spaces,
+    order ?? NO_ORDER,
+    summary,
+    shells.unreadRoomIds,
+    viewerId,
+  );
+  const selectedSpaceId = sidebarSelectedSpaceId({
+    environmentId,
+    route: params,
+    threadSpaceId: (threadId) =>
+      shells.taskThreads.find((thread) => thread.id === threadId)?.space?.spaceId ?? null,
+  });
+  return (
+    <SidebarSpaceList
+      environmentId={environmentId}
+      rows={rows}
+      selectedSpaceId={selectedSpaceId}
+      canOperate={canOperate}
+      viewerId={viewerId}
+      onReorder={(ids) => setOrder(environmentId, ids)}
+    />
+  );
+}
 
-  const activeSpaces = spaces.filter((space) => space.archivedAt === null);
-  const archived = spaces.filter((space) => space.archivedAt !== null);
-  const sidebar = spaceSidebarTasks(list, shells.taskThreads, viewer);
-  const assigned = sidebar.assignedToMe;
-  const openSpaceId =
-    params.environmentId !== environmentId
-      ? null
-      : (params.spaceId ??
-        shells.taskThreads.find((thread) => thread.id === params.threadId)?.space?.spaceId ??
-        null);
+/** The Spaces section: five rows, then "N more" that expands in place, archived ones last. */
+export function SidebarSpaceList(props: {
+  readonly environmentId: EnvironmentId;
+  readonly rows: SidebarSpaceRows;
+  readonly selectedSpaceId: SpaceId | null;
+  readonly canOperate: boolean;
+  readonly viewerId: MemberId | null;
+  readonly onReorder: (ids: ReadonlyArray<SpaceId>) => void;
+}) {
+  const { environmentId, rows } = props;
+  const [spacesOpen, setSpacesOpen] = useState(true);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const sortable = moreOpen ? [...rows.visible, ...rows.hidden] : rows.visible;
+  const allIds = [...rows.visible, ...rows.hidden].map((row) => row.space.id);
+  const moreCount = rows.hidden.length;
+  const hasMore = moreCount > 0 || rows.archived.length > 0;
+  const renderRow = (row: SidebarSpaceRow) => (
+    <SortableSpaceRow
+      key={row.space.id}
+      environmentId={environmentId}
+      row={row}
+      selected={row.space.id === props.selectedSpaceId}
+    />
+  );
+  const handleDragEnd = (event: DragEndEvent) => {
+    if (event.over === null) return;
+    const next = reorderSidebarSpaces(allIds, event.active.id as SpaceId, event.over.id as SpaceId);
+    if (next !== allIds) props.onReorder(next);
+  };
 
   return (
-    <div className="mb-2 flex flex-col gap-px" role="presentation">
-      <button
-        type="button"
-        aria-expanded={assignedOpen}
-        className={cn(rowClass, "w-full text-left")}
-        onClick={() => setAssignedOpen(!assignedOpen)}
-      >
-        <span className="flex-1 truncate">Assigned to me</span>
-        {assigned.length > 0 ? (
-          <span className="rounded-full bg-input-foreground/12 px-1.5 text-input-foreground text-xs tabular-nums">
-            {assigned.length}
-          </span>
-        ) : null}
-      </button>
-      {assignedOpen ? (
-        <ul className="flex flex-col gap-px">
-          {assigned.length === 0 ? (
-            <li className="px-7 py-1 text-sidebar-muted-foreground text-xs">
-              No open tasks are yours.
-            </li>
-          ) : (
-            assigned.map((task) => (
-              <li key={task.id}>
-                <TaskLink environmentId={environmentId} task={task} />
-              </li>
-            ))
-          )}
-        </ul>
-      ) : null}
+    <>
       <div className="flex items-center gap-1">
         <div className="min-w-0 flex-1">
           <CollapsibleSectionHeader
@@ -173,7 +200,7 @@ function SidebarSpacesForEnvironment(props: { readonly environmentId: Environmen
             Spaces
           </CollapsibleSectionHeader>
         </div>
-        {canOperate ? (
+        {props.canOperate ? (
           <Button
             size="icon-micro"
             variant="ghost-muted"
@@ -185,89 +212,96 @@ function SidebarSpacesForEnvironment(props: { readonly environmentId: Environmen
         ) : null}
       </div>
       {spacesOpen ? (
-        <ul className="flex flex-col gap-px">
-          {activeSpaces.length === 0 ? (
-            <li className="px-2 py-1 text-sidebar-muted-foreground text-xs">
-              Rooms where your team and Pair work together.
-            </li>
-          ) : null}
-          {activeSpaces.map((space) => {
-            const tasks = space.id === openSpaceId ? sidebar.spaces.get(space.id) : undefined;
-            return (
-              <li key={space.id}>
-                <SpaceRow
-                  environmentId={environmentId}
-                  space={space}
-                  unread={shells.unreadRoomIds.has(space.roomThreadId)}
-                />
-                {tasks === undefined ? null : (
-                  <ul className="flex flex-col gap-px">
-                    {tasks.needsYou.map((row) => (
-                      <NeedsYouRow
-                        key={row.task.id}
-                        environmentId={environmentId}
-                        row={row}
-                        viewerId={viewer.memberId}
-                        nameOf={viewer.nameOf}
-                      />
-                    ))}
-                    {tasks.more > 0 ? (
-                      <li>
-                        <Link
-                          to="/spaces/$environmentId/$spaceId"
-                          params={{ environmentId, spaceId: space.id }}
-                          className={cn(rowClass, "ps-7 text-sidebar-muted-foreground text-xs")}
-                        >
-                          {tasks.more} more {tasks.more === 1 ? "task" : "tasks"}
-                        </Link>
-                      </li>
-                    ) : null}
-                  </ul>
-                )}
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <ul className="flex flex-col gap-px">
+            {rows.visible.length === 0 ? (
+              <li className="px-2 py-1 text-sidebar-muted-foreground text-xs">
+                Rooms where your team and Pair work together.
               </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {archived.length > 0 ? (
-        <>
-          <CollapsibleSectionHeader
-            expanded={archivedOpen}
-            onClick={() => setArchivedOpen(!archivedOpen)}
-          >
-            Archived
-          </CollapsibleSectionHeader>
-          {archivedOpen ? (
-            <ul className="flex flex-col gap-px">
-              {archived.map((space) => (
-                <li key={space.id}>
-                  <SpaceRow
-                    environmentId={environmentId}
-                    space={space}
-                    unread={false}
-                    archivedActions={isSpaceOwner(space, viewer.memberId) && canOperate}
-                  />
+            ) : null}
+            <SortableContext
+              items={sortable.map((row) => row.space.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {rows.visible.map(renderRow)}
+              {hasMore ? (
+                <li>
+                  <button
+                    type="button"
+                    aria-expanded={moreOpen}
+                    className={cn(rowClass, "w-full text-left text-sidebar-muted-foreground")}
+                    onClick={() => setMoreOpen(!moreOpen)}
+                  >
+                    <ChevronRightIcon
+                      className={cn(iconClass, "transition-transform", moreOpen && "rotate-90")}
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      {moreCount > 0 ? `${moreCount} more` : "Archived"}
+                    </span>
+                    {rows.hiddenNeedsYou > 0 ? (
+                      <span className="text-xs tabular-nums">{rows.hiddenNeedsYou}</span>
+                    ) : null}
+                  </button>
                 </li>
-              ))}
-            </ul>
-          ) : null}
-        </>
+              ) : null}
+              {moreOpen ? rows.hidden.map(renderRow) : null}
+            </SortableContext>
+            {moreOpen && rows.archived.length > 0 ? (
+              <>
+                {moreCount > 0 ? (
+                  <li className="px-2 pt-2 pb-1 text-sidebar-muted-foreground text-xs">Archived</li>
+                ) : null}
+                {rows.archived.map((row) => (
+                  <li key={row.space.id}>
+                    <SpaceRow
+                      environmentId={environmentId}
+                      row={row}
+                      selected={row.space.id === props.selectedSpaceId}
+                      archivedActions={isSpaceOwner(row.space, props.viewerId) && props.canOperate}
+                    />
+                  </li>
+                ))}
+              </>
+            ) : null}
+          </ul>
+        </DndContext>
       ) : null}
-    </div>
+    </>
+  );
+}
+
+function SortableSpaceRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly row: SidebarSpaceRow;
+  readonly selected: boolean;
+}) {
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.row.space.id,
+  });
+  return (
+    <li
+      ref={setNodeRef}
+      {...listeners}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(isDragging && "relative z-10")}
+    >
+      <SpaceRow environmentId={props.environmentId} row={props.row} selected={props.selected} />
+    </li>
   );
 }
 
 function SpaceRow(props: {
   readonly environmentId: EnvironmentId;
-  readonly space: Space;
-  readonly unread: boolean;
+  readonly row: SidebarSpaceRow;
+  readonly selected: boolean;
   readonly archivedActions?: boolean;
 }) {
+  const { space, needsYou, unread } = props.row;
   const mutate = useAtomCommand(spaceEnvironment.mutate, "Unarchive space");
   const unarchive = async () => {
     const result = await mutate({
       environmentId: props.environmentId,
-      input: { type: "unarchive", spaceId: props.space.id },
+      input: { type: "unarchive", spaceId: space.id },
     });
     toastCommandFailure("Could not unarchive", result);
   };
@@ -275,17 +309,27 @@ function SpaceRow(props: {
     <div className="relative">
       <Link
         to="/spaces/$environmentId/$spaceId"
-        params={{ environmentId: props.environmentId, spaceId: props.space.id }}
-        className={cn(rowClass, props.space.archivedAt !== null && "text-sidebar-muted-foreground")}
+        params={{ environmentId: props.environmentId, spaceId: space.id }}
+        aria-current={props.selected ? "page" : undefined}
+        className={cn(
+          rowClass,
+          props.selected && "bg-sidebar-row-active",
+          space.archivedAt !== null && "text-sidebar-muted-foreground",
+        )}
       >
-        <UsersRoundIcon className="size-3.5 shrink-0 text-sidebar-muted-foreground" />
-        <span className={cn("min-w-0 flex-1 truncate", props.unread && "font-medium")}>
-          {props.space.name}
-        </span>
-        {props.unread ? (
+        <UsersRoundIcon className={iconClass} />
+        <span className="min-w-0 flex-1 truncate">{space.name}</span>
+        {needsYou > 0 ? (
+          <span
+            aria-label={`${needsYou} need you`}
+            className="shrink-0 text-sidebar-muted-foreground text-xs tabular-nums"
+          >
+            {needsYou}
+          </span>
+        ) : unread ? (
           <span
             aria-label="Unread"
-            className="size-1.5 shrink-0 rounded-full bg-input-foreground"
+            className="size-1.5 shrink-0 rounded-full bg-sidebar-muted-foreground"
           />
         ) : null}
       </Link>
@@ -297,7 +341,7 @@ function SpaceRow(props: {
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`Actions for ${props.space.name}`}
+                  aria-label={`Actions for ${space.name}`}
                 />
               }
             >

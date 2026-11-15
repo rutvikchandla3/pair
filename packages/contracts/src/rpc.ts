@@ -100,7 +100,50 @@ import {
   SpaceWorkspacePreview,
   SpaceWorkspacePreviewInput,
 } from "./spaceRpc.ts";
+import {
+  InboxError,
+  InboxItemInput,
+  InboxListInput,
+  InboxListResult,
+  InboxSnoozeInput,
+  InboxSummary,
+  MyTasksClosedResult,
+  SharedWithYouListInput,
+  SharedWithYouListResult,
+} from "./inbox.ts";
 import { TeamClaudeKeyError, TeamClaudeKeySetInput, TeamClaudeKeyStatus } from "./teamClaudeKey.ts";
+import {
+  BRANCH_LINEAGE_WS_METHODS,
+  BranchLineageError,
+  LineageReadInput,
+  LineageView,
+  OfferApplyInput,
+  OfferCreateInput,
+  OfferDeclineInput,
+  OfferPreview,
+  OfferPreviewInput,
+  OfferResult,
+  OfferDiff,
+  OfferDiffInput,
+  OfferWithdrawInput,
+  ThreadAbortUpdateInput,
+  ThreadBranchOffDraft,
+  ThreadBranchOffDraftInput,
+  ThreadBranchOffInput,
+  ThreadBranchOffResult,
+  ThreadBringBackInput,
+  ThreadMoveToOwnMachineInput,
+  ThreadBranchOffSummary,
+  ThreadBranchOffSummaryInput,
+  ThreadStartFromMainInput,
+  ThreadStartFromMainResult,
+  ThreadRevertOfferInput,
+  ThreadUndoUpdateInput,
+  ThreadUpdateInput,
+  ThreadUpdatePreview,
+  ThreadUpdatePreviewInput,
+  ThreadUpdateResult,
+} from "./branchLineage.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -626,6 +669,14 @@ export const WS_METHODS = {
   spacesAction: "spaces.action",
   spacesNotes: "spaces.notes",
   spacesReply: "spaces.reply",
+  inboxList: "inbox.list",
+  inboxSummary: "inbox.summary",
+  inboxSubscribeSummary: "inbox.subscribeSummary",
+  inboxDismiss: "inbox.dismiss",
+  inboxSnooze: "inbox.snooze",
+  inboxUnsnooze: "inbox.unsnooze",
+  sharedWithYouList: "sharedWithYou.list",
+  myTasksListClosed: "myTasks.listClosed",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -766,6 +817,8 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+
+  ...BRANCH_LINEAGE_WS_METHODS,
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1077,6 +1130,58 @@ const WsSpacesReplyRpc = Rpc.make(WS_METHODS.spacesReply, {
   payload: SpaceReplyInput,
   success: Schema.Struct({}),
   error: spaceRpcError,
+});
+
+const inboxRpcError = Schema.Union([InboxError, EnvironmentAuthorizationError]);
+
+/** What waits on the caller, newest first; computed from projections on each read. */
+const WsInboxListRpc = Rpc.make(WS_METHODS.inboxList, {
+  payload: InboxListInput,
+  success: InboxListResult,
+  error: inboxRpcError,
+});
+
+const WsInboxSummaryRpc = Rpc.make(WS_METHODS.inboxSummary, {
+  success: InboxSummary,
+  error: inboxRpcError,
+});
+
+/** The summary now, then each change to it. */
+const WsInboxSubscribeSummaryRpc = Rpc.make(WS_METHODS.inboxSubscribeSummary, {
+  success: InboxSummary,
+  error: inboxRpcError,
+  stream: true,
+});
+
+/** Done on a For you item. */
+const WsInboxDismissRpc = Rpc.make(WS_METHODS.inboxDismiss, {
+  payload: InboxItemInput,
+  success: Schema.Struct({}),
+  error: inboxRpcError,
+});
+
+const WsInboxSnoozeRpc = Rpc.make(WS_METHODS.inboxSnooze, {
+  payload: InboxSnoozeInput,
+  success: Schema.Struct({}),
+  error: inboxRpcError,
+});
+
+const WsInboxUnsnoozeRpc = Rpc.make(WS_METHODS.inboxUnsnooze, {
+  payload: InboxItemInput,
+  success: Schema.Struct({}),
+  error: inboxRpcError,
+});
+
+/** Threads others shared with the caller, by name or with the whole team. */
+const WsSharedWithYouListRpc = Rpc.make(WS_METHODS.sharedWithYouList, {
+  payload: SharedWithYouListInput,
+  success: SharedWithYouListResult,
+  error: inboxRpcError,
+});
+
+const WsMyTasksListClosedRpc = Rpc.make(WS_METHODS.myTasksListClosed, {
+  success: MyTasksClosedResult,
+  error: inboxRpcError,
 });
 
 const WsPeerLinksLinkRpc = Rpc.make(WS_METHODS.peerLinksLink, {
@@ -2529,6 +2634,122 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+// Branch off. BranchLineageService checks who may act; refusals are BranchLineageError.
+const lineageRpcError = Schema.Union([BranchLineageError, EnvironmentAuthorizationError]);
+
+/** The thread's source, branches and offers, as far as the caller may open them. */
+const WsLineageReadRpc = Rpc.make(WS_METHODS.lineageRead, {
+  payload: LineageReadInput,
+  success: LineageView,
+  error: lineageRpcError,
+});
+
+const WsThreadBranchOffDraftRpc = Rpc.make(WS_METHODS.threadBranchOffDraft, {
+  payload: ThreadBranchOffDraftInput,
+  success: ThreadBranchOffDraft,
+  error: lineageRpcError,
+});
+
+const WsThreadBranchOffRpc = Rpc.make(WS_METHODS.threadBranchOff, {
+  payload: ThreadBranchOffInput,
+  success: ThreadBranchOffResult,
+  error: lineageRpcError,
+});
+
+const WsThreadUpdatePreviewRpc = Rpc.make(WS_METHODS.threadUpdatePreview, {
+  payload: ThreadUpdatePreviewInput,
+  success: ThreadUpdatePreview,
+  error: lineageRpcError,
+});
+
+/** Update from source; during a turn it arms and runs after it. */
+const WsThreadUpdateRpc = Rpc.make(WS_METHODS.threadUpdate, {
+  payload: ThreadUpdateInput,
+  success: ThreadUpdateResult,
+  error: lineageRpcError,
+});
+
+const WsThreadAbortUpdateRpc = Rpc.make(WS_METHODS.threadAbortUpdate, {
+  payload: ThreadAbortUpdateInput,
+  success: Schema.Void,
+  error: lineageRpcError,
+});
+
+const WsThreadUndoUpdateRpc = Rpc.make(WS_METHODS.threadUndoUpdate, {
+  payload: ThreadUndoUpdateInput,
+  success: Schema.Void,
+  error: lineageRpcError,
+});
+
+const WsThreadBringBackRpc = Rpc.make(WS_METHODS.threadBringBack, {
+  payload: ThreadBringBackInput,
+  success: Schema.Void,
+  error: lineageRpcError,
+});
+
+const WsOfferPreviewRpc = Rpc.make(WS_METHODS.offerPreview, {
+  payload: OfferPreviewInput,
+  success: OfferPreview,
+  error: lineageRpcError,
+});
+
+const WsOfferCreateRpc = Rpc.make(WS_METHODS.offerCreate, {
+  payload: OfferCreateInput,
+  success: OfferResult,
+  error: lineageRpcError,
+});
+
+const WsOfferWithdrawRpc = Rpc.make(WS_METHODS.offerWithdraw, {
+  payload: OfferWithdrawInput,
+  success: OfferResult,
+  error: lineageRpcError,
+});
+
+/** During a turn the Apply arms, and runs when the turn ends, before the next queued message. */
+const WsOfferApplyRpc = Rpc.make(WS_METHODS.offerApply, {
+  payload: OfferApplyInput,
+  success: OfferResult,
+  error: lineageRpcError,
+});
+
+const WsOfferDeclineRpc = Rpc.make(WS_METHODS.offerDecline, {
+  payload: OfferDeclineInput,
+  success: OfferResult,
+  error: lineageRpcError,
+});
+
+const WsThreadRevertOfferRpc = Rpc.make(WS_METHODS.threadRevertOffer, {
+  payload: ThreadRevertOfferInput,
+  success: OfferResult,
+  error: lineageRpcError,
+});
+
+const WsThreadMoveToOwnMachineRpc = Rpc.make(WS_METHODS.threadMoveToOwnMachine, {
+  payload: ThreadMoveToOwnMachineInput,
+  success: Schema.Void,
+  error: lineageRpcError,
+});
+
+/** Runs a model on the caller's account, so it needs operate even though it writes nothing. */
+const WsThreadBranchOffSummaryRpc = Rpc.make(WS_METHODS.threadBranchOffSummary, {
+  payload: ThreadBranchOffSummaryInput,
+  success: ThreadBranchOffSummary,
+  error: lineageRpcError,
+});
+
+const WsThreadStartFromMainRpc = Rpc.make(WS_METHODS.threadStartFromMain, {
+  payload: ThreadStartFromMainInput,
+  success: ThreadStartFromMainResult,
+  error: lineageRpcError,
+});
+
+/** View changes on an offer card: for anyone who may open its source or its branch. */
+const WsOfferDiffRpc = Rpc.make(WS_METHODS.offerDiff, {
+  payload: OfferDiffInput,
+  success: OfferDiff,
+  error: lineageRpcError,
+});
+
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
   { error: EnvironmentAuthorizationError },
@@ -2613,6 +2834,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacesReplyRpc,
   WsSpacesTaskGetRpc,
   WsSpacesWorkspacePreviewRpc,
+  WsInboxListRpc,
+  WsInboxSummaryRpc,
+  WsInboxSubscribeSummaryRpc,
+  WsInboxDismissRpc,
+  WsInboxSnoozeRpc,
+  WsInboxUnsnoozeRpc,
+  WsSharedWithYouListRpc,
+  WsMyTasksListClosedRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
@@ -2789,6 +3018,24 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsLineageReadRpc,
+  WsThreadBranchOffDraftRpc,
+  WsThreadBranchOffRpc,
+  WsThreadUpdatePreviewRpc,
+  WsThreadUpdateRpc,
+  WsThreadAbortUpdateRpc,
+  WsThreadUndoUpdateRpc,
+  WsThreadBringBackRpc,
+  WsOfferPreviewRpc,
+  WsOfferDiffRpc,
+  WsOfferCreateRpc,
+  WsOfferWithdrawRpc,
+  WsOfferApplyRpc,
+  WsOfferDeclineRpc,
+  WsThreadRevertOfferRpc,
+  WsThreadMoveToOwnMachineRpc,
+  WsThreadBranchOffSummaryRpc,
+  WsThreadStartFromMainRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetNativeChildWorkRpc,

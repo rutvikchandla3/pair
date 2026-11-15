@@ -177,15 +177,26 @@ in.
 Only enter a code on GitHub that you started yourself on Pair's sign-in page. Someone who sends
 you a code is asking you to sign them in as you.
 
-## Your threads and the Team shelf
+## Your threads, Inbox and Shared with you
 
 Every thread has an owner: the person who created it. Side chats and subagent threads belong to
 the owner of the thread they came from.
 
-- Your sidebar shows the threads you own. Other people's active threads you can open are in the
-  collapsed **Team** shelf, newest activity first, with the owner's avatar on each row. On a team
-  server, that is every thread that runs locally. On Pair Cloud, a cloud thread is private until
-  its owner [shares it](./cloud.md#who-can-open-a-cloud-thread) with you.
+- Your sidebar's **Threads** list shows the threads you own. Someone else's thread joins it only
+  when you pin it, follow it or prompt it, with the owner's avatar on its row.
+- **Inbox**, at the top of the sidebar, lists what waits on you, newest first. **Needs you** (the
+  sidebar's count) holds approvals and questions on threads that concern you, tasks assigned to you
+  and not started or handed back, and changes offered to your threads. **For you** holds mentions,
+  `@pair` replies and threads shared with you by name. An item leaves once it's handled. Answer an
+  approval in the preview pane without opening the thread. Use `j`/`k` to move, Enter to open, `e`
+  to mark a For you item done and `h` to snooze it. A snoozed task waits under **Snoozed** in the
+  Inbox header until its time.
+- **Shared with you** lists the threads teammates shared with you, grouped by person, with search
+  and filters. On a team server, that is every thread that runs locally. On Pair Cloud, a cloud
+  thread is private until its owner [shares it](./cloud.md#who-can-open-a-cloud-thread) with you.
+  A thread on a space task stays in its task; turn on **Include task threads** to list those too.
+- **Go to Inbox**, **Go to My tasks** and **Go to Shared with you** are in the command palette, and
+  you can bind a shortcut to each in [Keybindings](./keybindings.md).
 - Pin someone else's thread to keep it in your own **Pinned** list.
 - **Settled** lists only your own threads.
 - To hand a thread over, choose **Assign to…** from the thread's menu or the command palette. You
@@ -193,16 +204,18 @@ the owner of the thread they came from.
   assigned by its owner, or by an admin once the owner has left the team.
 - Only a thread's owner or an admin can delete it.
 
-The mobile app shows names, owners, the Team shelf, Follow and Assign too. On a teammate's
+The mobile app shows names, owners, Inbox, My tasks, Shared with you, Follow and Assign too. On a teammate's
 running turn, Send queues your message after it; hold Send and choose **Steer now** to interrupt.
 Its model picker leaves out teammates' accounts; add your own account on the web.
 
 ## Follow threads and notifications
 
 **Follow** a teammate's thread to keep it in your own sections and count its unread state; choose
-it from the thread's menu, the command palette, or the eye button in the thread header.
-**Unfollow** sends it back to the Team shelf. You follow a thread automatically when you own it,
-send it a message, or answer one of its requests.
+it from the thread's menu, the command palette, the eye button in the thread header, or the row
+on **Shared with you**. **Unfollow** takes it out of your sections. You follow a thread
+automatically when you own it, send it a message, or answer one of its requests. A follow that
+sending a message added ends on its own: when the thread settles, or once your last turn on it has
+ended and you've read it. Follow it yourself, or pin it, to keep it.
 
 Notifications go only to the people a thread concerns:
 
@@ -282,9 +295,13 @@ one with **+** next to **Spaces** in the sidebar, or **New space** in the comman
 says who will be notified and whose Claude account pays for Pair's reply.
 
 Tasks in a space are threads with an owner. A task you assign to someone else waits until they
-press **Start**, and it runs on their account with the model they choose. **Assigned to me** in
-the sidebar lists the tasks waiting on you. Only the owner can manage members, rename the space,
+press **Start**, and it runs on their account with the model they choose. **My tasks** at the top
+of the sidebar lists the open tasks you own in every space, grouped by status, with your recent
+Done and Canceled ones collapsed at the end, and a task waiting
+on you also shows in **Inbox**. Each space is one row in the sidebar; its number is how many
+Inbox items belong to it, and a grey dot means its room has unread messages. After five spaces,
+**N more** holds the rest and the archived ones. Only the owner can manage members, rename the space,
 change who pays, or archive it; an archived space is read-only until its owner unarchives it.
 
-On mobile, **Assigned to me** and **Spaces** sit at the top of Home. A space notification shows
+On mobile, **Inbox**, **My tasks**, **Shared with you** and **Spaces** sit at the top of Home. A space notification shows
 only who mentioned or added you, never the message, and opens the room.

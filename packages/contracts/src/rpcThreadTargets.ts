@@ -174,6 +174,19 @@ export const RPC_THREAD_TARGETS: {
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: thread,
   [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: (input) => paths(input.worktreePath),
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: thread,
+  [WS_METHODS.lineageRead]: thread,
+  [WS_METHODS.threadBranchOffDraft]: (input) => [{ threadId: input.sourceThreadId }],
+  [WS_METHODS.threadBranchOff]: (input) => [{ threadId: input.sourceThreadId }],
+  [WS_METHODS.threadUpdatePreview]: thread,
+  [WS_METHODS.threadUpdate]: thread,
+  [WS_METHODS.threadAbortUpdate]: thread,
+  [WS_METHODS.threadUndoUpdate]: thread,
+  [WS_METHODS.threadBringBack]: thread,
+  [WS_METHODS.offerPreview]: thread,
+  [WS_METHODS.offerCreate]: thread,
+  [WS_METHODS.threadMoveToOwnMachine]: thread,
+  [WS_METHODS.threadBranchOffSummary]: (input) => [{ threadId: input.sourceThreadId }],
+  [WS_METHODS.threadStartFromMain]: thread,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) => [
     ...(input.threadId === undefined
       ? []
@@ -271,8 +284,26 @@ export const RPC_OUTPUT_FILTERED: { readonly [M in WsMethod]?: string } = {
   [WS_METHODS.spacesMutate]: "space/SpaceService.ts mutate: null once the caller is not a member",
   [WS_METHODS.spacesTaskGet]:
     "space/SpaceService.ts taskGet: members only, and only the task's threads the caller may open",
+  [WS_METHODS.inboxList]: "inbox/InboxService.ts list: only items on threads the caller may open",
+  [WS_METHODS.sharedWithYouList]:
+    "inbox/InboxService.ts sharedWithYou: only threads the caller may open",
+  [WS_METHODS.myTasksListClosed]:
+    "inbox/InboxService.ts closedTasks: the caller's own tasks, in spaces whose rooms they open",
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]:
     "orchestration-v2/MemberThreadView.ts assertViewerThread, makeThreadEventView",
+  [WS_METHODS.lineageRead]:
+    "lineage/BranchLineageService.ts read: only the source and branches the caller may open",
+  // `offer.*` names only an offer id; the service resolves its threads before the access check.
+  [WS_METHODS.offerWithdraw]:
+    "lineage/BranchLineageService.ts: the offer's sender only, who may open its branch",
+  [WS_METHODS.offerApply]:
+    "lineage/BranchLineageService.ts: the source's holder only, who may open the source",
+  [WS_METHODS.offerDecline]:
+    "lineage/BranchLineageService.ts: the source's holder only, who may open the source",
+  [WS_METHODS.threadRevertOffer]:
+    "lineage/BranchLineageService.ts: the source's holder only, who may open the source",
+  [WS_METHODS.offerDiff]:
+    "lineage/BranchLineageService.ts offerDiff: whoever may open the offer's source or branch",
 };
 
 const ownBinary = "`executablePath` is the server's own binary, not a machine's.";

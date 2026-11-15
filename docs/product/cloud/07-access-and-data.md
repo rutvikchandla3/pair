@@ -264,6 +264,10 @@ its test asserts `targetThread.worktreePath === sourceThread.worktreePath`). A s
 precisely to share the parent's worktree (the `orchestrationV2WorktreePending` guard in
 [Orchestrator.ts](../../../apps/server/src/orchestration-v2/Orchestrator.ts)).
 
+On a cloud thread only the owner forks, and a teammate's side chat is read-only (plan mode): both
+share the owner's checkout. A teammate who wants to build uses Branch off, which gets a worktree of
+its own ([12](./12-branch-off.md)).
+
 | Fork kind               | Cloud behavior                                                                        | Milestone  |
 | ----------------------- | ------------------------------------------------------------------------------------- | ---------- |
 | Side chat               | Shares the source's machine. Its turns wake it through the owning thread's stream.    | M1, landed |

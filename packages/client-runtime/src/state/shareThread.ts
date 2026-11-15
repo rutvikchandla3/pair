@@ -15,9 +15,6 @@ import { activeTeamMembers, isTeamModeMembers, type TeamMembers } from "./team.t
 
 export const SHARE_FAILURE_TITLE = "Could not change who can open this thread";
 
-/** Under an open Team shelf with nothing on it. */
-export const TEAM_SHELF_EMPTY_LABEL = "Threads teammates share with you show up here.";
-
 export const THREAD_ACCESS_REVOKED_MESSAGE = "You no longer have access to this thread.";
 /** It never says which, or whose. */
 export const THREAD_PRIVATE_OR_GONE_MESSAGE =

@@ -613,6 +613,106 @@ it.effect("answering or cancelling a request follows the thread once", () =>
   }).pipe(Effect.provide(layerTeam)),
 );
 
+const completeLatestRun = Effect.gen(function* () {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+  const now = yield* DateTime.now;
+  yield* projections.apply({
+    id: EventId.make(`event:${run.id}-completed`),
+    type: "run.updated",
+    threadId,
+    runId: run.id,
+    occurredAt: now,
+    payload: { ...run, status: "completed", completedAt: now },
+  });
+});
+
+const visitAt = (id: string, actorId: MemberId, visitedAt: string) =>
+  dispatch({
+    type: "thread.visit",
+    commandId: CommandId.make(id),
+    threadId,
+    visitedAt,
+    actorId,
+  });
+
+it.effect.each([
+  {
+    name: "the thread settles",
+    steps: [send("bob-asks", bob), completeLatestRun],
+    end: "settle",
+    following: false,
+  },
+  {
+    name: "their last turn ended and they read it",
+    steps: [send("bob-asks", bob), completeLatestRun],
+    end: "visit",
+    following: false,
+  },
+  {
+    name: "they read it while their turn still runs",
+    steps: [send("bob-asks", bob)],
+    end: "visit",
+    following: true,
+  },
+  {
+    name: "they also followed it themselves",
+    steps: [send("bob-asks", bob), follow("bob-follow", bob, "thread.follow"), completeLatestRun],
+    end: "visit",
+    following: true,
+  },
+  {
+    name: "they pinned it, and it settles",
+    steps: [
+      send("bob-asks", bob),
+      dispatch({
+        type: "thread.pin",
+        commandId: CommandId.make("bob-pin"),
+        threadId,
+        actorId: bob,
+      }),
+      completeLatestRun,
+    ],
+    end: "settle",
+    following: true,
+  },
+  {
+    name: "answering a request followed it",
+    steps: [
+      Effect.flatMap(pendingQuestion("asked"), (requestId) =>
+        dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("bob-answer"),
+          threadId,
+          requestId,
+          answers: { color: "Blue" },
+          actorId: bob,
+        }),
+      ),
+    ],
+    end: "visit",
+    following: true,
+  },
+] as const)("a prompt's follow ends only on settle or a read after the turn: $name", (row) =>
+  Effect.gen(function* () {
+    yield* createThread;
+    for (const step of row.steps) yield* step;
+    assert.notEqual((yield* readState).members.get(bob)!.followedAt, null);
+    yield* TestClock.adjust("10 seconds");
+    if (row.end === "settle") {
+      yield* dispatch({ type: "thread.settle", commandId: CommandId.make("settle"), threadId });
+    } else {
+      yield* visitAt("bob-reads", bob, "1970-01-01T00:00:10.000Z");
+    }
+    const state = (yield* readState).members.get(bob)!;
+    assert.deepEqual(
+      [state.followedAt !== null, state.followSource ?? null],
+      [row.following, row.name === "they read it while their turn still runs" ? "prompt" : null],
+    );
+  }).pipe(Effect.provide(layerTeam)),
+);
+
 it.effect("owner.set hands the holder's state to the new owner and back", () =>
   Effect.gen(function* () {
     const owner = (yield* serverOwner)!;

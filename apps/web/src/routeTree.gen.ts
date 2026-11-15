@@ -18,9 +18,12 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
+import { Route as ChatSharedRouteImport } from './routes/_chat.shared'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatMyTasksRouteImport } from './routes/_chat.my-tasks'
+import { Route as ChatInboxRouteImport } from './routes/_chat.inbox'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
@@ -54,6 +57,7 @@ import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.a
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 import { Route as ChatSpacesEnvironmentIdSpaceIdRouteImport } from './routes/_chat.spaces.$environmentId.$spaceId'
+import { Route as ChatBranchOffEnvironmentIdSourceThreadIdRouteImport } from './routes/_chat.branch-off.$environmentId.$sourceThreadId'
 import { Route as ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRouteImport } from './routes/_chat.spaces.$environmentId.$spaceId_.tasks.$taskId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
@@ -100,6 +104,11 @@ const ChatUsageRoute = ChatUsageRouteImport.update({
   path: '/usage',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatSharedRoute = ChatSharedRouteImport.update({
+  id: '/shared',
+  path: '/shared',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatSettingsRoute = ChatSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -113,6 +122,16 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
 const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatMyTasksRoute = ChatMyTasksRouteImport.update({
+  id: '/my-tasks',
+  path: '/my-tasks',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatInboxRoute = ChatInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
   getParentRoute: () => ChatRoute,
 } as any)
 const ThreadsEnvironmentIdThreadIdRoute =
@@ -288,6 +307,12 @@ const ChatSpacesEnvironmentIdSpaceIdRoute =
     path: '/spaces/$environmentId/$spaceId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatBranchOffEnvironmentIdSourceThreadIdRoute =
+  ChatBranchOffEnvironmentIdSourceThreadIdRouteImport.update({
+    id: '/branch-off/$environmentId/$sourceThreadId',
+    path: '/branch-off/$environmentId/$sourceThreadId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 const ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute =
   ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRouteImport.update({
     id: '/spaces/$environmentId/$spaceId_/tasks/$taskId',
@@ -302,9 +327,12 @@ export interface FileRoutesByFullPath {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/inbox': typeof ChatInboxRoute
+  '/my-tasks': typeof ChatMyTasksRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
+  '/shared': typeof ChatSharedRoute
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -339,6 +367,7 @@ export interface FileRoutesByFullPath {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/branch-off/$environmentId/$sourceThreadId': typeof ChatBranchOffEnvironmentIdSourceThreadIdRoute
   '/spaces/$environmentId/$spaceId': typeof ChatSpacesEnvironmentIdSpaceIdRoute
   '/spaces/$environmentId/$spaceId/tasks/$taskId': typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute
 }
@@ -348,9 +377,12 @@ export interface FileRoutesByTo {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/inbox': typeof ChatInboxRoute
+  '/my-tasks': typeof ChatMyTasksRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
+  '/shared': typeof ChatSharedRoute
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/': typeof ChatIndexRoute
@@ -386,6 +418,7 @@ export interface FileRoutesByTo {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/branch-off/$environmentId/$sourceThreadId': typeof ChatBranchOffEnvironmentIdSourceThreadIdRoute
   '/spaces/$environmentId/$spaceId': typeof ChatSpacesEnvironmentIdSpaceIdRoute
   '/spaces/$environmentId/$spaceId/tasks/$taskId': typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute
 }
@@ -397,9 +430,12 @@ export interface FileRoutesById {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/_chat/inbox': typeof ChatInboxRoute
+  '/_chat/my-tasks': typeof ChatMyTasksRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
+  '/_chat/shared': typeof ChatSharedRoute
   '/_chat/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/_chat/': typeof ChatIndexRoute
@@ -435,6 +471,7 @@ export interface FileRoutesById {
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/_chat/branch-off/$environmentId/$sourceThreadId': typeof ChatBranchOffEnvironmentIdSourceThreadIdRoute
   '/_chat/spaces/$environmentId/$spaceId': typeof ChatSpacesEnvironmentIdSpaceIdRoute
   '/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId': typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute
 }
@@ -447,9 +484,12 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/inbox'
+    | '/my-tasks'
     | '/new'
     | '/pull-requests'
     | '/settings'
+    | '/shared'
     | '/usage'
     | '/projects/$projectKey'
     | '/$environmentId/$threadId'
@@ -484,6 +524,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/branch-off/$environmentId/$sourceThreadId'
     | '/spaces/$environmentId/$spaceId'
     | '/spaces/$environmentId/$spaceId/tasks/$taskId'
   fileRoutesByTo: FileRoutesByTo
@@ -493,9 +534,12 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/inbox'
+    | '/my-tasks'
     | '/new'
     | '/pull-requests'
     | '/settings'
+    | '/shared'
     | '/usage'
     | '/projects/$projectKey'
     | '/'
@@ -531,6 +575,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/branch-off/$environmentId/$sourceThreadId'
     | '/spaces/$environmentId/$spaceId'
     | '/spaces/$environmentId/$spaceId/tasks/$taskId'
   id:
@@ -541,9 +586,12 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/_chat/inbox'
+    | '/_chat/my-tasks'
     | '/_chat/new'
     | '/_chat/pull-requests'
     | '/_chat/settings'
+    | '/_chat/shared'
     | '/_chat/usage'
     | '/projects/$projectKey'
     | '/_chat/'
@@ -579,6 +627,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/_chat/branch-off/$environmentId/$sourceThreadId'
     | '/_chat/spaces/$environmentId/$spaceId'
     | '/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId'
   fileRoutesById: FileRoutesById
@@ -659,6 +708,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatUsageRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/shared': {
+      id: '/_chat/shared'
+      path: '/shared'
+      fullPath: '/shared'
+      preLoaderRoute: typeof ChatSharedRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/settings': {
       id: '/_chat/settings'
       path: '/settings'
@@ -678,6 +734,20 @@ declare module '@tanstack/react-router' {
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/my-tasks': {
+      id: '/_chat/my-tasks'
+      path: '/my-tasks'
+      fullPath: '/my-tasks'
+      preLoaderRoute: typeof ChatMyTasksRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/inbox': {
+      id: '/_chat/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof ChatInboxRouteImport
       parentRoute: typeof ChatRoute
     }
     '/threads/$environmentId/$threadId': {
@@ -911,6 +981,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSpacesEnvironmentIdSpaceIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/branch-off/$environmentId/$sourceThreadId': {
+      id: '/_chat/branch-off/$environmentId/$sourceThreadId'
+      path: '/branch-off/$environmentId/$sourceThreadId'
+      fullPath: '/branch-off/$environmentId/$sourceThreadId'
+      preLoaderRoute: typeof ChatBranchOffEnvironmentIdSourceThreadIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId': {
       id: '/_chat/spaces/$environmentId/$spaceId_/tasks/$taskId'
       path: '/spaces/$environmentId/$spaceId/tasks/$taskId'
@@ -990,25 +1067,34 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 )
 
 interface ChatRouteChildren {
+  ChatInboxRoute: typeof ChatInboxRoute
+  ChatMyTasksRoute: typeof ChatMyTasksRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
+  ChatSharedRoute: typeof ChatSharedRoute
   ChatUsageRoute: typeof ChatUsageRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatBranchOffEnvironmentIdSourceThreadIdRoute: typeof ChatBranchOffEnvironmentIdSourceThreadIdRoute
   ChatSpacesEnvironmentIdSpaceIdRoute: typeof ChatSpacesEnvironmentIdSpaceIdRoute
   ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute: typeof ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
+  ChatInboxRoute: ChatInboxRoute,
+  ChatMyTasksRoute: ChatMyTasksRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
+  ChatSharedRoute: ChatSharedRoute,
   ChatUsageRoute: ChatUsageRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatBranchOffEnvironmentIdSourceThreadIdRoute:
+    ChatBranchOffEnvironmentIdSourceThreadIdRoute,
   ChatSpacesEnvironmentIdSpaceIdRoute: ChatSpacesEnvironmentIdSpaceIdRoute,
   ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute:
     ChatSpacesEnvironmentIdSpaceIdTasksTaskIdRoute,

@@ -16,6 +16,7 @@ import {
   ProviderTurnId,
   RunId,
   RuntimeRequestId,
+  SandboxId,
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
@@ -375,6 +376,30 @@ it.effect("owner rules for create, fork, side chat, delegated child and owner.se
         yield* owner(ThreadId.make("thread:owner-side-chat")),
       ],
       [alice, bob, bob],
+    );
+    // On a cloud thread, a side chat someone else opens is read-only: it starts in plan mode.
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const source = yield* projections.getThread(sourceId);
+    yield* projections.apply({
+      id: EventId.make("event:owner-fork-source-machine"),
+      type: "thread.metadata-updated",
+      threadId: sourceId,
+      occurredAt: now,
+      payload: { ...source, sandboxId: SandboxId.make("sbx_0123456789abcdef0123") },
+    });
+    yield* fork("thread:cloud-side-chat-alice", { actorId: alice, sideChat: true });
+    yield* fork("thread:cloud-side-chat-bob", { actorId: bob, sideChat: true });
+    const modeOf = (threadId: string) =>
+      orchestrator
+        .getThreadProjection(ThreadId.make(threadId))
+        .pipe(Effect.map((p) => p.thread.interactionMode));
+    assert.deepEqual(
+      [
+        yield* modeOf("thread:owner-side-chat"),
+        yield* modeOf("thread:cloud-side-chat-alice"),
+        yield* modeOf("thread:cloud-side-chat-bob"),
+      ],
+      ["default", "plan", "default"],
     );
 
     yield* orchestrator.dispatch({

@@ -25,6 +25,7 @@ import {
   ArchiveIcon,
   CircleAlertIcon,
   CircleCheckIcon,
+  GitCompareArrowsIcon,
   MessageCircleQuestionIcon,
   MessageSquareIcon,
   ShieldQuestionIcon,
@@ -52,6 +53,10 @@ import {
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
 import { toastManager } from "./ui/toast";
+import {
+  type LineageNotificationKind,
+  lineageNotificationKind,
+} from "./lineage/lineageNotifications";
 
 interface NotificationState extends ThreadNotificationObservation {
   readonly raw: OrchestrationV2ThreadShell;
@@ -62,10 +67,9 @@ interface NotificationState extends ThreadNotificationObservation {
   readonly archivedBy: MemberId | null;
 }
 
-function routedKind(
-  kind: ThreadNotificationKind,
-  status: SidebarThreadStatus,
-): RoutedNotificationKind {
+type PresentedKind = ThreadNotificationKind | LineageNotificationKind;
+
+function routedKind(kind: PresentedKind, status: SidebarThreadStatus): RoutedNotificationKind {
   if (kind !== "input") return kind;
   return status === "approval" ||
     status === "limited" ||
@@ -145,7 +149,7 @@ export function startThreadNotifications(
   const isRouted = (
     environmentId: EnvironmentId,
     state: NotificationState,
-    kind: ThreadNotificationKind,
+    kind: PresentedKind,
   ) => {
     const members = registry.get(teamEnvironment.membersValueAtom(environmentId));
     let serverOwnerId: MemberId | null = null;
@@ -165,6 +169,8 @@ export function startThreadNotifications(
                 : null,
         prompterId: thread.latestRunAuthorId ?? ownerId,
         ownerId,
+        // A branch's offers are its holder's.
+        senderId: ownerId,
       },
       {
         memberId: registry.get(teamEnvironment.currentMemberIdAtom(environmentId)),
@@ -173,11 +179,7 @@ export function startThreadNotifications(
     );
   };
 
-  const present = (
-    environmentId: EnvironmentId,
-    state: NotificationState,
-    kind: ThreadNotificationKind,
-  ) => {
+  const present = (environmentId: EnvironmentId, state: NotificationState, kind: PresentedKind) => {
     const { thread, status } = state;
     if (
       registry
@@ -221,7 +223,12 @@ export function startThreadNotifications(
         type:
           kind === "completion"
             ? "success"
-            : kind === "message" || kind === "assigned" || kind === "archived"
+            : kind === "message" ||
+                kind === "assigned" ||
+                kind === "archived" ||
+                kind === "offer" ||
+                kind === "offer-applied" ||
+                kind === "offer-declined"
               ? "info"
               : status === "failed"
                 ? "error"
@@ -239,6 +246,10 @@ export function startThreadNotifications(
               <UserRoundCheckIcon aria-hidden className="size-4 text-info-foreground" />
             ) : kind === "archived" ? (
               <ArchiveIcon aria-hidden className="size-4 text-info-foreground" />
+            ) : kind === "offer" || kind === "offer-applied" || kind === "offer-declined" ? (
+              <GitCompareArrowsIcon aria-hidden className="size-4 text-info-foreground" />
+            ) : kind === "offer-returned" ? (
+              <GitCompareArrowsIcon aria-hidden className="size-4 text-warning-foreground" />
             ) : status === "approval" ? (
               <ShieldQuestionIcon aria-hidden className="size-4 text-warning-foreground" />
             ) : status === "limited" ? (
@@ -355,6 +366,7 @@ export function startThreadNotifications(
       const archivedBy = removedBy.get(threadId);
       if (!next.has(threadId) && archivedBy !== undefined) archived.push({ ...prior, archivedBy });
     }
+    const reconnecting = entry.reconnecting;
     entry.reconnecting = false;
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
@@ -364,6 +376,13 @@ export function startThreadNotifications(
         archived: state.thread.archivedAt !== null,
         quiet: state.raw.latestRunStopRequested === true,
       });
+      const lineageKind =
+        prior === undefined || reconnecting
+          ? null
+          : lineageNotificationKind(prior.raw.branchLink, state.raw.branchLink);
+      if (lineageKind !== null && isRouted(environmentId, state, lineageKind)) {
+        present(environmentId, state, lineageKind);
+      }
     }
   };
 

@@ -61,6 +61,11 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * a holder change applies at the next launch.
    */
   gitAuthor: Schema.optionalKey(Schema.Struct({ name: Schema.String, email: Schema.String })),
+  /**
+   * The thread's slot on a shared cloud machine, for its `PORT` and `PAIR_THREAD_SLOT`. Like
+   * `gitAuthor`, never a restart key.
+   */
+  threadSlot: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

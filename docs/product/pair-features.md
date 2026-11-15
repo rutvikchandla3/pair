@@ -22,7 +22,7 @@ T3 Code throughout.
 - **The agent knows who is speaking.** Once two people have prompted a thread, the agent sees
   `Message from <name>:` before each new message.
 - **Personal sidebar.** Pins, order, unread state and snoozes are yours alone. Other people's
-  threads sit on the **Team** shelf with the owner's avatar.
+  threads are on **Shared with you**, and join your list when you pin, follow or prompt them.
 - **Ownership.** Every thread has an owner. **Assign to…** hands it over, from the thread menu or
   the command palette. Only the owner or an admin can delete it.
 - **Worktrees by default.** On a team server, new threads start in a new worktree, so people don't
@@ -106,7 +106,7 @@ T3 Code throughout.
 ### Mobile parity · [#38](https://github.com/rutvikchandla3/t3code/pull/38) [#39](https://github.com/rutvikchandla3/t3code/pull/39) [#40](https://github.com/rutvikchandla3/t3code/pull/40) [#41](https://github.com/rutvikchandla3/t3code/pull/41)
 
 - **The team on your phone.** The iOS and Android apps show authors on messages, each thread's
-  owner and the Team shelf, with **Follow** and **Assign to…** in the thread menus.
+  owner, Inbox, My tasks and Shared with you, with **Follow** and **Assign to…** in the thread menus.
 - **Same rules as the web.** Sending on a teammate's turn queues your message; hold Send for
   **Steer now**. Queued messages show their author, and approvals say who answered them.
 - **Presence.** Your phone reports the thread on screen and your typing, and counts as **Away** in
@@ -191,6 +191,25 @@ T3 Code throughout.
   repositories, one seed per repository. Not built yet: continuing a cloud workspace thread on a
   Mac, and the diff panel's uncommitted and commit views.
 - User guide: [Workspaces](../user/workspaces.md).
+
+### A calm sidebar, and building together
+
+- **Inbox, My tasks, Shared with you.** Three fixed sidebar rows open pages. Inbox is one
+  server-derived list of what waits on you (approvals and questions, tasks assigned or handed back,
+  offers; then mentions, `@pair` replies and shares), and answers approvals in place. My tasks
+  groups your open tasks by status; Shared with you groups teammates' threads by person. They
+  replace Assigned to me, the task sub-rows and the Team shelf.
+- **One row per space**, with its share of the Inbox count, five then **N more**.
+- **Follows end on their own** when prompting added them: at settle, or once your last turn has
+  ended and you've read it.
+- **Branch off** a teammate's cloud thread into your own thread, branch and worktree, on their
+  machine (its own `PORT` and `PAIR_THREAD_SLOT`) or a new one. **Update** merges the source's
+  snapshot in, **Offer** proposes your commits, and the owner's **Apply** writes them into their
+  files between turns, credited with `Co-authored-by`. Fork is the owner's, and a teammate's side
+  chat is read-only.
+- On web, desktop and mobile, with MCP tools for Branch off, Update and Offer.
+- Design: [Spaces redesign](./spaces-redesign.md). User guides: [Team](../user/team.md),
+  [Build on a teammate's thread](../user/cloud.md#build-on-a-teammates-thread).
 
 ## Not planned
 

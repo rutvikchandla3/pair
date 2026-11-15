@@ -182,6 +182,61 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets members read their Inbox, Shared with you and closed tasks, and Done or Snooze with orchestration operate", () => {
+    for (const method of [
+      WS_METHODS.inboxList,
+      WS_METHODS.inboxSummary,
+      WS_METHODS.inboxSubscribeSummary,
+      WS_METHODS.sharedWithYouList,
+      WS_METHODS.myTasksListClosed,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+      expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
+    }
+    for (const method of [
+      WS_METHODS.inboxDismiss,
+      WS_METHODS.inboxSnooze,
+      WS_METHODS.inboxUnsnooze,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
+      expect(clientRpcRequiredScopes(method, {})).toEqual([AuthOrchestrationOperateScope]);
+    }
+  });
+
+  it("lets members read lineage and act on it with orchestration operate; BranchLineageService decides who", () => {
+    for (const method of [
+      WS_METHODS.lineageRead,
+      WS_METHODS.threadBranchOffDraft,
+      WS_METHODS.threadUpdatePreview,
+      WS_METHODS.offerPreview,
+      WS_METHODS.offerDiff,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+      expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
+    }
+    for (const method of [
+      WS_METHODS.threadBranchOff,
+      WS_METHODS.threadUpdate,
+      WS_METHODS.threadAbortUpdate,
+      WS_METHODS.threadUndoUpdate,
+      WS_METHODS.threadBringBack,
+      WS_METHODS.offerCreate,
+      WS_METHODS.offerWithdraw,
+      WS_METHODS.offerApply,
+      WS_METHODS.offerDecline,
+      WS_METHODS.threadRevertOffer,
+      WS_METHODS.threadMoveToOwnMachine,
+      // The summary runs a model on the caller's account.
+      WS_METHODS.threadBranchOffSummary,
+      WS_METHODS.threadStartFromMain,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
+      expect(clientRpcRequiredScopes(method, {})).toEqual([AuthOrchestrationOperateScope]);
+    }
+  });
+
   it("lets members read a space's tasks, its workspace preview and the Team Claude key's status", () => {
     for (const method of [
       WS_METHODS.spacesTaskGet,

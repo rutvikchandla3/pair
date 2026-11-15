@@ -63,6 +63,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { labelUserMessageForProvider } from "./SenderLabel.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import { lineageTurnNote } from "../lineage/LineageAgentNotes.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -959,6 +960,11 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      const lineageNote = lineageTurnNote({
+        runId: run.id,
+        runs: projection.runs,
+        lineage: projection.lineage,
+      });
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1689,7 +1695,7 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [delivery.context, sideChatContext, restartNote, lineageNote]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1757,6 +1763,7 @@ export const layer: Layer.Layer<
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
+        lineageNote === "" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);

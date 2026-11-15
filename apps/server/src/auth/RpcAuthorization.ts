@@ -100,6 +100,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.spacesGet]: AuthOrchestrationReadScope,
   [WS_METHODS.spacesTaskGet]: AuthOrchestrationReadScope,
   [WS_METHODS.spacesWorkspacePreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.inboxList]: AuthOrchestrationReadScope,
+  [WS_METHODS.inboxSummary]: AuthOrchestrationReadScope,
+  [WS_METHODS.inboxSubscribeSummary]: AuthOrchestrationReadScope,
+  [WS_METHODS.sharedWithYouList]: AuthOrchestrationReadScope,
+  [WS_METHODS.myTasksListClosed]: AuthOrchestrationReadScope,
   [WS_METHODS.teamClaudeKeySubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
@@ -234,6 +239,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.presenceReport]: AuthOrchestrationReadScope,
   [WS_METHODS.pushRegister]: AuthOrchestrationReadScope,
   [WS_METHODS.pushUnregister]: AuthOrchestrationReadScope,
+  [WS_METHODS.lineageRead]: AuthOrchestrationReadScope,
+  [WS_METHODS.threadBranchOffDraft]: AuthOrchestrationReadScope,
+  [WS_METHODS.threadUpdatePreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.offerPreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.offerDiff]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

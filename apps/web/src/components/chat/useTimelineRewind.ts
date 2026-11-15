@@ -14,6 +14,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { discardedTurnAuthors } from "@t3tools/client-runtime/state/composer-dispatch";
 import { useNavigate } from "@tanstack/react-router";
+import * as DateTime from "effect/DateTime";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -139,7 +140,14 @@ export function useTimelineRewind(input: TimelineRewindInput) {
               members: team.members,
               me: team.currentMemberId,
             }).map(({ memberId, count }) => ({ name: team.nameOf(memberId), count }));
-      openRevertConfirm(routeThreadKey, { turnCount, messageId, discards });
+      const checkpoint = findRevertCheckpoint(serverProjection?.checkpoints ?? [], turnCount);
+      openRevertConfirm(routeThreadKey, {
+        turnCount,
+        messageId,
+        discards,
+        restoresTo:
+          checkpoint === undefined ? message.createdAt : DateTime.formatIso(checkpoint.capturedAt),
+      });
       return;
     }
 

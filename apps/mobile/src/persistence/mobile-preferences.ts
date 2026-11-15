@@ -126,10 +126,13 @@ export interface Preferences {
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
   readonly threadListWorkingShelfExpanded?: boolean;
-  readonly threadListTeamShelfExpanded?: boolean;
+  /** The user's space order per environment id; spaces not in it list first, newest first. */
+  readonly spaceOrders?: Readonly<Record<string, ReadonlyArray<string>>>;
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
+  /** Branch off's last Runs on choice, keyed by `rememberedRunsOnKey(environmentId)`. */
+  readonly branchOffRunsOn?: Readonly<Record<string, "source-machine" | "new-machine">>;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -206,10 +209,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
     threadListWorkingShelfExpanded?: boolean;
-    threadListTeamShelfExpanded?: boolean;
+    spaceOrders?: Readonly<Record<string, ReadonlyArray<string>>>;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
+    branchOffRunsOn?: Preferences["branchOffRunsOn"];
   } = {};
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
@@ -355,8 +359,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.threadListWorkingShelfExpanded === "boolean") {
     preferences.threadListWorkingShelfExpanded = parsed.threadListWorkingShelfExpanded;
   }
-  if (typeof parsed.threadListTeamShelfExpanded === "boolean") {
-    preferences.threadListTeamShelfExpanded = parsed.threadListTeamShelfExpanded;
+  if (
+    typeof parsed.spaceOrders === "object" &&
+    parsed.spaceOrders !== null &&
+    !Array.isArray(parsed.spaceOrders)
+  ) {
+    preferences.spaceOrders = Object.fromEntries(
+      Object.entries(parsed.spaceOrders).flatMap(([environmentId, order]) =>
+        Array.isArray(order)
+          ? [[environmentId, order.filter((id): id is string => typeof id === "string")]]
+          : [],
+      ),
+    );
   }
   if (isThreadListFilters(parsed.threadListFilters)) {
     preferences.threadListFilters = parsed.threadListFilters;
@@ -366,6 +380,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isWorkspaceSelections(parsed.workspaceSelections)) {
     preferences.workspaceSelections = parsed.workspaceSelections;
+  }
+  if (
+    typeof parsed.branchOffRunsOn === "object" &&
+    parsed.branchOffRunsOn !== null &&
+    !Array.isArray(parsed.branchOffRunsOn)
+  ) {
+    preferences.branchOffRunsOn = Object.fromEntries(
+      Object.entries(parsed.branchOffRunsOn).filter(
+        (entry): entry is [string, "source-machine" | "new-machine"] =>
+          entry[1] === "source-machine" || entry[1] === "new-machine",
+      ),
+    );
   }
   return preferences;
 }

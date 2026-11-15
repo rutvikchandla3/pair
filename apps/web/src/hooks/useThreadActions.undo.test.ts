@@ -40,6 +40,10 @@ vi.mock("./useHandleNewThread", () => ({
     router.state.location.href = "/draft/project";
   },
 }));
+vi.mock("../components/branchOff/machineRules", () => ({
+  sourceKeepsMachinePrompt: () => null,
+  confirmMachinePrompt: vi.fn(),
+}));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
 vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));

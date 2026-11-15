@@ -10,12 +10,16 @@ import type {
   SpaceTaskBase,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { BoxesIcon, FolderCodeIcon } from "lucide-react";
+import { canBranchOff } from "@t3tools/client-runtime/branch-lineage";
+import { BoxesIcon, FolderCodeIcon, GitBranchIcon } from "lucide-react";
 import { RegistryContext } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useContext, useRef, useState } from "react";
 
 import { spaceEnvironment, useSpaceProjects } from "../../state/spaces";
+import { threadsByLineage } from "../branchOff/branchOff.logic";
+import { branchOffRoute } from "../branchOff/branchOffTarget";
+import { useBranchOffViewer } from "../branchOff/useBranchOff";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Button } from "../ui/button";
 import {
@@ -49,8 +53,20 @@ export function SpaceStartThreadDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly space: Space;
   readonly task: SpaceTask;
-  /** The task's threads, whose open pull requests can be continued. */
-  readonly threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "projectId" | "pullRequests">>;
+  /** The task's threads: their open pull requests can be continued, and each can be built on. */
+  readonly threads: ReadonlyArray<
+    Pick<
+      OrchestrationV2ThreadShell,
+      | "id"
+      | "title"
+      | "ownerId"
+      | "projectId"
+      | "pullRequests"
+      | "sandboxId"
+      | "branchLink"
+      | "archivedAt"
+    >
+  >;
   readonly onClose: () => void;
 }) {
   const { space, task } = props;
@@ -66,6 +82,12 @@ export function SpaceStartThreadDialog(props: {
   // Cancel start interrupts the RPC; the server then deletes the thread and links nothing.
   const pending = useRef<AbortController | null>(null);
   const model = useSpaceModelSelection(props.environmentId, projectId, picked).selection;
+  const viewer = useBranchOffViewer(props.environmentId);
+  // Picking one opens the Branch off draft for it, with its Runs on question.
+  const buildOn =
+    viewer === null
+      ? []
+      : threadsByLineage(props.threads).filter(({ thread }) => canBranchOff(thread, viewer));
 
   const project = projects.find((candidate) => candidate.id === projectId) ?? null;
   const workspaces = projects.filter((candidate) => isWorkspaceProject(candidate));
@@ -294,6 +316,35 @@ export function SpaceStartThreadDialog(props: {
                 )}
               </div>
             </div>
+            {buildOn.length === 0 || viewer === null ? null : (
+              <div className="flex flex-col gap-1">
+                <Label>Or build on a thread</Label>
+                {buildOn.map(({ thread }) => (
+                  <Button
+                    key={thread.id}
+                    size="sm"
+                    variant="ghost"
+                    className="justify-start"
+                    disabled={busy}
+                    onClick={() => {
+                      cancel();
+                      void navigate(
+                        branchOffRoute({ environmentId: props.environmentId, threadId: thread.id }),
+                      );
+                    }}
+                  >
+                    <GitBranchIcon />
+                    <span className="truncate">{thread.title}</span>
+                    <span className="truncate text-muted-foreground text-xs">
+                      {thread.ownerId == null || thread.ownerId === viewer.memberId
+                        ? "Yours"
+                        : viewer.nameOf(thread.ownerId)}{" "}
+                      · switches to Branch off
+                    </span>
+                  </Button>
+                ))}
+              </div>
+            )}
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">Account</span>
               {model === null ? (

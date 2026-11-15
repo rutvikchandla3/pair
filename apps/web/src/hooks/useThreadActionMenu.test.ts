@@ -35,6 +35,14 @@ function recordEffect(action: string) {
 }
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
+vi.mock("../components/branchOff/branchOffTarget", () => ({
+  branchOffRoute: vi.fn(),
+  readCloudThreadMenu: () => null,
+}));
+vi.mock("../components/branchOff/MoveToOwnMachineDialog", () => ({
+  openMoveToOwnMachineDialog: vi.fn(),
+}));
+vi.mock("../components/chat/useSideChat", () => ({ openSideChatOn: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),

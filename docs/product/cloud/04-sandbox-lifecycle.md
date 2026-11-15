@@ -233,8 +233,9 @@ on a sandbox still `provisioning` or `waking` is skipped there and re-armed with
 
 A side chat or fork of a cloud thread keeps its source's `sandboxId` and checkout path, matching local
 worktree semantics ([07](./07-access-and-data.md#2-restore-revert-and-fork)): ThreadForkService spreads
-the source thread. "Fork to a new machine" (Later) would override it. Unrelated threads never join a
-sandbox.
+the source thread. "Fork to a new machine" overrides it. A branch from Branch off joins the source's
+sandbox with a worktree of its own ([12](./12-branch-off.md#where-a-branch-runs)); no other
+unrelated thread joins one.
 
 **Who uses a sandbox.** Membership is a projection of each thread's own events, not a counter on the
 sandbox row: `orchestration_v2_projection_sandbox_threads (sandbox_id, thread_id, attached_at, archived)`

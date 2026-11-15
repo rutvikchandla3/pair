@@ -329,7 +329,7 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const threadId = ThreadId.make("thread:restore");
-    const { projectId, sandbox, mirrorGit } = yield* setup(threadId);
+    const { projectId, sandbox, mirror, mirrorGit } = yield* setup(threadId);
     const sync = yield* MirrorSync.MirrorSync;
     const snapshotRef = CheckpointMirror.sandboxSnapshotRef(threadId);
     const vcs = yield* VcsDriver.VcsDriver;
@@ -442,6 +442,15 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
       yield* git(sandbox, ["rev-parse", "HEAD"]),
     );
     assert.equal(yield* git(later.worktreePath, ["status", "--porcelain"]), "");
+
+    // A checkout seeded for a branch or a move reads as a start once, then rebuilds again.
+    const seedRef = CheckpointMirror.sandboxSeedRef(threadId);
+    yield* mirror.updateRefs(
+      projectId,
+      new Map([[seedRef, yield* git(sandbox, ["rev-parse", "HEAD"])]]),
+    );
+    assert.deepEqual((yield* rebuild("seeded")).restored, { snapshotAt: null, seeded: true });
+    assert.isFalse((yield* mirror.tips(projectId, [seedRef])).has(seedRef));
 
     assert.isNull(
       yield* sync.restore({

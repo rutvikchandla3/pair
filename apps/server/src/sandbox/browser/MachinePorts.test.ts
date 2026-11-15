@@ -6,6 +6,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { RUNNER_PROTOCOL_VERSION, type RunnerInfo } from "@t3tools/contracts/runner";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -15,6 +16,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import {
   type CoarseOperations,
@@ -31,6 +33,7 @@ import * as MachinePorts from "./MachinePorts.ts";
 const sandboxId = SandboxId.make("sbx_aaaaaaaaaaaaaaaaaaaa");
 const threadId = ThreadId.make("thread-cloud");
 const forkId = ThreadId.make("thread-fork");
+const hanadBranch = ThreadId.make("thread-hanad-branch");
 const checkout = `${SANDBOX_ROOT}/${sandboxId}/repo`;
 
 const RUNNER_PID = 50;
@@ -70,6 +73,18 @@ const setup = Effect.fnUntraced(function* () {
   const signals: Array<readonly [number, NodeJS.Signals]> = [];
   const layer = Layer.mergeAll(
     Layer.mock(RunnerHub)({ status: () => SubscriptionRef.changes(status) }),
+    // Hanad's branch shares the machine on slot 1, so its own port is 3001.
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      listSandboxThreads: () =>
+        Effect.succeed(
+          [threadId, hanadBranch].map((id) => ({
+            threadId: id,
+            attachedAt: DateTime.makeUnsafe(0),
+            archived: false,
+          })),
+        ),
+      slotFor: (id) => Effect.succeed(id === hanadBranch ? 1 : 0),
+    }),
     Layer.mock(MachineBrowser)({
       processId: (id) => Effect.succeed(id === sandboxId ? CHROME_PID : undefined),
     }),
@@ -179,7 +194,11 @@ it.effect("lists a machine's servers in order, empty across a sleep, then the ne
     // becomes the thread's.
     expect(snapshot.servers).toEqual([{ ...terminalServer, agent: { threadId } }, forkServer]);
     yield* SubscriptionRef.set(first.listing, [terminalServer, agentServer]);
-    expect(ports(yield* Queue.take(lists))).toEqual([3000, 3001]);
+    // A listener on another thread's own port is that thread's, so it reads "Hanad · :3001".
+    expect((yield* Queue.take(lists)).servers).toEqual([
+      { ...terminalServer, agent: { threadId } },
+      { ...agentServer, agent: { threadId: hanadBranch } },
+    ]);
 
     yield* first.sleep;
     expect((yield* Queue.take(lists)).servers).toEqual([]);

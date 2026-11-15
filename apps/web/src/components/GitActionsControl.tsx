@@ -43,6 +43,7 @@ import {
   FolderGitIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
+  GitCompareArrowsIcon,
   InfoIcon,
   LockIcon,
   GlobeIcon,
@@ -128,6 +129,9 @@ import {
   stoppedReadLabel,
 } from "@t3tools/client-runtime/state/sandbox";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { requestConfirmDialog } from "~/confirmDialog";
+import { useLineageGitLead } from "./lineage/LineageChip";
+import { openLineageDialog } from "./lineage/lineageDialogTarget";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -1012,6 +1016,7 @@ export default function GitActionsControl({
   );
   const threadToastData = activeThreadRef ? { threadRef: activeThreadRef } : undefined;
   const activeServerThreadShell = useQuietThreadShell(activeThreadRef);
+  const lineageLead = useLineageGitLead(activeServerThreadShell === null ? null : activeThreadRef);
   const activeDraftThread = useComposerDraftStore((store) =>
     draftId
       ? store.getDraftSession(draftId)
@@ -1358,6 +1363,18 @@ export default function GitActionsControl({
     });
   };
 
+  // A branch's source ships its work, so pushing from the branch asks first.
+  const confirmLineagePush = async () => {
+    const warning = lineageLead?.warning ?? null;
+    if (warning === null) return true;
+    return (await requestConfirmDialog(`${warning}\n\nPush anyway?`)) ?? true;
+  };
+  const runPushingAction = (action: GitStackedAction) => {
+    void confirmLineagePush().then((confirmed) => {
+      if (confirmed) void runGitActionWithToast({ action });
+    });
+  };
+
   const runQuickAction = () => {
     if (quickAction.kind === "open_publish") {
       setIsPublishDialogOpen(true);
@@ -1410,18 +1427,19 @@ export default function GitActionsControl({
       return;
     }
     if (quickAction.action) {
-      void runGitActionWithToast({ action: quickAction.action });
+      if (quickAction.action === "commit") void runGitActionWithToast({ action: "commit" });
+      else runPushingAction(quickAction.action);
     }
   };
 
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
     if (item.disabled) return;
     if (item.dialogAction === "push") {
-      void runGitActionWithToast({ action: "push" });
+      runPushingAction("push");
       return;
     }
     if (item.dialogAction === "create_pr") {
-      void runGitActionWithToast({ action: "create_pr" });
+      runPushingAction("create_pr");
       return;
     }
     setCommitAllRepositories(false);
@@ -1571,6 +1589,15 @@ export default function GitActionsControl({
   };
   const gitItems = (
     <>
+      {lineageLead?.offer && activeThreadRef ? (
+        <MenuItem onClick={() => openLineageDialog({ kind: "offer", threadRef: activeThreadRef })}>
+          <GitCompareArrowsIcon />
+          <span className="flex min-w-0 flex-col">
+            <MenuItemLabel>{lineageLead.offer.label}</MenuItemLabel>
+            <span className="text-xs text-muted-foreground">{lineageLead.offer.detail}</span>
+          </span>
+        </MenuItem>
+      ) : null}
       {gitActionMenuItems.map((item) => {
         const disabledReason = getMenuActionDisabledReason({
           item,
@@ -1607,7 +1634,16 @@ export default function GitActionsControl({
             }}
           >
             <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
-            <MenuItemLabel>{item.label}</MenuItemLabel>
+            {lineageLead?.warning && item.id !== "commit" ? (
+              <span className="flex min-w-0 flex-col">
+                <MenuItemLabel>{item.label}…</MenuItemLabel>
+                <span className="whitespace-normal text-xs text-muted-foreground">
+                  {lineageLead.warning}
+                </span>
+              </span>
+            ) : (
+              <MenuItemLabel>{item.label}</MenuItemLabel>
+            )}
           </MenuItem>
         );
       })}
@@ -1706,6 +1742,19 @@ export default function GitActionsControl({
           ) : visibleInlineSuccess ? (
             <ThreadDetailsControl part="primary" multiline disabled size="xs" variant="ghost">
               <GitActionSuccessButtonContent success={visibleInlineSuccess} />
+            </ThreadDetailsControl>
+          ) : lineageLead?.offer && activeThreadRef ? (
+            <ThreadDetailsControl
+              variant="ghost"
+              size="xs"
+              part="primary"
+              panel
+              onClick={() => openLineageDialog({ kind: "offer", threadRef: activeThreadRef })}
+            >
+              <GitCompareArrowsIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+              <span className={cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                {lineageLead.offer.label}
+              </span>
             </ThreadDetailsControl>
           ) : quickActionDisabledReason ? (
             <Popover>

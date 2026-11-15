@@ -1,4 +1,5 @@
 import {
+  BranchLineageStep,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -159,6 +160,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("sandbox.hand-over"),
     sandboxId: SandboxId,
   }),
+  /** Branch off's Apply, Revert or Update, at the thread's turn boundary. */
+  Schema.Struct({
+    type: Schema.Literal("lineage-step.run"),
+    step: BranchLineageStep,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -207,6 +213,8 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "sandbox.release-waiters",
   "sandbox.request-wake",
   "sandbox.hand-over",
+  // The executor is idempotent, and only completing the step releases the thread's queue.
+  "lineage-step.run",
   "team-image.build.launch",
   "team-image.build.capture",
   "team-image.build.destroy-machine",
