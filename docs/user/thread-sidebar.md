@@ -79,8 +79,12 @@ scroll position instead of following the thread to its new place in the list.
 
 A pinned thread does not settle automatically. Settling a thread removes its pin.
 
-On a server shared by a team, pins, order, unread state, and snoozes are your own, and other
-people's threads live in the **Team** shelf. See [Team](./team.md).
+On a server shared by a team, pins, order, unread state, and snoozes are your own. The top of the
+sidebar adds three rows that open pages: **Inbox** (what waits on you, with the only colored count),
+**My tasks** (the open tasks you own in every space) and **Shared with you** (threads teammates
+shared with you, grouped by person). Spaces follow, one row each, and then your threads as above.
+Someone else's thread joins your list only when you pin, follow or prompt it. See
+[Team](./team.md#your-threads-inbox-and-shared-with-you).
 
 On web and desktop, drag a thread between sections to change its state. Drag a thread up into
 the pinned section to pin it at the spot you drop it; drag a pinned thread down into the active

@@ -1,7 +1,7 @@
 # Spaces redesign prototype
 
 The screens for [Spaces redesign](../spaces-redesign.md): a calm sidebar, and building together with
-Branch off. The git model behind Branch off is in [spaces-redesign-git.md](../spaces-redesign-git.md). It is a design reference, not code to ship. Where a board and the spec disagree, the spec
+Branch off. The git model behind Branch off is in [12 Branch off](../cloud/12-branch-off.md). It is a design reference, not code to ship. Where a board and the spec disagree, the spec
 wins.
 
 - **Open it:** `index.html` lists every board. Append `/dark` to a board's hash for dark mode, as in

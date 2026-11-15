@@ -1,6 +1,6 @@
 # Spaces redesign: a calm sidebar, and building together
 
-Status: proposal, 2026-11-14. Builds on [Spaces v2](./spaces.md) and
+Status: approved 2026-11-14, built 2026-11-15. Builds on [Spaces v2](./spaces.md) and
 [private cloud threads](./cloud/11-private-threads.md) as they stand on `feat/pair`. The screens are in
 the [prototype](./spaces-redesign-prototype/index.html).
 
@@ -196,7 +196,7 @@ that the database and services are shared with the source.
 ### Update, Offer, Apply
 
 Lineage moves code with two verbs. Both go through git and the mirror, so they work the same whichever
-machine a branch runs on. The mechanics are in [Branch off: the git model](./spaces-redesign-git.md).
+machine a branch runs on. The mechanics are in [12 Branch off: the git model](./cloud/12-branch-off.md).
 The promises:
 
 - **Credit follows the code.** Work in a thread belongs to its owner, as today. What's new is that a

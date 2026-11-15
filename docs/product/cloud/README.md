@@ -54,6 +54,7 @@ flowchart TB
 | [09 BYOC](./09-byoc.md)                                         | How does a customer run Pair Cloud and its machines in their own cloud?                                          |
 | [10 Delivery plan](./10-delivery-plan.md)                       | In what order do we build it, in which pull requests, and how do we know it works?                               |
 | [11 Private threads](./11-private-threads.md)                   | Who can open a cloud thread, how does its owner share it, and where is that enforced?                            |
+| [12 Branch off](./12-branch-off.md)                             | How does a teammate's own branch of a cloud thread move code back and forth with git?                            |
 
 ## Decisions everything else builds on
 

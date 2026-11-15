@@ -112,8 +112,9 @@ On boat.dev, a plan without a size refuses a thread that asks for it, with the r
 ### Fork to a bigger machine
 
 Side chats and forks of a cloud thread run on the same machine, so
-[sharing the thread](#who-can-open-a-cloud-thread) shares them too. A fork of a teammate's cloud
-thread says so, because its agent can read that teammate's credentials there.
+[sharing the thread](#who-can-open-a-cloud-thread) shares them too. Only a thread's owner forks it,
+and a teammate's side chat on it is read-only. To work on a teammate's thread yourself, use
+[Branch off](#build-on-a-teammates-thread).
 
 To give a fork a machine of its own, choose **Fork to new machine…** in the thread's menu or the
 command palette, or run `t3 thread fork <thread> --machine large`. Pair copies the machine's disk,
@@ -307,9 +308,43 @@ network, not yours.
   Pair Cloud says "This machine's image has no browser." An admin rebuilds the
   [team image](./pair-cloud.md#build-a-team-image), then start a new session.
 
+## Build on a teammate's thread
+
+**Branch off** gives you your own thread, branch and worktree on top of a teammate's cloud thread,
+so you can build in parallel without entering their conversation or their files. Choose **Branch
+off…** in the thread's menu, the **Branch off** link under its composer, or the command palette. It
+starts from the thread's latest turn, uncommitted work included, or from an earlier turn or a branch
+such as `main`. It runs on your account, joins the same space task, and the original thread is never
+touched.
+
+**Runs on** asks where it runs:
+
+- **Their machine** starts in seconds and shares its running database, services and caches. Everyone
+  who can open that machine can reach your Claude and GitHub sign-ins from its terminal, and machine
+  time counts toward its owner. Each thread there gets its own `PORT` and `PAIR_THREAD_SLOT`, so dev
+  servers don't collide.
+- **New machine** takes about a minute and has its own database and services, on your machine time.
+
+A source and its branches show as one chip under the thread title. Code moves between them in two
+ways, both between turns:
+
+- **Update from…** brings in what changed on the source since your last update. A conflict lets your
+  agent resolve it, or leaves the markers for you; **Abort update** puts your branch back, and **Undo
+  update** works until your next turn.
+- **Offer to…** proposes your commits to the source's owner, who chooses **Apply** or **Decline**.
+  Apply writes your changes into their files, uncommitted, and their next commit of them credits
+  you with `Co-authored-by`. You can withdraw an offer until it's applied, and the owner can
+  **Revert** applied changes later.
+
+The source's pull request ships the work, so a branch's git button leads with **Offer**, and pushing
+from a branch warns that it includes the source's unpushed work. When the source ships or settles,
+**Start from main with them** turns your branch into a thread of its own, or **Settle** it. Choose
+**Move to my own machine** from the menu to continue a branch on a machine of your own. Branch off
+isn't offered for local threads, or on a branch.
+
 ## Who can open a cloud thread
 
-A cloud thread is private. Only you can see it, in the sidebar, the **Team** shelf, search and the
+A cloud thread is private. Only you can see it, in the sidebar, **Shared with you**, search and the
 archive, until you share it. Someone who opens a link to a thread they cannot open sees "This
 thread is private, or it no longer exists." The page does not say which. A thread that existed
 before your server offered sharing stays open to everyone on the team until its owner changes that.
@@ -326,14 +361,15 @@ The mobile app has **Share** in the thread's menu too. For anyone but the owner 
 
 In the dialog, add people by name or GitHub username. Under **General access**, choose **Only
 people added** or **Everyone on** your team, which includes people who join later. Changes apply at
-once, and **Remove** takes access away at once. The thread appears on the **Team** shelf of each
-person you add, with a **Shared with you** notification. A chip beside the title shows who has
+once, and **Remove** takes access away at once. The thread appears on the **Shared with you** page and in
+**Inbox** of each person you add, with a **Shared with you** notification. A chip beside the title shows who has
 access, and a quiet line in the thread says who shared it with whom.
 
 What people you share with can do:
 
-- Read the thread, prompt it, open its terminal, and fork it, as with any
-  [teammate's thread](./team.md#prompting-someone-elses-turn).
+- Read the thread, prompt it and open its terminal, as with any
+  [teammate's thread](./team.md#prompting-someone-elses-turn), and ask in a read-only side chat.
+- [Branch off](#build-on-a-teammates-thread) it into a thread, branch and worktree of their own.
 - Choose **Continue locally**, which gives them a copy.
 - Read the credentials on its machine: its provider sign-in and git token. Share only with people
   you trust with them.
