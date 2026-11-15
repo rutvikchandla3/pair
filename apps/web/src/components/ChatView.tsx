@@ -2670,7 +2670,8 @@ export default function ChatView(props: ChatViewProps) {
     localCheckoutBranchMismatch,
     gitStatusQuery,
     nowMinute,
-    sandboxStatusLine: sandboxStatus.statusLine,
+    // While setup runs, its card already shows the machine's progress.
+    sandboxStatusLine: worktreeSetup?.phase === "running" ? null : sandboxStatus.statusLine,
     composerRef,
     composerDraftTarget,
     sendInFlightRef,
