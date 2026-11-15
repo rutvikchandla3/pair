@@ -98,6 +98,7 @@ Apply writes no commits.
 
    Never use `git apply --3way` here: it refuses a file the owner has also changed, which is the
    normal case.
+
 4. **The record.**
    - Capture a checkpoint labelled "Applied Hanad's changes · 3 files", and queue the agent note.
    - Record the lines the offer added, by file and content, against the offer's author. Lines that
@@ -134,8 +135,7 @@ git:
 1. **The source revises its own uncommitted line.** Kousik changes a line, Hanad branches off and edits
    a different line, Kousik changes his line again, and Hanad updates. It merges cleanly.
 2. **An Update after an Apply.** Hanad's changes are applied to Kousik's files, uncommitted, and
-   Kousik's next turn edits another line. Hanad then updates. It merges cleanly, and "to offer" reads
-   0.
+   Kousik's next turn edits another line. Hanad then updates. It merges cleanly, and "to offer" reads 0.
 3. **Undoing a pushed Update.** Hanad updates, pushes, undoes the Update and updates again. All of the
    source's work is back, and Hanad's next offer doesn't contain the undo's commit.
 4. **Revert Hanad's changes, before Hanad updates.** Kousik reverts the applied changes, then Hanad

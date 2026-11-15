@@ -24,13 +24,13 @@ S.compare = {
           <div style="height:520px"></div>
           ${note(3, "<b>Team</b> is every thread shared with you: flat, newest first, with no grouping. At 20 it's a wall of avatars.")}
           <div style="height:40px"></div>
-          ${note(4, "\"Needs you\" lives in four places: the Assigned count, a task sub-row, the Working shelf and unread Team rows.")}
+          ${note(4, '"Needs you" lives in four places: the Assigned count, a task sub-row, the Working shelf and unread Team rows.')}
         </div>
         <div><div class="w6" style="margin-bottom:8px">Proposed · <span data-count="after"></span> rows</div>
           <div id="after" class="card" style="overflow:hidden;width:264px">${sideNew({ sel: "inbox" })}</div></div>
         <div style="padding-top:34px;width:330px">
           ${note("A", "<b>Inbox</b> is the one place for what waits on you. Its indigo count is the only colored number in the sidebar.")}
-          ${note("B", "<b>My tasks</b> and <b>Shared with you</b> are places: one row each, no count, no dot, whether they hold 10 things or 200. Inbox owns \"new\".")}
+          ${note("B", '<b>My tasks</b> and <b>Shared with you</b> are places: one row each, no count, no dot, whether they hold 10 things or 200. Inbox owns "new".')}
           ${note("C", "One row per space and no sub-rows. Its muted number is that space's share of the Inbox count (2 + 1 + 1 = 4 here); a grey dot means only an unread room. Five show, and the rest sit under <b>2 more</b>, archived ones below a sub-header.")}
           ${note("D", "<b>Threads</b> is T3 Code's own list, unchanged. A space glyph marks task threads; the branch glyph with avatars shows who has a branch of yours (Hanad on Seed role catalog).")}
           ${note("E", "A teammate's thread shows up only when you pin, follow or prompt it, with their avatar on the right (Kousik's Prompt builder). A follow from prompting ends at settle, or once your turn ended and you read it.")}
@@ -100,7 +100,8 @@ S.inbox = {
 S.tasks = {
   title: "3. My tasks: the open tasks you own, across spaces",
   render() {
-    const sp = (n) => `<span class="chip ghost t12" style="height:20px">${ic("space", "s12")}${n}</span>`;
+    const sp = (n) =>
+      `<span class="chip ghost t12" style="height:20px">${ic("space", "s12")}${n}</span>`;
     const row = (s, t, space, l2, m, focus) =>
       lrow({ focus, lead: st(s), t, badge: "", l2, acts: sp(space), m });
     return shell(
@@ -134,7 +135,17 @@ S.shared = {
   render() {
     const person = (id, count, open = true) =>
       `<div class="ghead">${ic(open ? "down" : "right", "s12")}${av(id, { size: 16, presence: true })}<span style="color:var(--foreground)">${M[id].n}</span><span class="cnt">${count}</span></div>`;
-    const r = (t, l2, m, o = {}) => lrow({ t, l2, m, focus: o.focus, unread: o.unread, lead: "", badge: o.badge || "", acts: o.acts || "" });
+    const r = (t, l2, m, o = {}) =>
+      lrow({
+        t,
+        l2,
+        m,
+        focus: o.focus,
+        unread: o.unread,
+        lead: "",
+        badge: o.badge || "",
+        acts: o.acts || "",
+      });
     const proj = (n) => `${ic("folder", "s12")}${n}`;
     return shell(
       sideNew({ sel: "shared" }),
@@ -190,7 +201,8 @@ S.space = {
     </div></aside>`;
     const msg = (who, time, body) =>
       `<div class="row" style="align-items:flex-start;gap:10px">${av(who, { size: 20 })}<div class="grow"><div class="row" style="gap:6px"><span class="w6">${who === "rutvik" ? "You" : M[who].n}</span><span class="t12 muted">${time}</span></div><div>${body}</div></div></div>`;
-    const chip = (s, t) => `<span class="w5" style="display:inline-flex;align-items:center;gap:4px">${st(s, 12)}${t}</span>`;
+    const chip = (s, t) =>
+      `<span class="w5" style="display:inline-flex;align-items:center;gap:4px">${st(s, 12)}${t}</span>`;
     return shell(
       sideNew({ sel: "qc" }),
       `<div class="top"><span class="title">Question creation</span><span class="muted row" style="gap:5px">${ic("layers", "s12")}pair-fe, pair-be</span><span class="grow"></span>${stack(["rutvik", "kousik", "hanad", "ankur"], { size: 20 })}<button class="iconbtn">${ic("more")}</button></div>
@@ -230,7 +242,8 @@ function promptBuilderFeed(o = {}) {
 // ---------- 6. A teammate's shared thread ----------
 
 S.viewer = {
-  title: "6. Hanad opens Kousik's shared thread: the composer says where his words go, and offers Branch off",
+  title:
+    "6. Hanad opens Kousik's shared thread: the composer says where his words go, and offers Branch off",
   render() {
     const working = `
       <div class="umsg"><div class="who"><span class="w6">Kousik</span><span class="t12 muted">11:04</span>${av("kousik")}</div><div class="bubble">Now wire the preview to the new schema and add a loading state.</div></div>
@@ -258,18 +271,22 @@ S.viewer = {
 
 // ---------- 7. The branch-off draft ----------
 
-const DISCLOSE = "Shares Kousik's running database and services. Kousik, Rutvik and Ankur can open this machine and reach your Claude and GitHub sign-ins from its terminal. Machine time counts toward Kousik.";
+const DISCLOSE =
+  "Shares Kousik's running database and services. Kousik, Rutvik and Ankur can open this machine and reach your Claude and GitHub sign-ins from its terminal. Machine time counts toward Kousik.";
 
 function branchDraft(o = {}) {
-  const f = (lab, val) => `<div class="field"><span class="lab">${lab}</span><div class="row" style="gap:8px;min-width:0">${val}</div></div>`;
+  const f = (lab, val) =>
+    `<div class="field"><span class="lab">${lab}</span><div class="row" style="gap:8px;min-width:0">${val}</div></div>`;
   const newOn = o.runs === "new";
   const sameOff = o.runs === "failed";
   const opt = (on, off, icon, title, sub) =>
     `<div class="opt${on ? " on" : ""}${off ? " off" : ""}"><div class="row"><span class="radio"></span>${ic(icon, "s12 muted")}<span class="w5">${title}</span></div><div class="t12 muted" style="margin:2px 0 0 22px">${sub}</div></div>`;
-  const sameSub = o.runs === "asleep" ? "Asleep · wakes when you start" : "Seconds · 1 thread working";
-  const disclosure = newOn || sameOff
-    ? `Its own database and services, on your machine time. Kousik, Rutvik and Ankur can open it and reach your Claude and GitHub sign-ins, as with any thread you share.`
-    : DISCLOSE;
+  const sameSub =
+    o.runs === "asleep" ? "Asleep · wakes when you start" : "Seconds · 1 thread working";
+  const disclosure =
+    newOn || sameOff
+      ? `Its own database and services, on your machine time. Kousik, Rutvik and Ankur can open it and reach your Claude and GitHub sign-ins, as with any thread you share.`
+      : DISCLOSE;
   const startFrom = o.startFromMenu
     ? `<span class="select grow" style="border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)">${av("kousik", { size: 14 })}<span>Prompt builder, latest</span><span class="t12 muted">turn 7 · 2 min ago</span><span class="grow"></span>${ic("down", "s12 muted")}</span>`
     : `<span class="select grow">${av("kousik", { size: 14 })}<span>Prompt builder, latest</span><span class="t12 muted ell">turn 6 · 2 min ago · with 2 uncommitted files</span><span class="grow"></span>${ic("down", "s12 muted")}</span>`;
@@ -304,7 +321,8 @@ function branchDraft(o = {}) {
 }
 
 S.draft = {
-  title: "7. Branch off opens a draft: start from Kousik's latest work, on his machine or a new one",
+  title:
+    "7. Branch off opens a draft: start from Kousik's latest work, on his machine or a new one",
   render() {
     return shell(
       sideNew({ viewer: "hanad", draft: true, skip: "Rationale per question" }),
@@ -343,8 +361,20 @@ S.lane = {
       style: "left:150px;top:54px;width:470px",
       title: "Prompt builder and its branches",
       rows: [
-        { owner: "kousik", t: "Prompt builder", sub: "Kousik · kousik/prompt-builder · working", right: "1 turn behind" },
-        { owner: "hanad", t: "Rationale per question", sub: "You · hanad/rationale-per-question", right: "2 commits to offer", here: true, child: true },
+        {
+          owner: "kousik",
+          t: "Prompt builder",
+          sub: "Kousik · kousik/prompt-builder · working",
+          right: "1 turn behind",
+        },
+        {
+          owner: "hanad",
+          t: "Rationale per question",
+          sub: "You · hanad/rationale-per-question",
+          right: "2 commits to offer",
+          here: true,
+          child: true,
+        },
       ],
       actions: `<span class="btn sm">${ic("pull", "s12")}Update from Prompt builder</span><span class="btn sm soft">${ic("merge", "s12")}Offer to Kousik</span><span class="grow"></span>`,
       noBranchOff: true,
@@ -477,50 +507,93 @@ S.states = {
     const fg = (t) => `<span class="w5" style="color:var(--foreground)">${t}</span>`;
     return `<div class="board"><h1>Branch off, Update, Offer and Apply in every state</h1><div class="muted t14" style="margin-bottom:20px">Quiet one-line rows in the threads involved, never in the room. Each way in has a way back.</div>
       <div class="row" style="align-items:flex-start;gap:28px;flex-wrap:wrap">
-        ${box("In Kousik's Prompt builder", [
-          sysr(`${ic("branch", "s12")}Hanad branched off this thread → ${fg("Rationale per question")} · 11:12`),
-          offerCard({ running: true }),
-          sysr(`${ic("merge", "s12")}You applied Hanad's changes from Rationale per question · 3 files · 11:43 · <span class="linkbtn">${ic("undo", "s12")}Revert Hanad's changes</span>`),
-          sysr(`${ic("file", "s12")}Your agent was told: Hanad's changes were applied to your files. Credit him when you commit them.`),
-          sysr(`${ic("check", "s12")}Committed “Show a rationale under each question” · <span class="mono">Co-authored-by: Hanad</span> · 12:02`),
-          sysr(`${ic("x", "s12")}You declined Hanad's 2 commits · 11:43`),
-          sysr(`${ic("x", "s12")}Hanad withdrew his offer · 11:44`),
-        ].join(""))}
-        ${box("In Hanad's Rationale per question", [
-          sysr(`${ic("branch", "s12")}You branched off Kousik's Prompt builder at turn 6, with its 2 uncommitted files · 11:12`),
-          sysr(`${ic("pull", "s12")}Updated from Prompt builder · turn 7, 2 files · 11:30 · <span class="linkbtn">${ic("undo", "s12")}Undo update</span> <span class="faint">until your next turn</span>`),
-          sysr(`${ic("clock", "s12 c-warning")}Updating from Prompt builder · <span class="mono">src/schema.ts</span> has conflict markers · <span class="linkbtn">Abort update</span>`),
-          sysr(`${ic("file", "s12")}Your agent was told: an update is in progress, <span class="mono">src/schema.ts</span> has conflict markers; don't abort or stash it`),
-          sysr(`${ic("merge", "s12")}You offered 2 commits to Prompt builder · waiting for Kousik · <span class="linkbtn">Withdraw</span>`),
-          sysr(`${ic("check", "s12 c-success")}Kousik applied your changes · 11:43`),
-          sysr(`${ic("x", "s12")}Kousik declined · 11:43 · <span class="linkbtn">Offer again</span>`),
-          sysr(`${ic("alert", "s12 c-error")}Prompt builder changed since: turn 8 touched src/schema.ts. Your offer came back · <span class="linkbtn">Update and offer again</span>`),
-          sysr(`${ic("merge", "s12")}You updated your offer · it replaces the open one · 11:52`),
-          sysr(`${ic("clock", "s12")}Your offer is waiting · Prompt builder is archived`),
-          sysr(`${ic("undo", "s12")}Kousik reverted your applied changes. You still have them here, and can offer them again.`),
-          sysr(`${ic("undo", "s12")}Kousik reverted your applied changes, and this Update removed them here too · <span class="linkbtn">Bring them back</span>`),
-        ].join(""))}
-        ${box("The chip when the source changes hands or disappears", [
-          `<div class="row" style="gap:10px;flex-wrap:wrap">${lineageChip("from a thread you can't open")}<span class="t12 muted">Removed from its sharing: Update stops, offers are withdrawn, the branch stays yours.</span></div>`,
-          `<div class="row" style="gap:10px;flex-wrap:wrap">${lineageChip("from a deleted thread")}<span class="t12 muted">Source deleted: offers withdrawn, the branch carries on.</span></div>`,
-          `<div class="row" style="gap:10px;flex-wrap:wrap">${lineageChip("from Prompt builder · archived")}<span class="t12 muted">Source archived: offers wait until it's unarchived.</span></div>`,
-          sysr(`${ic("merge", "s12 c-input")}<b style="color:var(--foreground)">Hanad's agent</b> offers 2 commits from Rationale per question · 12:05 · agents' offers are labelled`),
-        ].join(""))}
+        ${box(
+          "In Kousik's Prompt builder",
+          [
+            sysr(
+              `${ic("branch", "s12")}Hanad branched off this thread → ${fg("Rationale per question")} · 11:12`,
+            ),
+            offerCard({ running: true }),
+            sysr(
+              `${ic("merge", "s12")}You applied Hanad's changes from Rationale per question · 3 files · 11:43 · <span class="linkbtn">${ic("undo", "s12")}Revert Hanad's changes</span>`,
+            ),
+            sysr(
+              `${ic("file", "s12")}Your agent was told: Hanad's changes were applied to your files. Credit him when you commit them.`,
+            ),
+            sysr(
+              `${ic("check", "s12")}Committed “Show a rationale under each question” · <span class="mono">Co-authored-by: Hanad</span> · 12:02`,
+            ),
+            sysr(`${ic("x", "s12")}You declined Hanad's 2 commits · 11:43`),
+            sysr(`${ic("x", "s12")}Hanad withdrew his offer · 11:44`),
+          ].join(""),
+        )}
+        ${box(
+          "In Hanad's Rationale per question",
+          [
+            sysr(
+              `${ic("branch", "s12")}You branched off Kousik's Prompt builder at turn 6, with its 2 uncommitted files · 11:12`,
+            ),
+            sysr(
+              `${ic("pull", "s12")}Updated from Prompt builder · turn 7, 2 files · 11:30 · <span class="linkbtn">${ic("undo", "s12")}Undo update</span> <span class="faint">until your next turn</span>`,
+            ),
+            sysr(
+              `${ic("clock", "s12 c-warning")}Updating from Prompt builder · <span class="mono">src/schema.ts</span> has conflict markers · <span class="linkbtn">Abort update</span>`,
+            ),
+            sysr(
+              `${ic("file", "s12")}Your agent was told: an update is in progress, <span class="mono">src/schema.ts</span> has conflict markers; don't abort or stash it`,
+            ),
+            sysr(
+              `${ic("merge", "s12")}You offered 2 commits to Prompt builder · waiting for Kousik · <span class="linkbtn">Withdraw</span>`,
+            ),
+            sysr(`${ic("check", "s12 c-success")}Kousik applied your changes · 11:43`),
+            sysr(
+              `${ic("x", "s12")}Kousik declined · 11:43 · <span class="linkbtn">Offer again</span>`,
+            ),
+            sysr(
+              `${ic("alert", "s12 c-error")}Prompt builder changed since: turn 8 touched src/schema.ts. Your offer came back · <span class="linkbtn">Update and offer again</span>`,
+            ),
+            sysr(`${ic("merge", "s12")}You updated your offer · it replaces the open one · 11:52`),
+            sysr(`${ic("clock", "s12")}Your offer is waiting · Prompt builder is archived`),
+            sysr(
+              `${ic("undo", "s12")}Kousik reverted your applied changes. You still have them here, and can offer them again.`,
+            ),
+            sysr(
+              `${ic("undo", "s12")}Kousik reverted your applied changes, and this Update removed them here too · <span class="linkbtn">Bring them back</span>`,
+            ),
+          ].join(""),
+        )}
+        ${box(
+          "The chip when the source changes hands or disappears",
+          [
+            `<div class="row" style="gap:10px;flex-wrap:wrap">${lineageChip("from a thread you can't open")}<span class="t12 muted">Removed from its sharing: Update stops, offers are withdrawn, the branch stays yours.</span></div>`,
+            `<div class="row" style="gap:10px;flex-wrap:wrap">${lineageChip("from a deleted thread")}<span class="t12 muted">Source deleted: offers withdrawn, the branch carries on.</span></div>`,
+            `<div class="row" style="gap:10px;flex-wrap:wrap">${lineageChip("from Prompt builder · archived")}<span class="t12 muted">Source archived: offers wait until it's unarchived.</span></div>`,
+            sysr(
+              `${ic("merge", "s12 c-input")}<b style="color:var(--foreground)">Hanad's agent</b> offers 2 commits from Rationale per question · 12:05 · agents' offers are labelled`,
+            ),
+          ].join(""),
+        )}
         ${box("Rutvik, who can open the machine but owns neither thread", offerCard({ readonly: true }))}
-        ${box("⋯ on someone else's cloud thread", `<div class="card" style="padding:4px;width:300px;box-shadow:var(--shadow-lg)">
+        ${box(
+          "⋯ on someone else's cloud thread",
+          `<div class="card" style="padding:4px;width:300px;box-shadow:var(--shadow-lg)">
             <div class="mi on">${ic("branch")}<div class="grow"><div class="w5">Branch off…</div><div class="t12 muted">Your own branch, from Kousik's latest</div></div></div>
             <div class="mi">${ic("room")}<div class="grow"><div class="w5">Side chat</div><div class="t12 muted">Ask without changing anything</div></div></div>
             <div class="msep"></div>
             <div class="mi">${ic("eye")}<span>Follow</span></div><div class="mi">${ic("ext")}<span>Copy link</span></div><div class="mi">${ic("pull")}<span>Continue locally</span></div>
             <div class="mi" style="opacity:.5">${ic("share")}<span>Share… (owner only)</span></div><div class="mi" style="opacity:.5">${ic("userplus")}<span>Assign to… (owner only)</span></div></div>
-          <div class="t12 muted">Fork stays the owner's tool. It reuses the owner's checkout, which is the trap Branch off avoids.</div>`)}
+          <div class="t12 muted">Fork stays the owner's tool. It reuses the owner's checkout, which is the trap Branch off avoids.</div>`,
+        )}
         ${box("Reverting to a turn across an Apply", dlg("Revert Prompt builder to turn 8?", "This also discards <b>Hanad's applied changes</b> (3 files). His branch keeps them, and he can offer them again.", '<span class="btn">Cancel</span><span class="btn danger">Revert</span>'))}
-        ${box("How a lineage ships", [
-          `<div class="row" style="gap:8px;flex-wrap:wrap">${lineageChip("Prompt builder shipped in pair-be#482 · 2 commits not in it")}<span class="btn sm">Start from main with them</span><span class="btn sm ghost">Settle</span></div>`,
-          `<div class="row" style="gap:8px;flex-wrap:wrap">${lineageChip("Prompt builder is settled · 2 commits not in it")}<span class="btn sm">Start from main with them</span><span class="btn sm ghost">Settle</span></div>`,
-          `<div class="row" style="gap:8px;flex-wrap:wrap">${lineageChip("from Prompt builder · all applied")}<span class="btn sm ghost">Settle</span></div>`,
-          `<div class="card" style="padding:4px;width:360px;box-shadow:var(--shadow-lg)"><div class="mi on">${ic("merge")}<div class="grow"><div class="w5">Offer to Kousik</div><div class="t12 muted">2 commits</div></div></div><div class="msep"></div><div class="mi">${ic("push")}<div class="grow"><div class="w5">Push…</div><div class="t12 muted">Prompt builder's pull request ships this work. Pushing also includes Kousik's unpushed work, authored as him.</div></div></div><div class="mi">${ic("pr")}<span>Create PR…</span></div></div>`,
-        ].join(""))}
+        ${box(
+          "How a lineage ships",
+          [
+            `<div class="row" style="gap:8px;flex-wrap:wrap">${lineageChip("Prompt builder shipped in pair-be#482 · 2 commits not in it")}<span class="btn sm">Start from main with them</span><span class="btn sm ghost">Settle</span></div>`,
+            `<div class="row" style="gap:8px;flex-wrap:wrap">${lineageChip("Prompt builder is settled · 2 commits not in it")}<span class="btn sm">Start from main with them</span><span class="btn sm ghost">Settle</span></div>`,
+            `<div class="row" style="gap:8px;flex-wrap:wrap">${lineageChip("from Prompt builder · all applied")}<span class="btn sm ghost">Settle</span></div>`,
+            `<div class="card" style="padding:4px;width:360px;box-shadow:var(--shadow-lg)"><div class="mi on">${ic("merge")}<div class="grow"><div class="w5">Offer to Kousik</div><div class="t12 muted">2 commits</div></div></div><div class="msep"></div><div class="mi">${ic("push")}<div class="grow"><div class="w5">Push…</div><div class="t12 muted">Prompt builder's pull request ships this work. Pushing also includes Kousik's unpushed work, authored as him.</div></div></div><div class="mi">${ic("pr")}<span>Create PR…</span></div></div>`,
+          ].join(""),
+        )}
         ${box("Settling, sleeping or discarding a machine that holds someone else's branch", dlg("Discard Kousik's machine?", "Hanad's <b>Rationale per question</b> is on this machine too. His agent stops. His work up to his last turn is kept, and his next message offers him a new machine of his own.", '<span class="btn">Cancel</span><span class="btn danger">Discard machine</span>'))}
         ${box("A branch on someone else's machine wants a wider audience", `<div class="row" style="gap:8px"><span class="btn sm" style="opacity:.5">${ic("share", "s12")}Share</span><span class="t12 muted">On Kousik's machine, sharing follows his list.</span></div>${dlg("Move to your own machine?", "<b>Rationale per question</b> continues on a new machine from its latest turn, with its conversation and lineage. Then you can share it or add it to another task.", '<span class="btn">Cancel</span><span class="btn primary">Move to my own machine</span>')}`)}
         ${box("Removing Hanad from the machine's sharing", dlg("Remove Hanad?", "Hanad has 1 thread on this machine, <b>Rationale per question</b>, and will lose access to it.", '<span class="btn">Cancel</span><span class="btn">Move it to Hanad\'s own machine first</span><span class="btn danger">Remove</span>'))}
@@ -559,7 +632,8 @@ S.task = {
 };
 
 function taskDraft() {
-  const f = (lab, val) => `<div class="field"><span class="lab">${lab}</span><div class="row" style="gap:8px;min-width:0">${val}</div></div>`;
+  const f = (lab, val) =>
+    `<div class="field"><span class="lab">${lab}</span><div class="row" style="gap:8px;min-width:0">${val}</div></div>`;
   return `
     <div class="row" style="gap:10px;margin-bottom:4px">${ic("plus", "s18")}<span style="font-size:20px;font-weight:600">New thread on Generate question from prompt</span></div>
     <div class="muted" style="margin-bottom:16px">A fresh start from the space's base, on a new machine. Pick a thread below to build on it instead.</div>
@@ -662,7 +736,8 @@ S.mobile = {
   w: 1800,
   h: 1900,
   render() {
-    const status = (dark) => `<div class="status"${dark ? ' style="color:#fff"' : ""}><span>9:41</span><span>●●● ▮</span></div>`;
+    const status = (dark) =>
+      `<div class="status"${dark ? ' style="color:#fff"' : ""}><span>9:41</span><span>●●● ▮</span></div>`;
     const row = (lead, t, right = "", cls = "") =>
       `<div class="row ${cls}" style="height:44px;padding:0 16px;border-bottom:1px solid var(--border);gap:12px">${lead}<span class="grow ell" style="font-size:15px">${t}</span>${right}</div>`;
     const nav = (title, sub, extra = "") =>
@@ -690,11 +765,29 @@ S.mobile = {
         <div class="t12 muted" style="margin:3px 0 10px 26px">Question creation › Seed role catalog</div>
         <div class="row" style="gap:8px;margin-left:26px"><span class="btn primary" style="height:34px;padding:0 16px">Approve</span><span class="btn" style="height:34px">Decline</span></div></div>
       ${[
-        [act("answer", "s16"), "Keep the old push token for 24 hours?", "Mobile push › Expo token refresh", "9m"],
-        [act("offer", "s16"), "Hanad offers 2 commits to Seed role catalog", "from Role fixtures v2", "14m"],
-        [ic("userplus", "s16 muted"), "Meera assigned you Trial banner copy", "Onboarding revamp · not started", "1h"],
+        [
+          act("answer", "s16"),
+          "Keep the old push token for 24 hours?",
+          "Mobile push › Expo token refresh",
+          "9m",
+        ],
+        [
+          act("offer", "s16"),
+          "Hanad offers 2 commits to Seed role catalog",
+          "from Role fixtures v2",
+          "14m",
+        ],
+        [
+          ic("userplus", "s16 muted"),
+          "Meera assigned you Trial banner copy",
+          "Onboarding revamp · not started",
+          "1h",
+        ],
       ]
-        .map(([l, t, s, m]) => `<div style="padding:11px 16px;border-bottom:1px solid var(--border)"><div class="row" style="gap:10px">${l}<span class="grow ell">${t}</span><span class="t12 muted">${m}</span></div><div class="t12 muted ell" style="margin:2px 0 0 26px">${s}</div></div>`)
+        .map(
+          ([l, t, s, m]) =>
+            `<div style="padding:11px 16px;border-bottom:1px solid var(--border)"><div class="row" style="gap:10px">${l}<span class="grow ell">${t}</span><span class="t12 muted">${m}</span></div><div class="t12 muted ell" style="margin:2px 0 0 26px">${s}</div></div>`,
+        )
         .join("")}
       <div class="t12 muted w6" style="padding:14px 16px 6px">FOR YOU</div>
       <div style="padding:11px 16px;border-bottom:1px solid var(--border)"><div class="row" style="gap:10px">${ic("at", "s16 muted")}<span class="grow w6">Kousik mentioned you</span><span class="t12 muted">22m</span></div><div class="t12 muted ell" style="margin:2px 0 0 26px">“@Rutvik does difficulty belong in schema v2?”</div></div>

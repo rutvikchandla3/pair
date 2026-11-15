@@ -169,10 +169,10 @@ whether a branch runs on the source's machine or on a new one.
 
 The draft asks one question, as a two-option control:
 
-| Option              | Starts in    | You share                                                       | Good for                                       |
-| ------------------- | ------------ | --------------------------------------------------------------- | ---------------------------------------------- |
-| **Kousik's machine** | seconds      | Its running database and services, installed dependencies, caches | Building on what's running, in a tight loop    |
-| **New machine**      | about 1 min  | Nothing. It starts from the same checkpoint                      | Migrations, heavy builds, anything destructive |
+| Option               | Starts in   | You share                                                         | Good for                                       |
+| -------------------- | ----------- | ----------------------------------------------------------------- | ---------------------------------------------- |
+| **Kousik's machine** | seconds     | Its running database and services, installed dependencies, caches | Building on what's running, in a tight loop    |
+| **New machine**      | about 1 min | Nothing. It starts from the same checkpoint                       | Migrations, heavy builds, anything destructive |
 
 Under the selected option, one line says what it means:
 
@@ -341,39 +341,39 @@ the next Update brings everything back.
 
 ### Threads on someone else's machine
 
-| Question                         | Rule                                                                                                                                                                                                                                                                                                |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Who can open it                  | The machine's access list. The machine owner's list governs.                                                                                                                                                                                                                                        |
-| Credentials                      | Each thread's agent gets its owner's provider credential, and git answers with the thread owner's GitHub credential. Anyone who can open the machine can reach both, and the draft says so before Branch off. Running each member's agents as their own unix user is a follow-up (see below).                                                                         |
-| Share, Add to task, move to another space | Offered only after **Move to my own machine**. A branch can't widen access to someone else's machine. Staying on the source's task keeps the same audience.                                                                                                                                |
-| Sleep, Discard                   | The owner confirms by name: "Hanad's Rationale per question is on this machine too." Work up to each thread's last turn is in the mirror. After a discard, Hanad's next message offers him a new machine of his own, which he accepts.                                                          |
-| The owner removes Hanad from sharing | Existing copy: "Hanad has 1 thread on this machine and will lose access to it." The dialog adds **Move it to Hanad's own machine first**: a new machine on Hanad's machine time, with a timeline line in his thread saying who moved it.                                                   |
-| Settle or archive the source     | Asks first: "Hanad's thread is still on this machine and keeps it running." The machine sleeps only when every thread on it is settled or archived ([cloud](../user/cloud.md)).                                                                                                                  |
-| Reassign the source              | The machine goes with the source to its new owner. Branches stay where they are.                                                                                                                                                                                                                 |
-| Hanad leaves the team            | `TeamRemoval` handles his cloud threads as it does today: they go to someone he picks, or they're deleted.                                                                                                                                                                                       |
-| Cost                             | Machine time counts toward the machine's owner, as it does today for side chats and forks ([04](./cloud/04-sandbox-lifecycle.md#shared-sandboxes-side-chats-and-forks)). Tokens count toward whoever prompted. The draft says so.                                                                 |
-| Load                             | Advisory, under the team's existing cap on machines. With three or more threads working, the draft recommends **New machine**.                                                                                                                                                                   |
-| A branch on a new machine        | It starts with its source's audience: the task's people, or the source machine's access list. After that it is the brancher's own machine, and its owner manages sharing as usual.                                                                                                              |
-| Who sees a branch in the chip    | Only people who can open it. The chip's count and popover list only threads the viewer can open.                                                                                                                                                                                                 |
-| The brancher loses the source    | Update stops, open offers are withdrawn, and the branch stays theirs. Its chip reads "from a thread you can't open".                                                                                                                                                                             |
-| The source is archived           | Open offers wait until it's unarchived, and the sender sees "Waiting · Prompt builder is archived". Branches carry on, and Update uses its last checkpoint.                                                                                                                                    |
-| The source is deleted            | Open offers are withdrawn. Branches carry on, and their chip reads "from a deleted thread".                                                                                                                                                                                                      |
+| Question                                  | Rule                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Who can open it                           | The machine's access list. The machine owner's list governs.                                                                                                                                                                                                                                  |
+| Credentials                               | Each thread's agent gets its owner's provider credential, and git answers with the thread owner's GitHub credential. Anyone who can open the machine can reach both, and the draft says so before Branch off. Running each member's agents as their own unix user is a follow-up (see below). |
+| Share, Add to task, move to another space | Offered only after **Move to my own machine**. A branch can't widen access to someone else's machine. Staying on the source's task keeps the same audience.                                                                                                                                   |
+| Sleep, Discard                            | The owner confirms by name: "Hanad's Rationale per question is on this machine too." Work up to each thread's last turn is in the mirror. After a discard, Hanad's next message offers him a new machine of his own, which he accepts.                                                        |
+| The owner removes Hanad from sharing      | Existing copy: "Hanad has 1 thread on this machine and will lose access to it." The dialog adds **Move it to Hanad's own machine first**: a new machine on Hanad's machine time, with a timeline line in his thread saying who moved it.                                                      |
+| Settle or archive the source              | Asks first: "Hanad's thread is still on this machine and keeps it running." The machine sleeps only when every thread on it is settled or archived ([cloud](../user/cloud.md)).                                                                                                               |
+| Reassign the source                       | The machine goes with the source to its new owner. Branches stay where they are.                                                                                                                                                                                                              |
+| Hanad leaves the team                     | `TeamRemoval` handles his cloud threads as it does today: they go to someone he picks, or they're deleted.                                                                                                                                                                                    |
+| Cost                                      | Machine time counts toward the machine's owner, as it does today for side chats and forks ([04](./cloud/04-sandbox-lifecycle.md#shared-sandboxes-side-chats-and-forks)). Tokens count toward whoever prompted. The draft says so.                                                             |
+| Load                                      | Advisory, under the team's existing cap on machines. With three or more threads working, the draft recommends **New machine**.                                                                                                                                                                |
+| A branch on a new machine                 | It starts with its source's audience: the task's people, or the source machine's access list. After that it is the brancher's own machine, and its owner manages sharing as usual.                                                                                                            |
+| Who sees a branch in the chip             | Only people who can open it. The chip's count and popover list only threads the viewer can open.                                                                                                                                                                                              |
+| The brancher loses the source             | Update stops, open offers are withdrawn, and the branch stays theirs. Its chip reads "from a thread you can't open".                                                                                                                                                                          |
+| The source is archived                    | Open offers wait until it's unarchived, and the sender sees "Waiting · Prompt builder is archived". Branches carry on, and Update uses its last checkpoint.                                                                                                                                   |
+| The source is deleted                     | Open offers are withdrawn. Branches carry on, and their chip reads "from a deleted thread".                                                                                                                                                                                                   |
 
 A thread can always choose **Move to my own machine** from ⋯. It continues on a new machine from its
 latest checkpoint, keeps its conversation and lineage, and frees the old worktree.
 
 ### Who can do what
 
-| Action                     | Thread owner        | Anyone who can open it | Notes                                     |
-| -------------------------- | ------------------- | ---------------------- | ----------------------------------------- |
-| Branch off                 | Yes                 | Yes                    | Brancher's account; not on a branch in v1 |
-| Update from the source     | In their own branch | In their own branch    | Nobody else is asked                      |
-| Offer to the source        | From their branch   | From their branch      | Refused if it wouldn't apply cleanly      |
-| Apply or Decline           | Yes                 | No                     | No admin override, as with queued messages |
-| Withdraw an offer          | The sender          | The sender             | Until applied                             |
-| Revert applied changes     | Yes                 | No                     | One recorded step; later turns stay       |
-| Fork                       | Yes                 | No                     | Unchanged for your own threads            |
-| Side chat                  | Yes                 | Read-only              |                                           |
+| Action                 | Thread owner        | Anyone who can open it | Notes                                      |
+| ---------------------- | ------------------- | ---------------------- | ------------------------------------------ |
+| Branch off             | Yes                 | Yes                    | Brancher's account; not on a branch in v1  |
+| Update from the source | In their own branch | In their own branch    | Nobody else is asked                       |
+| Offer to the source    | From their branch   | From their branch      | Refused if it wouldn't apply cleanly       |
+| Apply or Decline       | Yes                 | No                     | No admin override, as with queued messages |
+| Withdraw an offer      | The sender          | The sender             | Until applied                              |
+| Revert applied changes | Yes                 | No                     | One recorded step; later turns stay        |
+| Fork                   | Yes                 | No                     | Unchanged for your own threads             |
+| Side chat              | Yes                 | Read-only              |                                            |
 
 ### Notifications
 
@@ -457,13 +457,13 @@ These are the new schemas and RPCs in `packages/contracts`, and the actions that
   its diff summary.
 - **Who can call what.**
 
-  | Action                                                                     | Guard                      |
-  | -------------------------------------------------------------------------- | -------------------------- |
-  | `thread.branchOff`                                                         | Can open the source        |
-  | `thread.update`, `thread.abortUpdate`, `thread.undoUpdate`, `thread.bringBack` | The branch's owner         |
-  | `offer.create`, `offer.withdraw`                                           | The branch's owner         |
-  | `offer.apply`, `offer.decline`, `thread.revertOffer`                       | The source's owner. No admin override |
-  | `thread.moveToOwnMachine`                                                  | The thread's owner         |
+  | Action                                                                         | Guard                                 |
+  | ------------------------------------------------------------------------------ | ------------------------------------- |
+  | `thread.branchOff`                                                             | Can open the source                   |
+  | `thread.update`, `thread.abortUpdate`, `thread.undoUpdate`, `thread.bringBack` | The branch's owner                    |
+  | `offer.create`, `offer.withdraw`                                               | The branch's owner                    |
+  | `offer.apply`, `offer.decline`, `thread.revertOffer`                           | The source's owner. No admin override |
+  | `thread.moveToOwnMachine`                                                      | The thread's owner                    |
 
 - **The draft.** Runs on (source machine or new), Start from (a thread's latest checkpoint, a turn, or
   a branch), and a context summary flag.

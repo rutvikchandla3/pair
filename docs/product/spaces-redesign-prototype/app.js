@@ -61,7 +61,8 @@ const I = {
   read: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
   file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
-  snooze: '<circle cx="12" cy="13" r="8"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M10 11h4l-4 4h4"/>',
+  snooze:
+    '<circle cx="12" cy="13" r="8"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M10 11h4l-4 4h4"/>',
   sparkle:
     '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
@@ -167,13 +168,11 @@ const R_THREADS = {
 
 function sideRowThread(t, sel) {
   const lead =
-    t.g === "space"
-      ? ic("space", "s12 faint")
-      : t.g === "branch"
-        ? ic("branch", "s12 faint")
-        : "";
+    t.g === "space" ? ic("space", "s12 faint") : t.g === "branch" ? ic("branch", "s12 faint") : "";
   const right = [
-    t.with ? `<span class="row faint" style="gap:2px">${ic("branch", "s12")}${stack(t.with, { size: 14 })}</span>` : "",
+    t.with
+      ? `<span class="row faint" style="gap:2px">${ic("branch", "s12")}${stack(t.with, { size: 14 })}</span>`
+      : "",
     t.by ? av(t.by, { size: 14 }) : "",
     t.pr ? `<span class="t11 muted row" style="gap:3px">${ic("pr", "s12")}482</span>` : "",
     t.a ? act(t.a) : "",
@@ -284,8 +283,7 @@ const SIDE_DATA = {
 
 function sideBefore() {
   const r = (html, cls = "") => `<div class="srow ${cls}">${html}</div>`;
-  const task = (s, t, extra = "") =>
-    r(`${st(s)}<span class="grow ell">${t}</span>${extra}`, "sub");
+  const task = (s, t, extra = "") => r(`${st(s)}<span class="grow ell">${t}</span>${extra}`, "sub");
   const assigned = [
     ["progress", "Seed role catalog"],
     ["review", "Question schema v2"],
@@ -367,7 +365,9 @@ function shell(side, main, panel = "", extra = "") {
 function crumbs(parts) {
   return `<div class="crumb">${parts
     .map((p, i) =>
-      i === parts.length - 1 ? `<span class="cur ell">${p}</span>` : `<span class="ell">${p}</span><span class="slash">/</span>`,
+      i === parts.length - 1
+        ? `<span class="cur ell">${p}</span>`
+        : `<span class="ell">${p}</span><span class="slash">/</span>`,
     )
     .join("")}</div>`;
 }
@@ -405,7 +405,9 @@ function panelTabs(active, extra = "") {
   ];
   return `<div class="tabs">${tabs
     .map(([n, i]) => `<span class="tab${n === active ? " on" : ""}">${ic(i, "s12")}${n}</span>`)
-    .join("")}<span class="grow"></span>${extra}<button class="iconbtn">${ic("panel")}</button></div>`;
+    .join(
+      "",
+    )}<span class="grow"></span>${extra}<button class="iconbtn">${ic("panel")}</button></div>`;
 }
 
 function browserPanel(url) {
@@ -421,7 +423,10 @@ function browserPanel(url) {
     <div class="muted t12" style="margin:14px 0 8px">5 questions drafted · schema v2</div>
     ${[
       ["Design an idempotent retry for failed card payments.", "System design · 30 min"],
-      ["A ledger is off by one cent at month end. Walk through how you find it.", "Debugging · 20 min"],
+      [
+        "A ledger is off by one cent at month end. Walk through how you find it.",
+        "Debugging · 20 min",
+      ],
       ["When would you pick an outbox table over a message queue?", "Trade-offs · 15 min"],
     ]
       .map(
