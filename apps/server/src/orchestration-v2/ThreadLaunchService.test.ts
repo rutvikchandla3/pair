@@ -2912,7 +2912,7 @@ it.effect("launches a cloud thread and releases it on runner hello", () => {
         command: commandId,
         thread: "thread:launch:cloud",
         message: "Fix the build",
-        workspace: cloudWorkspace,
+        workspace: { ...cloudWorkspace, machineSize: "large" },
       }),
     );
     const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
@@ -2926,7 +2926,7 @@ it.effect("launches a cloud thread and releases it on runner hello", () => {
       yield* ProjectionStore.ProjectionStoreV2.use((projections) =>
         projections.getSandbox(sandboxId),
       ),
-      { state: "provisioning", generation: 1, ownerThreadId: launched.threadId },
+      { state: "provisioning", generation: 1, ownerThreadId: launched.threadId, size: "large" },
     );
     assert.equal(harness.cloneRepository.mock.calls.length, 0);
 

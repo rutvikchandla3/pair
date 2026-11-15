@@ -68,7 +68,7 @@ import {
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
-import { cloudAvailability } from "@t3tools/shared/sandbox";
+import { cloudAvailability, cloudMachineSizes } from "@t3tools/shared/sandbox";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   normalizeThreadPullRequestKey,
@@ -2346,6 +2346,11 @@ const make = Effect.gen(function* () {
       );
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
+      const cloudThreads = cloudAvailability(
+        settings,
+        parent?.thread.projectId ?? null,
+        cloudOnly,
+      ).available;
       return {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
@@ -2409,6 +2414,7 @@ const make = Effect.gen(function* () {
             constraints: [...constraints],
           };
         }),
+        ...(cloudThreads ? { cloudMachineSizes: [...cloudMachineSizes(settings)] } : {}),
         features: {
           appOwnedSubagents: true,
           asyncPolling: true,
@@ -2417,8 +2423,7 @@ const make = Effect.gen(function* () {
           threadManagement: true,
           incrementalThreadRead: true,
           scheduledTasks: true,
-          cloudThreads: cloudAvailability(settings, parent?.thread.projectId ?? null, cloudOnly)
-            .available,
+          cloudThreads,
           maxBatchThreads: 20,
         },
       };
@@ -2441,6 +2446,9 @@ const make = Effect.gen(function* () {
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+      if (input.machineSize !== undefined && input.isolation !== "cloud") {
+        return yield* failure("invalid_request", "machineSize needs isolation 'cloud'.");
+      }
       if (cloudOnly && input.isolation !== "cloud") {
         return yield* failure(
           "invalid_request",
@@ -2545,6 +2553,7 @@ const make = Effect.gen(function* () {
           .checkCloudLaunch({
             projectId: parent.thread.projectId,
             instanceId: target.modelSelection.instanceId,
+            machineSize: input.machineSize,
           })
           .pipe(
             Effect.mapError((error) =>

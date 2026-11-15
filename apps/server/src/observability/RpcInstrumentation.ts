@@ -107,6 +107,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.sandboxViewing]: "sandbox",
   [WS_METHODS.sandboxStopById]: "sandbox",
   [WS_METHODS.sandboxDesktop]: "sandbox",
+  [WS_METHODS.sandboxFork]: "sandbox",
   [WS_METHODS.sandboxCheckDriver]: "sandbox",
   [WS_METHODS.teamImageSubscribe]: "sandbox",
   [WS_METHODS.teamImageSaveRecipe]: "sandbox",

@@ -699,6 +699,11 @@ export function createSandboxEnvironmentAtoms<R, E>(
       label: "environment-data:sandbox:desktop",
       tag: WS_METHODS.sandboxDesktop,
     }),
+    /** Forks a cloud thread onto a copy of its machine, at another size and on a new branch. */
+    fork: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandbox:fork",
+      tag: WS_METHODS.sandboxFork,
+    }),
     /** Boots and discards one machine; settings:write, like the driver it tests. */
     checkDriver: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandbox:check-driver",

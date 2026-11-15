@@ -662,6 +662,7 @@ const decideProvision = (
       failure: null,
       ...(command.discardOnSettle === true ? { discardOnSettle: true } : {}),
       ...(command.imageBuild === undefined ? {} : { imageBuild: command.imageBuild }),
+      ...(command.copyOf === undefined ? {} : { copyOf: command.copyOf }),
       // A new session is private; a rebuilt one keeps its audience, or its lack of one (`team`).
       ...(record === null
         ? input.inheritedAccess === undefined

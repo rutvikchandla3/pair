@@ -215,23 +215,43 @@ it.effect("show returns a --messages count larger than one call can spread", () 
   }),
 );
 
-it.effect("--cloud asks for a cloud checkout of its ref, and not alongside --worktree", () =>
-  Effect.gen(function* () {
-    const strategy = (input: { worktree?: string; cloud?: string; branch?: string }) =>
-      launchWorkspaceStrategy({
-        worktree: Option.fromUndefinedOr(input.worktree),
-        cloud: Option.fromUndefinedOr(input.cloud),
-        branch: Option.fromUndefinedOr(input.branch),
+it.effect(
+  "--cloud asks for a cloud checkout of its ref and size, and not alongside --worktree",
+  () =>
+    Effect.gen(function* () {
+      const strategy = (input: {
+        worktree?: string;
+        cloud?: string;
+        branch?: string;
+        machine?: "small" | "default" | "large";
+      }) =>
+        launchWorkspaceStrategy({
+          worktree: Option.fromUndefinedOr(input.worktree),
+          cloud: Option.fromUndefinedOr(input.cloud),
+          branch: Option.fromUndefinedOr(input.branch),
+          machine: Option.fromUndefinedOr(input.machine),
+        });
+      assert.deepStrictEqual(yield* strategy({ cloud: "main" }), {
+        type: "cloud",
+        baseRef: "main",
       });
-    assert.deepStrictEqual(yield* strategy({ cloud: "main" }), { type: "cloud", baseRef: "main" });
-    assert.deepStrictEqual(yield* strategy({ worktree: "main", branch: "fix" }), {
-      type: "worktree",
-      baseRef: "main",
-      branch: "fix",
-    });
-    const both = yield* strategy({ worktree: "main", cloud: "main" }).pipe(Effect.flip);
-    assert.strictEqual(both.detail, "Use --worktree or --cloud, not both.");
-  }),
+      assert.deepStrictEqual(yield* strategy({ cloud: "main", machine: "large" }), {
+        type: "cloud",
+        baseRef: "main",
+        machineSize: "large",
+      });
+      const machineAlone = yield* strategy({ worktree: "main", machine: "large" }).pipe(
+        Effect.flip,
+      );
+      assert.strictEqual(machineAlone.detail, "--machine needs --cloud <base-ref>.");
+      assert.deepStrictEqual(yield* strategy({ worktree: "main", branch: "fix" }), {
+        type: "worktree",
+        baseRef: "main",
+        branch: "fix",
+      });
+      const both = yield* strategy({ worktree: "main", cloud: "main" }).pipe(Effect.flip);
+      assert.strictEqual(both.detail, "Use --worktree or --cloud, not both.");
+    }),
 );
 
 it("titles from a long first line without splitting an emoji", () => {

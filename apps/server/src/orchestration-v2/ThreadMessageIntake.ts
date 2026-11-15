@@ -408,6 +408,14 @@ export const assertCommandAccess = Effect.fn("ThreadMessageIntake.assertCommandA
   command: OrchestrationV2Command,
   memberId: MemberId,
 ) {
+  // `sandbox.fork` provisions the machine an own-machine fork waits for, so clients go through it.
+  if (command.type === "thread.fork" && command.ownMachine !== undefined) {
+    return yield* new Orchestrator.OrchestratorCommandRejectedError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: "Fork to a new machine through sandbox.fork.",
+    });
+  }
   const access = yield* ThreadAccess.ThreadAccess;
   if (!access.enforced) return;
   const denied = (target: Record<string, unknown>) =>

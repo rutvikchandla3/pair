@@ -17,6 +17,7 @@ import {
   type AuthMcpClientAccess,
   CLOUD_MOVE_DEFAULT_MESSAGE,
   type EnvironmentId,
+  type SandboxSize,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -32,6 +33,7 @@ import {
   readContinueInCloudOffer,
   useContinueInCloudOffer,
 } from "~/state/sandbox";
+import { environmentCloudMachineSizesAtom } from "~/state/server";
 import { threadMoveEnvironment } from "~/state/threadMove";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -52,6 +54,8 @@ import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { cloudMachineSizeToSend, resolveCloudMachineSize } from "./machineSize.logic";
+import { MachineSizeSelect } from "./MachineSizeSelect";
 
 const FAILURE_TITLE = "Could not continue in cloud";
 const LINK_ACCESS_NOTE =
@@ -96,6 +100,12 @@ function ContinueInCloudDialog({
   const offer = useContinueInCloudOffer(threadRef);
   const [targetId, setTargetId] = useState<EnvironmentId | null>(targets[0]?.environmentId ?? null);
   const target = targets.find((candidate) => candidate.environmentId === targetId) ?? null;
+  // The chosen Pair Cloud's sizes; no pick keeps its team default.
+  const sizes = useAtomValue(
+    environmentCloudMachineSizesAtom(target?.environmentId ?? threadRef.environmentId),
+  );
+  const [pickedSize, setPickedSize] = useState<SandboxSize | undefined>(undefined);
+  const machineSize = resolveCloudMachineSize(sizes, pickedSize);
   const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
   const [message, setMessage] = useState(CLOUD_MOVE_DEFAULT_MESSAGE);
   const [access, setAccess] = useState<AuthMcpClientAccess>("approval-required");
@@ -161,6 +171,7 @@ function ContinueInCloudDialog({
     if (inFlight.current || !canMove || target === null) return;
     inFlight.current = true;
     setBusy(true);
+    const sendSize = cloudMachineSizeToSend(sizes, pickedSize);
     const result = await toCloud({
       environmentId: threadRef.environmentId,
       input: {
@@ -170,6 +181,7 @@ function ContinueInCloudDialog({
         excludePaths: [...excluded],
         message: message.trim(),
         creationSource: "web",
+        ...(sendSize === undefined ? {} : { machineSize: sendSize }),
       },
     });
     inFlight.current = false;
@@ -246,6 +258,18 @@ function ContinueInCloudDialog({
                       ))}
                     </SelectPopup>
                   </Select>
+                </div>
+              ) : null}
+              {target !== null && sizes.length > 1 && machineSize !== null ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor={`${formId}-size`}>Size</Label>
+                  <MachineSizeSelect
+                    id={`${formId}-size`}
+                    sizes={sizes}
+                    value={machineSize.size}
+                    disabled={moving}
+                    onChange={(spec) => setPickedSize(spec.default ? undefined : spec.size)}
+                  />
                 </div>
               ) : null}
               {preview.error !== null ? (

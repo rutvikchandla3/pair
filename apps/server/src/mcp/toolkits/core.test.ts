@@ -45,6 +45,7 @@ import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapter
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as SandboxFork from "../../sandbox/lifecycle/SandboxFork.ts";
 import * as CloudMoves from "../../cloudMove/CloudMoves.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
@@ -90,6 +91,7 @@ const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
     Layer.mergeAll(
       Layer.mock(ThreadSearch.ThreadSearch)({}),
       Layer.mock(CloudMoves.CloudMoves)({}),
+      Layer.mock(SandboxFork.SandboxFork)({}),
     ),
   ),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
@@ -802,6 +804,7 @@ it.effect.each([
           Layer.mergeAll(
             Layer.mock(ThreadSearch.ThreadSearch)({}),
             Layer.mock(CloudMoves.CloudMoves)({}),
+            Layer.mock(SandboxFork.SandboxFork)({}),
           ),
         ),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),

@@ -202,6 +202,7 @@ const make = Effect.gen(function* () {
             baseRef: input.baseRef,
             ...(input.branch === undefined ? {} : { branch: input.branch }),
             ...(input.existingBranch === undefined ? {} : { existingBranch: true }),
+            ...(input.machineSize === undefined ? {} : { machineSize: input.machineSize }),
             ...(input.seeded && input.rootSeeds === undefined ? { seedRef: key } : {}),
             ...(input.rootSeeds === undefined ? {} : { rootSeeds: input.rootSeeds }),
           },

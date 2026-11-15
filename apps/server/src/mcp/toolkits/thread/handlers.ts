@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as CloudMoves from "../../../cloudMove/CloudMoves.ts";
+import * as SandboxFork from "../../../sandbox/lifecycle/SandboxFork.ts";
 import { assertNotLinked } from "../../linkOrigin.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -119,6 +120,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           // The calling run is the one asking, so its own thread may move mid-turn.
           allowRunId: caller?.id === threadId ? (caller.activeRunId ?? undefined) : undefined,
           actorId,
+          machineSize: input.machineSize,
         })
         .pipe(
           Effect.mapError(
@@ -232,6 +234,38 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             return { sequence: result.sequence, targetThreadId };
           }
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
+          if (input.machineSize !== undefined) {
+            if (input.sourcePoint !== undefined && input.sourcePoint.type !== "latest_stable") {
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message:
+                  "A fork to a new machine copies the machine as it is now; omit sourcePoint.",
+              });
+            }
+            const forks = yield* SandboxFork.SandboxFork;
+            const forked = yield* forks
+              .fork({
+                commandId,
+                sourceThreadId: projection.thread.id,
+                threadId: targetThreadId,
+                size: input.machineSize,
+                ...(input.branch === undefined ? {} : { branch: input.branch }),
+                ...(input.title === undefined ? {} : { title: input.title }),
+                createdBy: "agent",
+                creationSource: "mcp",
+              })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new OrchestratorMcpFailure({
+                      code:
+                        error.reason === "unavailable" ? "orchestration_error" : "invalid_request",
+                      message: error.message,
+                    }),
+                ),
+              );
+            return { sequence: forked.sequence, targetThreadId };
+          }
           const result = yield* threads
             .dispatch({
               type: "thread.fork",

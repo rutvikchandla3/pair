@@ -9,6 +9,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { SandboxSize } from "./sandbox.ts";
 import { ScopedThreadRef } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationV2CreationSource } from "./orchestrationV2.ts";
@@ -196,6 +197,8 @@ export const ThreadMoveToCloudInput = Schema.Struct({
   excludePaths: Schema.Array(MovePath).check(Schema.isMaxLength(1_000)),
   message: CLOUD_MOVE_MESSAGE,
   creationSource: Schema.optionalKey(Schema.Literals(["web", "mobile"])),
+  /** Absent: Pair Cloud's default size. */
+  machineSize: Schema.optionalKey(SandboxSize),
 });
 export type ThreadMoveToCloudInput = typeof ThreadMoveToCloudInput.Type;
 
@@ -235,6 +238,7 @@ export const CloudMoveLaunchInput = Schema.Struct({
   baseRef: TrimmedNonEmptyString,
   branch: Schema.optionalKey(TrimmedNonEmptyString),
   existingBranch: Schema.optionalKey(Schema.Literal(true)),
+  machineSize: Schema.optionalKey(SandboxSize),
   seeded: Schema.Boolean,
   /** A workspace's move: one staged seed for each repository project, under its own key. */
   rootSeeds: Schema.optionalKey(

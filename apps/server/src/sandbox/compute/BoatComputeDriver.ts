@@ -5,6 +5,7 @@ import {
   type SandboxSize,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import { boatMachineType, sandboxDriverSizes } from "@t3tools/shared/sandbox";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -93,14 +94,6 @@ const STOPPED_STATES = new Set(["archiving", "archived"]);
 /** States `resume` takes back; boat answers `sandbox_stopping` while it may not yet. */
 const RESUMABLE_STATES = new Set(["archiving", "archived", "error"]);
 
-const TYPE_SIZES: Readonly<Record<BoatSandboxType, { vcpus: number; memoryGb: number }>> = {
-  small: { vcpus: 2, memoryGb: 4 },
-  default: { vcpus: 4, memoryGb: 8 },
-  large: { vcpus: 8, memoryGb: 16 },
-  xlarge: { vcpus: 16, memoryGb: 32 },
-};
-const SANDBOX_SIZES: ReadonlyArray<SandboxSize> = ["small", "default", "large"];
-
 const NOT_CLOUD_ONLY =
   "The boat.dev driver runs only on a Pair Cloud server (started with --cloud-only). On any other server, agents could use this machine's boat.dev account.";
 const NO_KEY_HINT = "Paste a boat API key.";
@@ -115,7 +108,7 @@ const conflictHint = (resource: string) =>
   `\`${resource}\` is in this boat account but this server did not make it, so it is left alone. Delete or rename it, then choose Refresh.`;
 
 const typeOf = (config: BoatSandboxDriver, size: SandboxSize): BoatSandboxType =>
-  config.types?.[size] ?? size;
+  boatMachineType(config, size);
 
 /** An https URL, which B7 requires: the secret and token cross the internet. */
 const isHttpsUrl = (value: string | undefined) => {
@@ -168,7 +161,7 @@ const capabilitiesOf = (config: BoatSandboxDriver): ComputeCapabilities => ({
   egressRules: "none",
   regions: ["eu"],
   nestedDocker: true,
-  sizes: SANDBOX_SIZES.map((size) => ({ size, ...TYPE_SIZES[typeOf(config, size)] })),
+  sizes: sandboxDriverSizes(config),
   defaultRunningCap: 20,
   discardOnArchive: true,
   defaultIdleSleepMs: 20 * 60_000,
@@ -900,7 +893,8 @@ export const makeWithApi = Effect.fn("BoatComputeDriver.makeWithApi")(function* 
     const available = new Set(
       (limits.machineTypes ?? []).filter((type) => type.available).map((type) => type.type),
     );
-    if (SANDBOX_SIZES.some((size) => !available.has(typeOf(config, size)))) {
+    // Members may ask for other sizes; a plan without one refuses that create with its own hint.
+    if (!available.has(typeOf(config, config.size ?? "default"))) {
       return yield* failure("health", "quota", { setupHint: PLAN_HINT });
     }
     if (server.guest !== undefined) {

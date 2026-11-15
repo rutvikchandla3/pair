@@ -14,8 +14,10 @@ import {
   type OrchestratorMcpThreadStatus,
   type OrchestratorMcpThreadTimelineItem,
   type OrchestrationV2ThreadShellSandbox,
+  type SandboxSize,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SANDBOX_SIZES } from "@t3tools/shared/sandbox";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -806,9 +808,14 @@ export const launchWorkspaceStrategy = Effect.fn("cli.thread.launchWorkspaceStra
     readonly worktree: Option.Option<string>;
     readonly cloud: Option.Option<string>;
     readonly branch: Option.Option<string>;
+    readonly machine?: Option.Option<SandboxSize>;
   }) {
     if (Option.isSome(input.worktree) && Option.isSome(input.cloud)) {
       return yield* new ThreadUsageError({ detail: "Use --worktree or --cloud, not both." });
+    }
+    const machine = input.machine ?? Option.none();
+    if (Option.isSome(machine) && Option.isNone(input.cloud)) {
+      return yield* new ThreadUsageError({ detail: "--machine needs --cloud <base-ref>." });
     }
     // --branch names the new branch for either.
     const baseRef = Option.getOrUndefined(Option.orElse(input.worktree, () => input.cloud));
@@ -822,6 +829,10 @@ export const launchWorkspaceStrategy = Effect.fn("cli.thread.launchWorkspaceStra
       type: Option.isSome(input.cloud) ? ("cloud" as const) : ("worktree" as const),
       baseRef,
       ...Option.match(input.branch, { onNone: () => ({}), onSome: (branch) => ({ branch }) }),
+      ...Option.match(machine, {
+        onNone: () => ({}),
+        onSome: (machineSize) => ({ machineSize }),
+      }),
     };
   },
 );
@@ -1094,6 +1105,12 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Branch name for the new worktree or cloud checkout."),
     Flag.optional,
   ),
+  machine: Flag.Literals("machine", SANDBOX_SIZES).pipe(
+    Flag.withDescription(
+      "With --cloud: the machine size. Defaults to the server's. orchestrator_capabilities lists each size's CPUs and memory.",
+    ),
+    Flag.optional,
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -1249,6 +1266,55 @@ const threadShowCommand = Command.make("show", {
   ),
 );
 
+const ThreadForkResult = Schema.Struct({ targetThreadId: ThreadId });
+
+const threadForkCommand = Command.make("fork", {
+  ...projectLocationFlags,
+  url: urlFlag,
+  environment: environmentFlag,
+  thread: threadArgument,
+  machine: Flag.Literals("machine", SANDBOX_SIZES).pipe(
+    Flag.withDescription(
+      "Fork onto a new cloud machine of this size, copied from the thread's machine with its uncommitted changes.",
+    ),
+  ),
+  branch: Flag.String("branch").pipe(
+    Flag.withDescription("The fork's new branch. Defaults to <branch>-fork."),
+    Flag.optional,
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Fork a cloud thread onto a new machine of another size and print the fork's id. Not while a turn runs.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.fork")(function* (tools) {
+          const forked = yield* tools.call(
+            "t3_thread_transfer",
+            {
+              action: "fork",
+              threadId,
+              machineSize: flags.machine,
+              ...Option.match(flags.branch, {
+                onNone: () => ({}),
+                onSome: (branch) => ({ branch }),
+              }),
+            },
+            ThreadForkResult,
+          );
+          yield* flags.json
+            ? printJson({ threadId: forked.targetThreadId })
+            : Console.log(forked.targetThreadId);
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 export const threadCommand = Command.make("thread").pipe(
   Command.withDescription("Start, message, and read threads on the running server."),
   Command.withSubcommands([
@@ -1256,5 +1322,6 @@ export const threadCommand = Command.make("thread").pipe(
     threadStartCommand,
     threadSendCommand,
     threadShowCommand,
+    threadForkCommand,
   ]),
 );

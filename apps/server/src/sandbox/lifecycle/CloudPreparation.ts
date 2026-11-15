@@ -15,7 +15,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
-import { cloudAvailability, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
+import {
+  cloudAvailability,
+  defaultSandboxDriver,
+  NOT_CLOUD_ONLY_MESSAGE,
+} from "@t3tools/shared/sandbox";
 import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
@@ -184,6 +188,7 @@ const activeImageBuild = Effect.fn("CloudPreparation.activeImageBuild")(
 export const resolveCloudLaunch = Effect.fn("CloudPreparation.resolveCloudLaunch")(function* (
   projectId: ProjectId,
   instanceId: ProviderInstanceId,
+  machineSize?: SandboxSize,
 ) {
   const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
@@ -206,12 +211,10 @@ export const resolveCloudLaunch = Effect.fn("CloudPreparation.resolveCloudLaunch
   if (support._tag === "Unsupported") {
     return yield* new ProviderCloudUnsupportedError({ threadId: "", driver: instance.driver });
   }
-  const driver =
-    sandbox.drivers.find((candidate) => candidate.id === sandbox.defaultDriverId) ??
-    sandbox.drivers[0]!;
+  const driver = defaultSandboxDriver(sandbox)!;
   return {
     driverId: driver.id,
-    size: driver.size ?? "default",
+    size: machineSize ?? driver.size ?? "default",
     imageBuild: yield* activeImageBuild(driver.id),
   } satisfies {
     readonly driverId: ComputeDriverId;
@@ -395,6 +398,74 @@ const isCheckout = (cwd: string) =>
 type CloneSource = "image" | "origin" | "existing";
 
 /**
+ * Moves a copied disk's checkouts from the source machine's root to this one's (paths route to a
+ * machine by root), points git's worktree links at the new paths, and puts the fork on its branch.
+ * Idempotent: a moved root is skipped and the branch is only switched once.
+ */
+const ADOPT_COPY_SCRIPT = `set -eu
+src=$1; dst=$2; worktree=$3; branch=$4
+if command -v flock >/dev/null 2>&1; then exec 9>/tmp/pair-machine-copy.lock; flock 9; fi
+if [ -d "$src" ]; then
+  mkdir -p "$dst"
+  for entry in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+    [ -e "$entry" ] || continue
+    mv "$entry" "$dst"/
+  done
+  rmdir "$src" 2>/dev/null || true
+  find "$dst" -maxdepth 6 \\( -name .git -type f -o -name gitdir -path '*/.git/worktrees/*' \\) -exec sed -i "s#$src/#$dst/#g" {} +
+fi
+if [ -e "$worktree/.git" ] && [ "$(git -C "$worktree" rev-parse --abbrev-ref HEAD)" != "$branch" ]; then
+  git -C "$worktree" checkout -B "$branch"
+fi
+`;
+
+/** A fork's machine starts as a copy of another's disk; its checkout is adopted before first use. */
+const adoptMachineCopy = Effect.fn("CloudPreparation.adoptMachineCopy")(function* (input: {
+  readonly sandboxId: SandboxId;
+  readonly worktreePath: string;
+  readonly branch: string;
+}) {
+  const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+  const hosts = yield* Effect.serviceOption(WorkspaceHosts.WorkspaceHosts);
+  if (Option.isNone(projections) || Option.isNone(hosts)) return;
+  const record = yield* projections.value
+    .getSandbox(input.sandboxId)
+    .pipe(Effect.orElseSucceed(() => null));
+  const sourceId = record?.copyOf;
+  if (sourceId === undefined) return;
+  const checkoutRoot = yield* SandboxCheckoutRoot;
+  const root = checkoutRoot(input.sandboxId);
+  yield* hosts.value.forPath(root).pipe(
+    Effect.flatMap((host) =>
+      host.spawner.exitCode(
+        ChildProcess.make(
+          "sh",
+          [
+            "-c",
+            ADOPT_COPY_SCRIPT,
+            "sh",
+            checkoutRoot(sourceId),
+            root,
+            input.worktreePath,
+            input.branch,
+          ],
+          { stdin: "ignore" },
+        ),
+      ),
+    ),
+    Effect.flatMap((code) =>
+      code === 0 ? Effect.void : Effect.fail(`Adopting the copied disk exited with ${code}`),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not adopt a machine copy's checkout; rebuilding it", {
+        sandboxId: input.sandboxId,
+        cause,
+      }),
+    ),
+  );
+});
+
+/**
  * Brings the machine's clone of a project up to date: fetches a clone it has, else copies the
  * team image's clone and fetches, else clones origin.
  */
@@ -458,6 +529,13 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
 }) {
   const git = yield* GitWorkflow.GitWorkflowService;
   const { root, url, clonePath } = yield* cloneTarget(input);
+  if (input.existingWorktreePath !== null && !(yield* isCheckout(input.existingWorktreePath))) {
+    yield* adoptMachineCopy({
+      sandboxId: input.sandboxId,
+      worktreePath: input.existingWorktreePath,
+      branch: input.branch,
+    });
+  }
   // A kept disk still has the thread's checkout; a new machine starts without one.
   if (input.existingWorktreePath !== null && (yield* isCheckout(input.existingWorktreePath))) {
     return {

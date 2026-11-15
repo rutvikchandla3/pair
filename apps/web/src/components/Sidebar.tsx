@@ -197,9 +197,14 @@ import {
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
+import { openForkToMachineDialog } from "./sandbox/ForkToMachineDialog";
 import { useContinueLocally } from "../hooks/useContinueLocally";
 import { readSandboxThreadMachine, useSandboxActionRunner } from "./sandbox/useSandboxThreadStatus";
-import { readContinueInCloudOffer, readThreadShare } from "../state/sandbox";
+import {
+  readContinueInCloudOffer,
+  readForkToMachineOffer,
+  readThreadShare,
+} from "../state/sandbox";
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
@@ -2746,6 +2751,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const machine = readSandboxThreadMachine(threadRef);
         const share = readThreadShare(threadRef);
         const cloudOffer = readContinueInCloudOffer(threadRef);
+        const forkOffer = readForkToMachineOffer(threadRef);
         const moveOffer = continueLocally.offerFor(threadRef);
         const spaceActions = readSpaceThreadActions(threadRef.environmentId, threadRef.threadId);
         const clicked = await settlePromise(() =>
@@ -2786,6 +2792,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   }
                 : {}),
               ...(machine ? { machine } : {}),
+              ...(forkOffer ? { forkToMachine: forkOffer } : {}),
               ...(cloudOffer.kind === "hidden"
                 ? {}
                 : {
@@ -2980,6 +2987,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           }
           case "mark-unread":
             markThreadUnread(threadRef);
+            return;
+          case "fork-to-machine":
+            openForkToMachineDialog(threadRef);
             return;
           case "continue-in-cloud":
             openContinueInCloudDialog(threadRef);

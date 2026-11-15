@@ -307,6 +307,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
 
     // A workspace thread cannot share another thread's folder; it gets new worktrees or a machine.
     const workspace = isWorkspaceProject(activeProject);
+    const sourceMachineSize = activeThread.source.sandbox?.size;
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
 
@@ -347,7 +348,15 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
             planId: activeProposedPlan.id,
           },
           ...(workspace && cloudThread
-            ? { bootstrap: { prepareCloud: { baseRef: WORKSPACE_WORKTREE_BASE_REF } } }
+            ? {
+                bootstrap: {
+                  prepareCloud: {
+                    baseRef: WORKSPACE_WORKTREE_BASE_REF,
+                    // The plan's machine gets the size of the one it was planned on.
+                    ...(sourceMachineSize === undefined ? {} : { machineSize: sourceMachineSize }),
+                  },
+                },
+              }
             : workspace
               ? {
                   bootstrap: {

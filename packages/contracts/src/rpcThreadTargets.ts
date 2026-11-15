@@ -45,6 +45,10 @@ export const RPC_THREAD_TARGETS: {
   [WS_METHODS.threadMoveToCloud]: thread,
   [WS_METHODS.sandboxViewing]: thread,
   [WS_METHODS.sandboxDesktop]: thread,
+  [WS_METHODS.sandboxFork]: (input) => [
+    { threadId: input.sourceThreadId },
+    { newThreadId: input.threadId },
+  ],
   [WS_METHODS.spacesTask]: (input) => ("threadId" in input ? [{ threadId: input.threadId }] : []),
   [WS_METHODS.scheduledTasksUpsert]: (input) => [
     ...(input.threadId ? [{ threadId: input.threadId }] : []),

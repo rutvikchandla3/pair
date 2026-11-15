@@ -1,4 +1,6 @@
-import { ComposerSelectControl } from "./chat/ComposerControl";
+import type { CloudMachineSize, SandboxSize } from "@t3tools/contracts";
+import { machineSpecLabel, SANDBOX_SIZE_LABELS } from "@t3tools/shared/sandbox";
+import { ComposerControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { CloudIcon, FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
 import { memo, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
@@ -14,13 +16,16 @@ import {
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import {
-  Select,
-  SelectGroup,
-  SelectGroupLabel,
-  SelectItem,
-  SelectPopup,
-  SelectValue,
-} from "./ui/select";
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "./ui/menu";
+import { withMachineSize } from "./sandbox/machineSize.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -42,6 +47,10 @@ interface BranchToolbarEnvModeSelectorProps {
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
   onUsePreviousWorktree?: () => void;
+  /** The size Cloud's label names, or null at the team default. */
+  cloudSize: SandboxSize | null;
+  /** Cloud's sizes to pick from; null hides the Machine group. */
+  machine: CloudMachineChoice | null;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -56,6 +65,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   previousWorktreeLabel,
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
+  cloudSize,
+  machine,
 }: BranchToolbarEnvModeSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
@@ -65,19 +76,6 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   const cloudOnly = cloudItem?.only === true;
   const showPreviousWorktree =
     Boolean(previousWorktreeLabel && onUsePreviousWorktree) && !cloudOnly;
-  const envModeItems = [
-    ...(cloudOnly
-      ? []
-      : [
-          { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
-          { value: "worktree", label: resolveEnvModeLabel("worktree") },
-        ]),
-    ...(cloudItem?.rows.map((row) => ({ value: row.value, label: row.label })) ?? []),
-    ...(showPreviousWorktree && previousWorktreeLabel
-      ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
-      : []),
-  ];
-
   const stopContextMenuMouseDown = (event: ReactMouseEvent) => {
     if (event.button !== 0 || event.ctrlKey) {
       event.stopPropagation();
@@ -85,6 +83,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   };
 
   if (envLocked || forcedWorktreeReason !== null) {
+    const lockedLabel = withMachineSize(
+      resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode),
+      effectiveEnvMode === "cloud" ? cloudSize : null,
+    );
     const lockedRow = (
       <span
         className="inline-flex h-7 min-w-0 items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
@@ -100,9 +102,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           <FolderIcon className="size-3" />
         )}
         <ComposerContextLabel>
-          {forcedWorktreeReason !== null
-            ? resolveEnvModeLabel("worktree")
-            : resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)}
+          {forcedWorktreeReason !== null ? resolveEnvModeLabel("worktree") : lockedLabel}
         </ComposerContextLabel>
       </span>
     );
@@ -110,39 +110,39 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     return (
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
-        <TooltipPopup>
-          {forcedWorktreeReason ??
-            resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)}
-        </TooltipPopup>
+        <TooltipPopup>{forcedWorktreeReason ?? lockedLabel}</TooltipPopup>
       </Tooltip>
     );
   }
 
+  const value = effectiveEnvMode === "cloud" ? (cloudItem?.value ?? "cloud") : effectiveEnvMode;
+  const triggerLabel =
+    effectiveEnvMode === "local"
+      ? resolveCurrentWorkspaceLabel(activeWorktreePath)
+      : effectiveEnvMode === "cloud"
+        ? withMachineSize(
+            cloudItem?.rows.find((row) => row.value === value)?.label ??
+              resolveEnvModeLabel("cloud"),
+            cloudSize,
+          )
+        : resolveEnvModeLabel(effectiveEnvMode);
+
   return (
-    <Select
-      modal={false}
-      value={effectiveEnvMode === "cloud" ? (cloudItem?.value ?? "cloud") : effectiveEnvMode}
-      onValueChange={(value: string | null) => {
-        if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
-          onUsePreviousWorktree?.();
-          return;
-        }
-        const cloudRow = cloudItem?.rows.find((row) => row.value === value);
-        if (cloudRow) onCloudRow(cloudRow);
-        else onEnvModeChange(value as EnvMode);
-      }}
-      items={envModeItems}
-    >
+    <Menu modal={false}>
       <Tooltip>
         <TooltipTrigger
           render={
-            <ComposerSelectControl
-              size="xs"
-              className="min-w-0 shrink"
-              aria-label="Workspace"
-              data-composer-shortcut="composer.workspace"
-              data-composer-context-control
-              onMouseDownCapture={stopContextMenuMouseDown}
+            <MenuTrigger
+              render={
+                <ComposerControl
+                  size="xs"
+                  className="min-w-0 shrink"
+                  aria-label="Workspace"
+                  data-composer-shortcut="composer.workspace"
+                  data-composer-context-control
+                  onMouseDownCapture={stopContextMenuMouseDown}
+                />
+              }
             />
           }
         >
@@ -155,66 +155,119 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           ) : (
             <FolderIcon className="size-3" />
           )}
-          <ComposerContextLabel>
-            <SelectValue />
-          </ComposerContextLabel>
+          <ComposerContextLabel>{triggerLabel}</ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>
           {effectiveEnvMode === "local"
             ? resolveCurrentWorkspaceLabel(activeWorktreePath)
-            : resolveEnvModeLabel(effectiveEnvMode)}
+            : effectiveEnvMode === "cloud"
+              ? withMachineSize(resolveEnvModeLabel("cloud"), cloudSize)
+              : resolveEnvModeLabel(effectiveEnvMode)}
           {shortcutLabel ? ` · ${shortcutLabel}` : null}
         </TooltipPopup>
       </Tooltip>
-      <SelectPopup
-        alignItemWithTrigger={false}
+      <MenuPopup
+        align="start"
         {...composerFloatingLayerProps}
         className={showPreviousWorktree ? "w-[min(21rem,calc(100vw-2rem))]" : undefined}
       >
-        <SelectGroup>
-          <SelectGroupLabel>Workspace</SelectGroupLabel>
-          {cloudOnly ? null : (
-            <>
-              <CloudEnvModeTooltip reason={localDisabledReason}>
-                <SelectItem value="local" disabled={localDisabledReason !== null}>
+        <MenuGroup>
+          <MenuGroupLabel>Workspace</MenuGroupLabel>
+          <MenuRadioGroup
+            value={value}
+            onValueChange={(next: string) => {
+              if (next === PREVIOUS_WORKTREE_SELECT_VALUE) {
+                onUsePreviousWorktree?.();
+                return;
+              }
+              const cloudRow = cloudItem?.rows.find((row) => row.value === next);
+              if (cloudRow) onCloudRow(cloudRow);
+              else onEnvModeChange(next as EnvMode);
+            }}
+          >
+            {cloudOnly ? null : (
+              <>
+                <CloudEnvModeTooltip reason={localDisabledReason}>
+                  <MenuRadioItem value="local" disabled={localDisabledReason !== null} closeOnClick>
+                    <span className="inline-flex items-center gap-1.5">
+                      {activeWorktreePath ? (
+                        <FolderGitIcon className="size-3" />
+                      ) : (
+                        <FolderIcon className="size-3" />
+                      )}
+                      {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                    </span>
+                  </MenuRadioItem>
+                </CloudEnvModeTooltip>
+                <MenuRadioItem value="worktree" closeOnClick>
                   <span className="inline-flex items-center gap-1.5">
-                    {activeWorktreePath ? (
-                      <FolderGitIcon className="size-3" />
-                    ) : (
-                      <FolderIcon className="size-3" />
-                    )}
-                    {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                    <FolderGit2Icon className="size-3" />
+                    {resolveEnvModeLabel("worktree")}
                   </span>
-                </SelectItem>
+                </MenuRadioItem>
+              </>
+            )}
+            {cloudItem?.rows.map((row) => (
+              <CloudEnvModeTooltip key={row.value} reason={row.reason}>
+                <MenuRadioItem value={row.value} disabled={row.disabled} closeOnClick>
+                  <span className="inline-flex items-center gap-1.5">
+                    <CloudIcon className="size-3" />
+                    {row.label}
+                  </span>
+                </MenuRadioItem>
               </CloudEnvModeTooltip>
-              <SelectItem value="worktree">
-                <span className="inline-flex items-center gap-1.5">
-                  <FolderGit2Icon className="size-3" />
-                  {resolveEnvModeLabel("worktree")}
-                </span>
-              </SelectItem>
-            </>
-          )}
-          {cloudItem?.rows.map((row) => (
-            <CloudEnvModeTooltip key={row.value} reason={row.reason}>
-              <SelectItem value={row.value} disabled={row.disabled}>
-                <span className="inline-flex items-center gap-1.5">
-                  <CloudIcon className="size-3" />
-                  {row.label}
-                </span>
-              </SelectItem>
-            </CloudEnvModeTooltip>
-          ))}
-          {showPreviousWorktree && previousWorktreeLabel ? (
-            <SelectItem value={PREVIOUS_WORKTREE_SELECT_VALUE}>
-              <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
-            </SelectItem>
-          ) : null}
-        </SelectGroup>
-      </SelectPopup>
-    </Select>
+            ))}
+            {showPreviousWorktree && previousWorktreeLabel ? (
+              <MenuRadioItem value={PREVIOUS_WORKTREE_SELECT_VALUE} closeOnClick>
+                <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
+              </MenuRadioItem>
+            ) : null}
+          </MenuRadioGroup>
+        </MenuGroup>
+        {machine === null ? null : <CloudMachineMenuGroup machine={machine} />}
+      </MenuPopup>
+    </Menu>
   );
 });
+
+export interface CloudMachineChoice {
+  readonly sizes: ReadonlyArray<CloudMachineSize>;
+  readonly selected: SandboxSize;
+  readonly onChange: (spec: CloudMachineSize) => void;
+}
+
+/** Cloud's sizes, below the workspace rows of both pickers while Cloud is chosen. */
+export function CloudMachineMenuGroup({ machine }: { machine: CloudMachineChoice }) {
+  return (
+    <>
+      <MenuSeparator />
+      <MenuGroup>
+        <MenuGroupLabel>Machine</MenuGroupLabel>
+        <MenuRadioGroup
+          value={machine.selected}
+          onValueChange={(next: string) => {
+            const spec = machine.sizes.find((candidate) => candidate.size === next);
+            if (spec) machine.onChange(spec);
+          }}
+        >
+          {machine.sizes.map((spec) => (
+            <MenuRadioItem key={spec.size} value={spec.size} closeOnClick>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span>{SANDBOX_SIZE_LABELS[spec.size]}</span>
+                <span className="truncate text-muted-foreground">{machineSpecLabel(spec)}</span>
+                {spec.default ? (
+                  <span className="ms-auto shrink-0 ps-2 text-muted-foreground text-xs">
+                    team default
+                  </span>
+                ) : null}
+              </span>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuGroup>
+    </>
+  );
+}
 
 /** A disabled item takes no pointer events, so the reason hangs on a wrapper. */
 export function CloudEnvModeTooltip({

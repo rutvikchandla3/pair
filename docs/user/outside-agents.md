@@ -147,6 +147,9 @@ so on a shared team machine each person sets their own.
 A new thread uses the project's default model and permission mode, and runs in
 the project folder unless you pass `--worktree <base-branch>`, or
 `--cloud <base-branch>` for a cloud machine, when your server has Cloud set up.
+Add `--machine small|default|large` to `--cloud` for another machine size.
+`t3 thread fork <thread> --machine large` forks a cloud thread onto a
+[copy of its machine](./cloud.md#fork-to-a-bigger-machine) and prints the fork's id.
 A thread in a [workspace](./workspaces.md) always runs in a new worktree, or on a cloud machine.
 `send` never
 interrupts: a busy thread gets the message as its next turn. Pass `-` as the

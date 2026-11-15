@@ -81,6 +81,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ComputeDriverIcon } from "../ComputeDriverIcon";
 import { environmentSandboxDriversAtom } from "../../state/server";
 import { sandboxDriverOf } from "@t3tools/client-runtime/state/sandbox";
+import { withMachineSize } from "../sandbox/machineSize.logic";
 import { useAtomValue } from "@effect/atom-react";
 import {
   animateSidebarLayoutChanges,
@@ -320,7 +321,10 @@ function SidebarThreadTooltip({
               className="size-3 shrink-0 text-muted-foreground"
             />
             <div className="min-w-0 truncate text-foreground/75">
-              {cloudDriver === null ? "Cloud" : `Cloud · ${cloudDriver.label}`}
+              {withMachineSize(
+                cloudDriver === null ? "Cloud" : `Cloud · ${cloudDriver.label}`,
+                thread.source.sandbox.size,
+              )}
             </div>
           </div>
         ) : null}

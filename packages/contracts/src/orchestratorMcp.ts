@@ -43,6 +43,7 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { CloudMachineSize, SandboxSize } from "./sandbox.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
@@ -175,6 +176,11 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     Schema.Literals(["shared", "worktree", "cloud"]).annotate({
       description:
         "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit (in a workspace, each repository from its default branch instead), for a separate checkout or PR per child. 'cloud': own machine from the parent's pushed branch, if `features.cloudThreads` or `target.environmentId` is a `cloud` link. Uncommitted edits stay out.",
+    }),
+  ),
+  machineSize: Schema.optional(
+    SandboxSize.annotate({
+      description: "isolation 'cloud' only. From `cloudMachineSizes`.",
     }),
   ),
   mode: Schema.optional(
@@ -641,6 +647,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  /** Where `features.cloudThreads`: the sizes a cloud launch's `machineSize` may name. */
+  cloudMachineSizes: Schema.optional(Schema.Array(CloudMachineSize)),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

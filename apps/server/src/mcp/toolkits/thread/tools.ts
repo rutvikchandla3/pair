@@ -20,6 +20,7 @@ import {
   NonNegativeInt,
   ProjectId,
   EnvironmentId,
+  SandboxSize,
 } from "@t3tools/contracts";
 import * as McpSchema from "effect/ai/McpSchema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -27,6 +28,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as CloudMoves from "../../../cloudMove/CloudMoves.ts";
+import * as SandboxFork from "../../../sandbox/lifecycle/SandboxFork.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -176,6 +178,17 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),
     targetThreadId: Schema.optional(ThreadId),
     title: Schema.optional(TrimmedNonEmptyString),
+    machineSize: Schema.optional(
+      SandboxSize.annotate({
+        description:
+          "fork only: a cloud thread's fork on its own machine of this size, copying this disk. Latest point; not mid-turn.",
+      }),
+    ),
+    branch: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description: "With `machineSize`. Default `<branch>-fork`.",
+      }),
+    ),
   }),
   success: Schema.Union([
     Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId }),
@@ -190,6 +203,7 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
       ),
     }),
   ]),
+  dependencies: [...commandTool.dependencies, SandboxFork.SandboxFork],
 }).annotate(Tool.Destructive, true);
 
 const ThreadSearchTool = Tool.make("t3_thread_search", {
@@ -255,6 +269,11 @@ const ThreadContinueInCloudTool = Tool.make("t3_thread_continue_in_cloud", {
       Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(100)),
     ),
     message: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120000))),
+    machineSize: Schema.optional(
+      SandboxSize.annotate({
+        description: "From its `cloudMachineSizes`.",
+      }),
+    ),
   }),
   success: Schema.Struct({
     threadId: ThreadId,

@@ -13,7 +13,7 @@ import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, SandboxSize, ThreadId } from "@t3tools/contracts";
 import {
   CloudIcon,
   FolderGit2Icon,
@@ -35,7 +35,12 @@ import { flushSync } from "react-dom";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { useProject, useThreadShellsForProjectRefs, waitForProject } from "../state/entities";
+import {
+  useProject,
+  useQuietThreadShell,
+  useThreadShellsForProjectRefs,
+  waitForProject,
+} from "../state/entities";
 import {
   ADD_TO_MACHINE_LABEL_CLASS,
   type CloudEnvModeItem,
@@ -50,6 +55,7 @@ import {
   resolvePreviousWorktreeSeed,
   pairCloudAddInput,
   resolveCloudEnvModeItem,
+  resolveCloudLaunchTarget,
   shouldShowEnvironmentIndicator,
   MULTI_MODEL_WORKTREE_REASON,
   WORKSPACE_WORKTREE_REASON,
@@ -67,7 +73,19 @@ import { useCloudTarget } from "../state/sandbox";
 import { projectEnvironment } from "../state/projects";
 import { useAtomCommand } from "../state/use-atom-command";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
-import { BranchToolbarEnvModeSelector, CloudEnvModeTooltip } from "./BranchToolbarEnvModeSelector";
+import {
+  BranchToolbarEnvModeSelector,
+  type CloudMachineChoice,
+  CloudEnvModeTooltip,
+  CloudMachineMenuGroup,
+} from "./BranchToolbarEnvModeSelector";
+import {
+  cloudMachineSizeToSend,
+  resolveCloudMachineSize,
+  withMachineSize,
+} from "./sandbox/machineSize.logic";
+import { environmentCloudMachineSizesAtom } from "../state/server";
+import { useAtomValue } from "@effect/atom-react";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
@@ -196,6 +214,8 @@ interface RunContextSelectorProps {
   onUsePreviousWorktree: () => void;
   addTargets: readonly AddProjectTarget[];
   onAddToMachine: (environmentId: EnvironmentId) => void;
+  cloudSize: SandboxSize | null;
+  machine: CloudMachineChoice | null;
 }
 
 const RunContextSelector = memo(function RunContextSelector({
@@ -222,6 +242,8 @@ const RunContextSelector = memo(function RunContextSelector({
   onUsePreviousWorktree,
   addTargets,
   onAddToMachine,
+  cloudSize,
+  machine,
 }: RunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment =
@@ -237,11 +259,13 @@ const RunContextSelector = memo(function RunContextSelector({
   const forceNewWorktree = forcedWorktreeReason !== null;
   const workspaceLabel = forceNewWorktree
     ? resolveEnvModeLabel("worktree")
-    : envModeLocked
-      ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
-      : effectiveEnvMode === "local"
-        ? resolveCurrentWorkspaceLabel(activeWorktreePath)
-        : resolveEnvModeLabel(effectiveEnvMode);
+    : effectiveEnvMode === "cloud"
+      ? withMachineSize(resolveEnvModeLabel("cloud"), cloudSize)
+      : envModeLocked
+        ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
+        : effectiveEnvMode === "local"
+          ? resolveCurrentWorkspaceLabel(activeWorktreePath)
+          : resolveEnvModeLabel(effectiveEnvMode);
   const isPanel = displayMode === "panel";
   const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
   // A cloud thread's path is inside its sandbox and means nothing on this computer.
@@ -495,6 +519,7 @@ const RunContextSelector = memo(function RunContextSelector({
             ) : null}
           </MenuRadioGroup>
         </MenuGroup>
+        {machine === null ? null : <CloudMachineMenuGroup machine={machine} />}
       </MenuPopup>
     </Menu>
   );
@@ -703,8 +728,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   const cloudEnvironmentId = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId)?.cloudEnvironmentId : undefined,
   );
+  const cloudTarget = useCloudTarget(isServerThread ? null : activeProjectRef);
   const resolvedCloudItem = resolveCloudEnvModeItem({
-    cloud: useCloudTarget(isServerThread ? null : activeProjectRef),
+    cloud: cloudTarget,
     project: activeProject,
     cloudEnvironmentId,
     effectiveEnvMode: multiModelReason === null ? envMode : "worktree",
@@ -731,6 +757,38 @@ export const BranchToolbar = memo(function BranchToolbar({
   const effectiveEnvMode = forcesNewWorktree ? "worktree" : envMode;
   const envModeLocked =
     envLocked || (isServerThread && (activeWorktreePath !== null || envMode === "cloud"));
+  const draftMachineSize = useComposerDraftStore((store) =>
+    draftId ? store.getDraftSession(draftId)?.machineSize : undefined,
+  );
+  // Sizes are the launch target's: a linked Pair Cloud's own, not this machine's.
+  const machineSizes = useAtomValue(
+    environmentCloudMachineSizesAtom(
+      resolveCloudLaunchTarget(cloudTarget, cloudEnvironmentId)?.environmentId ?? environmentId,
+    ),
+  );
+  const cloudThreadShell = useQuietThreadShell(
+    isServerThread && envMode === "cloud" ? threadRef : null,
+  );
+  const cloudSize = isServerThread
+    ? (cloudThreadShell?.source.sandbox?.size ?? null)
+    : (cloudMachineSizeToSend(machineSizes, draftMachineSize) ?? null);
+  const selectedMachine = resolveCloudMachineSize(machineSizes, draftMachineSize);
+  const machine: CloudMachineChoice | null =
+    !isServerThread &&
+    !envModeLocked &&
+    effectiveEnvMode === "cloud" &&
+    machineSizes.length > 1 &&
+    selectedMachine !== null
+      ? {
+          sizes: machineSizes,
+          selected: selectedMachine.size,
+          // The team default is stored as no pick, so it follows the target's own default.
+          onChange: (spec) =>
+            setDraftThreadContext(draftId ?? threadRef, {
+              machineSize: spec.default ? null : spec.size,
+            }),
+        }
+      : null;
   const handleNewThread = useNewThreadHandler();
   const addingToPairCloud = useRef(false);
   const addToPairCloud = (target: { environmentId: EnvironmentId; label: string }) => {
@@ -903,6 +961,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             onUsePreviousWorktree={onUsePreviousWorktree}
             addTargets={addTargets}
             onAddToMachine={onAddToMachine}
+            cloudSize={cloudSize}
+            machine={machine}
           />
         ) : null}
         {panelSection !== "workspace" && (!workspace || repository !== null) ? (
@@ -958,6 +1018,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             onUsePreviousWorktree={onUsePreviousWorktree}
             addTargets={addTargets}
             onAddToMachine={onAddToMachine}
+            cloudSize={cloudSize}
+            machine={machine}
           />
         </div>
       ) : null}
@@ -1002,6 +1064,8 @@ export const BranchToolbar = memo(function BranchToolbar({
               previousWorktreeLabel={previousWorktreeLabel}
               previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
               onUsePreviousWorktree={onUsePreviousWorktree}
+              cloudSize={cloudSize}
+              machine={machine}
             />
           ) : null}
         </div>

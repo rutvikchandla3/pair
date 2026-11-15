@@ -31,11 +31,16 @@ import {
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { openContinueInCloudDialog } from "../components/sandbox/ContinueInCloudDialog";
+import { openForkToMachineDialog } from "../components/sandbox/ForkToMachineDialog";
 import {
   readSandboxThreadMachine,
   useSandboxActionRunner,
 } from "../components/sandbox/useSandboxThreadStatus";
-import { readContinueInCloudOffer, readThreadShare } from "../state/sandbox";
+import {
+  readContinueInCloudOffer,
+  readForkToMachineOffer,
+  readThreadShare,
+} from "../state/sandbox";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -158,6 +163,7 @@ export function useThreadActionMenu(input: {
       const share = readThreadShare(threadRef);
       const moveOffer = continueLocally.offerFor(threadRef);
       const cloudOffer = readContinueInCloudOffer(threadRef);
+      const forkOffer = readForkToMachineOffer(threadRef);
       const spaceActions = readSpaceThreadActions(threadRef.environmentId, threadRef.threadId);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
@@ -183,6 +189,7 @@ export function useThreadActionMenu(input: {
             }
           : {}),
         ...(machine ? { machine } : {}),
+        ...(forkOffer ? { forkToMachine: forkOffer } : {}),
         ...(cloudOffer.kind === "hidden"
           ? {}
           : {
@@ -257,6 +264,9 @@ export function useThreadActionMenu(input: {
           return;
         case "continue-in-cloud":
           openContinueInCloudDialog(threadRef);
+          return;
+        case "fork-to-machine":
+          openForkToMachineDialog(threadRef);
           return;
         case "project-settings": {
           const project = projects.find(

@@ -71,8 +71,12 @@ vi.mock("../components/sandbox/useSandboxThreadStatus", () => ({
 vi.mock("../components/sandbox/ContinueInCloudDialog", () => ({
   openContinueInCloudDialog: vi.fn(),
 }));
+vi.mock("../components/sandbox/ForkToMachineDialog", () => ({
+  openForkToMachineDialog: vi.fn(),
+}));
 vi.mock("../state/sandbox", () => ({
   readContinueInCloudOffer: () => ({ kind: "hidden" }),
+  readForkToMachineOffer: () => null,
   readThreadShare: () => null,
 }));
 vi.mock("../components/spaces/SpaceThreadContext", () => ({

@@ -66,17 +66,22 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
-  it("disables archive, turning into a project and continuing in cloud while the thread is running", () => {
+  it("disables archive, turning into a project, continuing in cloud and forking to a new machine while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
       isRunning: true,
       canTurnIntoProject: true,
       continueInCloud: { label: "a turn is running" },
+      forkToMachine: { blocker: "Wait for the turn to finish." },
     });
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "continue-in-cloud")).toMatchObject({
       label: "Continue in cloud (a turn is running)",
+      disabled: true,
+    });
+    expect(items.find((item) => item.id === "fork-to-machine")).toMatchObject({
+      label: "Fork to new machine (Wait for the turn to finish)",
       disabled: true,
     });
   });

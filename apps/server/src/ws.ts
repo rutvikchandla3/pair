@@ -312,6 +312,7 @@ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ComputeDriverCheck from "./sandbox/compute/ComputeDriverCheck.ts";
 import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
 import * as SandboxDesktop from "./sandbox/desktop/SandboxDesktop.ts";
+import * as SandboxFork from "./sandbox/lifecycle/SandboxFork.ts";
 import * as ServerDrain from "./drain/ServerDrain.ts";
 import * as TeamImageService from "./sandbox/image/TeamImageService.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
@@ -1744,6 +1745,7 @@ export const layerWsRpc = (
       const sandboxOverview = yield* SandboxOverview.SandboxOverview;
       const sandboxWake = yield* SandboxWake;
       const sandboxDesktop = yield* SandboxDesktop.SandboxDesktop;
+      const sandboxFork = yield* SandboxFork.SandboxFork;
       const serverDrain = yield* ServerDrain.ServerDrain;
       const computeDriverCheck = yield* ComputeDriverCheck.ComputeDriverCheck;
       const teamImages = yield* TeamImageService.TeamImageService;
@@ -3223,6 +3225,15 @@ export const layerWsRpc = (
               }),
             ),
         [WS_METHODS.sandboxDesktop]: (input) => sandboxDesktop.open(input),
+        [WS_METHODS.sandboxFork]: (input) =>
+          sandboxFork
+            .fork({
+              ...input,
+              actorId: currentSession.memberId,
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(Effect.map(({ threadId }) => ({ threadId }))),
         [WS_METHODS.sandboxCheckDriver]: (input) => computeDriverCheck.check(input),
         [WS_METHODS.teamImageSubscribe]: (_input) =>
           teamImages.changes({
@@ -4196,6 +4207,7 @@ export const layer = Layer.unwrap(
                   SandboxOverview.layer,
                   ComputeDriverCheck.layer,
                   SandboxDesktop.layer,
+                  SandboxFork.layer,
                 ),
               ),
               Layer.provide(MachinePorts.layer.pipe(Layer.provide(ProcessRunner.layer))),

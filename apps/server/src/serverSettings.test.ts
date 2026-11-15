@@ -385,6 +385,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         apiKey: "boat_member_never_sees",
         runnerUrl: "https://pair.example.com",
         organization: "team_123",
+        types: { large: "xlarge" },
       } as const;
       const settings = yield* decodeServerSettings({
         sandbox: {
@@ -405,7 +406,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         { kind: "docker", id: "remote", label: "Remote", size: "large", runningCap: 3 },
         { kind: "docker", id: "local", label: "This machine" },
         { kind: "gce", id: "gce", label: "Google Cloud", size: "small", runningCap: 20 },
-        { kind: "boat", id: "boat", label: "boat.dev", apiKey: "" },
+        // The picker's sizes; nothing secret.
+        { kind: "boat", id: "boat", label: "boat.dev", apiKey: "", types: { large: "xlarge" } },
       ]);
       const memberGce = member?.drivers.find((entry) => entry.kind === "gce");
       for (const key of [

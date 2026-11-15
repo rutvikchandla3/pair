@@ -28,6 +28,7 @@ import {
   type RuntimeRequestId,
   type SandboxAccessAudience,
   type SandboxId,
+  type SandboxSize,
   type ThreadId,
   type ThreadEnvMode,
   type ThreadMoveToLocalInput,
@@ -189,6 +190,7 @@ interface StartThreadBootstrap {
     readonly baseRef: string;
     readonly branch?: string;
     readonly existingBranch?: true;
+    readonly machineSize?: SandboxSize;
   };
   readonly runSetupScript?: boolean;
 }
@@ -815,6 +817,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
             ...(prepareCloud.existingBranch === undefined
               ? {}
               : { existingBranch: prepareCloud.existingBranch }),
+            ...(prepareCloud.machineSize === undefined
+              ? {}
+              : { machineSize: prepareCloud.machineSize }),
           }
         : prepareWorktree !== undefined
           ? {

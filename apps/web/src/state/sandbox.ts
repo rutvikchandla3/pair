@@ -10,24 +10,28 @@ import {
   createCloudAccountNoticeAtoms,
   createSandboxEnvironmentAtoms,
   type SandboxAccessSummary,
+  sandboxDriverOf,
 } from "@t3tools/client-runtime/state/sandbox";
+import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
   type EnvironmentId,
+  type SandboxDriverInstance,
   type ScopedProjectRef,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { forkToMachineBlocker } from "@t3tools/shared/sandbox";
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentPresentations } from "./presentation";
-import { serverEnvironment } from "./server";
+import { environmentSandboxDriversAtom, serverEnvironment } from "./server";
 import { teamEnvironment } from "./team";
 import { environmentThreadShells } from "./threads";
 
@@ -166,4 +170,52 @@ export function readThreadShare(threadRef: ScopedThreadRef): ThreadShare | null 
     access,
     allowed: appAtomRegistry.get(sandboxEnvironment.shareThreadCommand.permissionAtom(threadRef)),
   };
+}
+
+interface ForkToMachineOffer {
+  /** Why it can't fork now, or null when it can. */
+  readonly blocker: string | null;
+}
+
+/** Fork to new machine: offered on every cloud thread, disabled with the reason when it can't. */
+function forkToMachineOfferOf(
+  thread: EnvironmentThreadShell | null,
+  drivers: ReadonlyArray<SandboxDriverInstance>,
+): ForkToMachineOffer | null {
+  if (thread === null || thread.source.sandboxId === undefined) return null;
+  const sandbox = thread.source.sandbox;
+  return {
+    blocker: forkToMachineBlocker({
+      driverKind: sandboxDriverOf(drivers, sandbox)?.kind ?? null,
+      machineState: sandbox?.state ?? null,
+      branch: thread.branch,
+      workspace: thread.roots !== undefined,
+      turnRunning: !threadRuntimeCanArchive(thread.runtime),
+    }),
+  };
+}
+
+const NO_DRIVERS_ATOM = Atom.make<ReadonlyArray<SandboxDriverInstance>>([]).pipe(
+  Atom.withLabel("web-fork-to-machine:no-drivers"),
+);
+
+export function useForkToMachineOffer(
+  threadRef: ScopedThreadRef | null,
+): ForkToMachineOffer | null {
+  // A null ref subscribes to nothing, as useCloudTarget.
+  const thread = useAtomValue(
+    threadRef === null ? NO_THREAD_ATOM : environmentThreadShells.threadShellAtom(threadRef),
+  );
+  const drivers = useAtomValue(
+    threadRef === null ? NO_DRIVERS_ATOM : environmentSandboxDriversAtom(threadRef.environmentId),
+  );
+  return forkToMachineOfferOf(thread, drivers);
+}
+
+/** Read at event time, for menus. */
+export function readForkToMachineOffer(threadRef: ScopedThreadRef): ForkToMachineOffer | null {
+  return forkToMachineOfferOf(
+    appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef)),
+    appAtomRegistry.get(environmentSandboxDriversAtom(threadRef.environmentId)),
+  );
 }

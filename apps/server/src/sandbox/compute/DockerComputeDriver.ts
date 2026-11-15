@@ -5,6 +5,7 @@ import type {
   SandboxId,
   SandboxSize,
 } from "@t3tools/contracts";
+import { DOCKER_MACHINE_SPECS, SANDBOX_SIZES } from "@t3tools/shared/sandbox";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -72,11 +73,10 @@ const TEAM_IMAGE_BUILD_LABEL = "pair.team-image.build";
 const TEAM_IMAGE_MACHINE_LABEL = "pair.team-image.machine";
 const RUNNING_STATES = new Set(["running", "restarting", "paused"]);
 
-const SIZES: ComputeCapabilities["sizes"] = [
-  { size: "small", vcpus: 2, memoryGb: 4 },
-  { size: "default", vcpus: 4, memoryGb: 8 },
-  { size: "large", vcpus: 8, memoryGb: 16 },
-];
+const SIZES: ComputeCapabilities["sizes"] = SANDBOX_SIZES.map((size) => ({
+  size,
+  ...DOCKER_MACHINE_SPECS[size],
+}));
 
 const capabilities: Omit<ComputeCapabilities, "defaultRunningCap"> = {
   persistentDisk: true,

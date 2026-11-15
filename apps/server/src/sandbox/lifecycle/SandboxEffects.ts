@@ -472,6 +472,33 @@ const make = Effect.gen(function* () {
     return base;
   });
 
+  /**
+   * A fork's first boot: the source machine's disk captured as an image, named for this machine so
+   * a replay reuses it. Null for every other create, and for a fork's later generations.
+   */
+  const machineCopy = Effect.fn("SandboxEffects.machineCopy")(function* (
+    record: OrchestrationV2Sandbox,
+    driver: ComputeDriver["Service"],
+    call: <A>(effect: Effect.Effect<A, ComputeDriverError>) => Effect.Effect<A, SandboxEffectError>,
+    fail: (retryable: boolean) => (cause: unknown) => SandboxEffectError,
+  ) {
+    if (record.copyOf === undefined || record.generation !== 1) return null;
+    const source = yield* projections.getSandbox(record.copyOf).pipe(Effect.mapError(fail(true)));
+    if (source === null || source.driverRef === null || source.state === "destroyed") {
+      return yield* fail(false)(
+        new ComputeDriverError({
+          driverId: record.driverId,
+          operation: "create",
+          reason: "not-found",
+          retryable: false,
+          setupHint: "The machine this fork copies was discarded, so there is no disk to copy.",
+        }),
+      );
+    }
+    const image = yield* call(driver.snapshot(source.driverRef, `t3-machine-copy:${record.id}`));
+    return image.imageRef;
+  });
+
   const execute: SandboxEffects["Service"]["execute"] = Effect.fn("SandboxEffects.execute")(
     function* (request) {
       const record = yield* currentRecord(request);
@@ -503,7 +530,11 @@ const make = Effect.gen(function* () {
       switch (request.type) {
         case "sandbox.create": {
           const installId = yield* environment.getEnvironmentId;
-          const image = yield* bootImage(record).pipe(Effect.mapError(fail(true)));
+          const copy = yield* machineCopy(record, driver, call, fail);
+          const image =
+            copy === null
+              ? yield* bootImage(record).pipe(Effect.mapError(fail(true)))
+              : ({ type: "build", imageRef: copy } as const);
           const created = yield* call(
             driver.create({
               name: sandboxBackendName(installId, record.id, record.generation),
@@ -520,6 +551,17 @@ const make = Effect.gen(function* () {
               bootstrap: yield* bootstrap,
             }),
           );
+          if (copy !== null) {
+            // The new disk holds the copy; the image would only cost storage.
+            yield* driver.deleteImage(copy).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not delete a machine copy's image", {
+                  sandboxId: record.id,
+                  cause,
+                }),
+              ),
+            );
+          }
           return yield* report(record, {
             type: "sandbox.created",
             commandId: CommandId.make(`sandbox-created:${record.id}:${record.generation}`),

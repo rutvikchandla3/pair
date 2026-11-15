@@ -46,6 +46,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as SandboxFork from "../sandbox/lifecycle/SandboxFork.ts";
 import * as CloudMoves from "../cloudMove/CloudMoves.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
@@ -175,6 +176,7 @@ const layerTools = Layer.mergeAll(
     Layer.mergeAll(
       Layer.mock(ThreadSearch.ThreadSearch)({}),
       Layer.mock(CloudMoves.CloudMoves)({}),
+      Layer.mock(SandboxFork.SandboxFork)({}),
     ),
   ),
   Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),

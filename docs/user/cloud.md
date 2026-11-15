@@ -27,7 +27,8 @@ them up in its **Settings → Cloud**:
    `ssh://` is not supported, so forward the socket instead. A remote host also needs a
    **Runner URL**: an address of this Pair server that its machines can reach, unless the server
    has a [runner listener](./pair-cloud.md#keep-machines-off-the-member-listener).
-3. Pick a **Machine size** and save.
+3. Pick a **Machine size** and save. It is the team default; members can pick another size for
+   a thread when they start it.
 4. Choose **Test**. It starts a machine, checks that it connects back, runs git, checks that
    `sudo` works and reaches github.com, removes it, and shows how long each step took.
 
@@ -99,9 +100,28 @@ Scripts and agents start cloud threads too: see `--cloud` in
 [Scripts and CI](./outside-agents.md#scripts-and-ci) and
 [Agents working with agents](./outside-agents.md#agents-working-with-agents).
 
+### Machine size
+
+With **Cloud** picked, the same menu lists **Machine**: Small, Medium or Large, with each size's
+CPUs and memory and the team default marked. The choice applies to that draft only; the next new
+thread starts at the team default again. The thread's size shows in the sidebar's thread card and
+in the thread details. **Continue in cloud…** offers the same sizes. Agents pass `machineSize`
+(the sizes are in `orchestrator_capabilities`), and scripts pass `--machine large` with `--cloud`.
+On boat.dev, a plan without a size refuses a thread that asks for it, with the reason.
+
+### Fork to a bigger machine
+
 Side chats and forks of a cloud thread run on the same machine, so
 [sharing the thread](#who-can-open-a-cloud-thread) shares them too. A fork of a teammate's cloud
 thread says so, because its agent can read that teammate's credentials there.
+
+To give a fork a machine of its own, choose **Fork to new machine…** in the thread's menu or the
+command palette, or run `t3 thread fork <thread> --machine large`. Pair copies the machine's disk,
+uncommitted changes and installed dependencies included, onto a new machine of the size you pick,
+and puts the fork on a new branch (`<branch>-fork` unless you name one), so the two machines never
+push the same branch. The fork starts from the thread's latest finished turn; wait for a running
+turn to end first. It works on boat.dev and Google Cloud machines, not on Docker, and not yet for
+workspace threads. A fork on its own machine is private to you, like a new thread.
 
 On a Cloud server, scheduled and webhook tasks that start a new thread run in Cloud too, from the
 task's base branch on `origin`. Turn on **Discard the machine when the run settles** in the task to

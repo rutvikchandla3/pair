@@ -72,6 +72,7 @@ export const sandboxShellSummary = (
   state: sandbox.state,
   ownerThreadId: sandbox.ownerThreadId,
   driverId: sandbox.driverId,
+  size: sandbox.size,
   ...(sandbox.admission === null
     ? {}
     : {

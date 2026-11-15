@@ -19,7 +19,7 @@ Cloud releases, and `https://pair.example.com` is your domain.
   `exp.host` for phone notifications. Machines under gVisor look names up at `1.1.1.1` and
   `8.8.8.8`, so allow outbound DNS (port 53) to them too.
 
-Size the host for the machines you want running at once. Each **Default** machine gets 4 vCPUs and
+Size the host for the machines you want running at once. Each **Medium** machine gets 4 vCPUs and
 8 GB of memory, and by default a driver runs one machine at a time per 4 of its host's vCPUs: a
 16-vCPU host runs 4. Leave memory for the server too.
 

@@ -1,4 +1,5 @@
 import {
+  type CloudMachineSize,
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
   type EnvironmentId,
@@ -20,6 +21,7 @@ import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/serv
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import { cloudMachineSizes } from "@t3tools/shared/sandbox";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -59,6 +61,16 @@ export const environmentSandboxDriversAtom = Atom.family((environmentId: Environ
       get(serverEnvironment.configValueAtom(environmentId))?.settings.sandbox?.drivers ??
       NO_SANDBOX_DRIVERS,
   ).pipe(Atom.withLabel(`web-environment-sandbox-drivers:${environmentId}`)),
+);
+const NO_MACHINE_SIZES: ReadonlyArray<CloudMachineSize> = [];
+/** The sizes a cloud launch on this environment may ask for; empty where cloud isn't set up. */
+export const environmentCloudMachineSizesAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const sizes = cloudMachineSizes(
+      get(serverEnvironment.configValueAtom(environmentId))?.settings ?? null,
+    );
+    return sizes.length === 0 ? NO_MACHINE_SIZES : sizes;
+  }).pipe(Atom.withLabel(`web-environment-cloud-machine-sizes:${environmentId}`)),
 );
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,

@@ -38,7 +38,11 @@ import {
 import { type ReactNode, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { DEFAULT_DISK_RETENTION, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
+import {
+  DEFAULT_DISK_RETENTION,
+  NOT_CLOUD_ONLY_MESSAGE,
+  SANDBOX_SIZE_LABELS,
+} from "@t3tools/shared/sandbox";
 
 import { usePrimarySettings } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
@@ -99,12 +103,6 @@ import { searchableSetting } from "./settingsSearch";
 import { SettingsEnvironmentPicker } from "./SettingsEnvironmentPicker";
 import { TeamImageSettings } from "./TeamImageSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
-
-const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
-  small: "Small",
-  default: "Default",
-  large: "Large",
-};
 
 const STEP_LABELS: Readonly<Record<SandboxDriverCheckStep, string>> = {
   image: "Base image",
@@ -234,7 +232,7 @@ function driverSummary(
   return [
     ...where,
     health?.reachable ? sandboxIsolationLabel(health) : null,
-    `${SIZE_LABELS[driver.size ?? "default"]} size`,
+    `${SANDBOX_SIZE_LABELS[driver.size ?? "default"]} size`,
     cap === undefined ? null : `up to ${cap} machine${cap === 1 ? "" : "s"} at once`,
   ]
     .filter(Boolean)
@@ -896,7 +894,7 @@ function SizeSelect({
         <SelectValue>
           {(selected: string | null) =>
             selected === "small" || selected === "default" || selected === "large"
-              ? SIZE_LABELS[selected]
+              ? SANDBOX_SIZE_LABELS[selected]
               : ""
           }
         </SelectValue>
@@ -904,7 +902,7 @@ function SizeSelect({
       <SelectPopup align="start" alignItemWithTrigger={false}>
         {(["small", "default", "large"] as const).map((option) => (
           <SelectItem key={option} value={option}>
-            {SIZE_LABELS[option]}
+            {SANDBOX_SIZE_LABELS[option]}
           </SelectItem>
         ))}
       </SelectPopup>

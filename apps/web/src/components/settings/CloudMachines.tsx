@@ -11,7 +11,6 @@ import type {
   EnvironmentId,
   SandboxDriverInstance,
   SandboxOverviewMachine,
-  SandboxSize,
   SandboxState,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -29,12 +28,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SettingsRow } from "./settingsLayout";
-
-const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
-  small: "Small",
-  default: "Default",
-  large: "Large",
-};
+import { SANDBOX_SIZE_LABELS } from "@t3tools/shared/sandbox";
 
 const STATE_BADGES = {
   provisioning: "info",
@@ -84,7 +78,7 @@ export function CloudMachines({
       memberId,
       driverLabel:
         drivers.find((driver) => driver.id === machine.driverId)?.label ?? machine.driverId,
-      sizeLabel: SIZE_LABELS[machine.size],
+      sizeLabel: SANDBOX_SIZE_LABELS[machine.size],
       age: formatRelativeTimeLabel(DateTime.formatIso(machine.createdAt)),
     });
     const hasMenu = canOperate && row.actions.length > 0;

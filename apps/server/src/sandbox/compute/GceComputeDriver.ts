@@ -1,4 +1,5 @@
 import type { EnvironmentId, GceSandboxDriver } from "@t3tools/contracts";
+import { GCE_MACHINE_SPECS, SANDBOX_SIZES } from "@t3tools/shared/sandbox";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -99,11 +100,10 @@ const BASE_IMAGE_SETTING_HINT =
   "The image in this driver's Base image setting was not found, or is not ready. Check its name and project.";
 const NO_FIREWALL_CLAIM = "Set by your VPC's firewall rules.";
 
-const SIZES: ComputeCapabilities["sizes"] = [
-  { size: "small", vcpus: 2, memoryGb: 8 },
-  { size: "default", vcpus: 4, memoryGb: 16 },
-  { size: "large", vcpus: 8, memoryGb: 32 },
-];
+const SIZES: ComputeCapabilities["sizes"] = SANDBOX_SIZES.map((size) => ({
+  size,
+  ...GCE_MACHINE_SPECS[size],
+}));
 
 const CAPACITY_CODES = new Set([
   "ZONE_RESOURCE_POOL_EXHAUSTED",

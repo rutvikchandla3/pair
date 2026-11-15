@@ -93,6 +93,8 @@ import * as RunnerHubFacts from "../runnerHub/RunnerHubFacts.ts";
 import * as SandboxActivity from "./SandboxActivity.ts";
 import * as SandboxAdmission from "./SandboxAdmission.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
+import * as SandboxFork from "./SandboxFork.ts";
+import * as CloudPreparation from "./CloudPreparation.ts";
 import * as SandboxEffects from "./SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "./SandboxLifecycleWorker.ts";
 import * as SandboxReconciler from "./SandboxReconciler.ts";
@@ -403,6 +405,7 @@ const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
   discardOnSettle = false,
   imageBuild?: SandboxImageBuildRef,
   driverId = ComputeDriverId.make("docker"),
+  copyOf?: SandboxId,
 ) {
   const threadId = ThreadId.make(`thread:${key}`);
   const sandboxId = SandboxId.make(
@@ -436,6 +439,7 @@ const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
     size: "default",
     ...(discardOnSettle ? { discardOnSettle: true } : {}),
     ...(imageBuild === undefined ? {} : { imageBuild }),
+    ...(copyOf === undefined ? {} : { copyOf }),
   });
   return { threadId, sandboxId };
 });
@@ -509,7 +513,12 @@ const prompt = (threadId: ThreadId, key: string) =>
   );
 
 /** A side chat forks from the latest point; a fork needs a finished run, here one that failed. */
-const forked = (sourceThreadId: ThreadId, key: string, sideChat = false) =>
+const forked = (
+  sourceThreadId: ThreadId,
+  key: string,
+  sideChat = false,
+  ownMachine?: { readonly branch: string; readonly worktreePath: string },
+) =>
   Effect.gen(function* () {
     const threadId = ThreadId.make(`thread:${key}`);
     let runId: RunId | undefined;
@@ -537,6 +546,7 @@ const forked = (sourceThreadId: ThreadId, key: string, sideChat = false) =>
       targetThreadId: threadId,
       sourcePoint: runId === undefined ? { type: "latest_stable" } : { type: "run", runId },
       sideChat,
+      ...(ownMachine === undefined ? {} : { ownMachine }),
       createdBy: "user",
       creationSource: "web",
     });
@@ -666,6 +676,45 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       );
       const call = yield* Deferred.await(answered);
       assert.deepEqual(call._tag === "create" ? call.input.image : undefined, { type: "base" });
+    }),
+  );
+
+  it.effect("boots a fork's machine from a copy of its source's disk, then drops the copy", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const source = yield* provisioned("copy-source");
+      yield* runAnswering(runtime, answerCreate);
+      const sourceRef = (yield* getSandbox(source.sandboxId))?.driverRef;
+      assert.isString(sourceRef);
+      const fork = yield* provisioned(
+        "copy-fork",
+        Effect.void,
+        false,
+        undefined,
+        undefined,
+        source.sandboxId,
+      );
+      assert.equal((yield* getSandbox(fork.sandboxId))?.copyOf, source.sandboxId);
+
+      const run = yield* runtime.worker.drain(1).pipe(Effect.forkChild);
+      const snapshot = yield* Queue.take(runtime.calls);
+      if (snapshot._tag !== "snapshot")
+        return yield* Effect.die(`Expected snapshot, got ${snapshot._tag}`);
+      assert.deepEqual(
+        [snapshot.driverRef, snapshot.name],
+        [sourceRef, `t3-machine-copy:${fork.sandboxId}`],
+      );
+      yield* Deferred.succeed(snapshot.reply, { imageRef: "image:copy", sizeBytes: null });
+      const create = yield* Queue.take(runtime.calls);
+      assert.deepEqual(create._tag === "create" ? create.input.image : undefined, {
+        type: "build",
+        imageRef: "image:copy",
+      });
+      yield* answerCreate(create);
+      const deleted = yield* Queue.take(runtime.calls);
+      assert.deepEqual(deleted._tag === "deleteImage" ? deleted.ref : deleted._tag, "image:copy");
+      if (deleted._tag === "deleteImage") yield* Deferred.succeed(deleted.reply, undefined);
+      assert.equal(yield* Fiber.join(run), 1);
     }),
   );
 
@@ -1486,6 +1535,82 @@ it.layer(layerTest)("shared sandboxes", (it) => {
       );
       assert.equal(adopted.length, 1);
       assert.equal((yield* getSandbox(sandboxId))?.ownerThreadId, first);
+    }),
+  );
+
+  it.effect("a fork onto its own machine waits for one, at the path and branch it was given", () =>
+    Effect.gen(function* () {
+      const { threadId: owner, sandboxId } = yield* provisioned("own-machine");
+      const ownMachine = { branch: "fix-fork", worktreePath: "/t3-sandbox/sbx_fork/repo" };
+      const fork = yield* forked(owner, "own-machine-fork", false, ownMachine);
+      const thread = yield* ProjectionStore.ProjectionStoreV2.use((projections) =>
+        projections.getThread(fork),
+      );
+      assert.isUndefined(thread.sandboxId);
+      assert.deepInclude(thread, ownMachine);
+      assert.equal((yield* getSandbox(sandboxId))?.ownerThreadId, owner);
+    }),
+  );
+
+  it.effect("forks onto a copy of the machine at another size, never while a turn runs", () =>
+    Effect.gen(function* () {
+      const fake = yield* FakeComputeDriver.make(ComputeDriverId.make("docker"));
+      const runtime = yield* makeSandboxRuntime({
+        ...fake,
+        driver: { ...fake.driver, kind: "boat" },
+      });
+      const forks = yield* SandboxFork.SandboxFork.pipe(
+        Effect.provide(SandboxFork.layer.pipe(Layer.provide(runtime.layerDriver))),
+      );
+      const { threadId: owner, sandboxId } = yield* provisioned("fork-copy");
+      yield* runAnswering(runtime, answerCreate);
+      yield* dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("checkout:fork-copy"),
+        threadId: owner,
+        branch: "fix",
+        worktreePath: `/t3-sandbox/${sandboxId}/worktrees/fix`,
+      });
+      const {
+        run: { id: runId },
+      } = yield* prompt(owner, "fork-copy-turn");
+      const fork = (key: string) =>
+        forks.fork({
+          commandId: CommandId.make(`fork:${key}`),
+          sourceThreadId: owner,
+          threadId: ThreadId.make(`thread:${key}`),
+          size: "large",
+          createdBy: "user",
+          creationSource: "web",
+        });
+      const busy = yield* fork("fork-copy-busy").pipe(Effect.flip);
+      assert.equal(busy.reason, "turn-running");
+      yield* dispatch({
+        type: "prepared-run.fail",
+        commandId: CommandId.make("fail:fork-copy-turn"),
+        threadId: owner,
+        runId,
+        failure: makeProviderFailure({
+          message: "Stopped for the test.",
+          class: "validation_error",
+          retryable: false,
+        }),
+      });
+      const { threadId } = yield* fork("fork-copy-done");
+      const thread = yield* ProjectionStore.ProjectionStoreV2.use((projections) =>
+        projections.getThread(threadId),
+      );
+      const forkId = CloudPreparation.sandboxIdForLaunch(CommandId.make("fork:fork-copy-done"));
+      assert.deepInclude(thread, {
+        sandboxId: forkId,
+        branch: "fix-fork",
+        worktreePath: `/t3-sandbox/${forkId}/worktrees/fix`,
+      });
+      assert.deepInclude(yield* getSandbox(forkId), {
+        copyOf: sandboxId,
+        size: "large",
+        ownerThreadId: threadId,
+      });
     }),
   );
 

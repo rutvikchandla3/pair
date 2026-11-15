@@ -6057,6 +6057,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     // Only side chat forks lock the source; validate the modes copied here, not an earlier read.
     yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
+    if (command.sideChat === true && command.ownMachine !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A side chat shares its parent's machine.",
+      });
+    }
     if (command.sideChat === true && sourceProjection.thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -6143,8 +6150,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...forkedThread
     } = plannedThread;
     const sourceOwnerId = sourceProjection.thread.ownerId ?? null;
+    const { sandboxId: sharedSandboxId, ...unplacedThread } = forkedThread;
     const targetThread: OrchestrationV2AppThread = {
-      ...forkedThread,
+      // A fork onto its own machine waits for `sandbox.provision` to name it.
+      ...(command.ownMachine === undefined
+        ? {
+            ...unplacedThread,
+            ...(sharedSandboxId === undefined ? {} : { sandboxId: sharedSandboxId }),
+          }
+        : {
+            ...unplacedThread,
+            branch: command.ownMachine.branch,
+            worktreePath: command.ownMachine.worktreePath,
+          }),
       ownerId: command.sideChat === true ? sourceOwnerId : (command.actorId ?? sourceOwnerId),
     };
 
@@ -8519,7 +8537,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               capabilities,
               sameProvider:
                 pendingForkTransfer.sourceProviderInstanceId === modelSelection.instanceId,
-              hasStrongNativeSource: sourceProviderThread?.nativeThreadRef?.strength === "strong",
+              // Provider session files live on the source's machine, keyed by its paths.
+              hasStrongNativeSource:
+                sourceProviderThread?.nativeThreadRef?.strength === "strong" &&
+                sourceProjection?.thread.sandboxId === projection.thread.sandboxId,
               sourceRunStatus: sourceRun.status,
               fromSpecificTurn: sourceRun !== null,
               sourceBusy: sourceRunsAfterFork.some(isActiveRun),

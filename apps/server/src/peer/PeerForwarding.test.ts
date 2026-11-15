@@ -23,6 +23,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as SandboxFork from "../sandbox/lifecycle/SandboxFork.ts";
 import * as CloudMoves from "../cloudMove/CloudMoves.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -239,6 +240,7 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
         Layer.mergeAll(
           Layer.mock(ThreadSearch.ThreadSearch)({}),
           Layer.mock(CloudMoves.CloudMoves)({}),
+          Layer.mock(SandboxFork.SandboxFork)({}),
         ),
       ),
       Layer.provide(boxLaunches(seen)),
@@ -306,6 +308,7 @@ const makeLaptop = Effect.gen(function* () {
       Layer.mergeAll(
         Layer.mock(ThreadSearch.ThreadSearch)({}),
         Layer.mock(CloudMoves.CloudMoves)({}),
+        Layer.mock(SandboxFork.SandboxFork)({}),
       ),
     ),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),

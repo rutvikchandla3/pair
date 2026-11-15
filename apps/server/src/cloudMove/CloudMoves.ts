@@ -13,6 +13,7 @@ import {
   type RepositoryIdentity,
   repositoryGroupingKeyOf,
   type RunId,
+  type SandboxSize,
   type ThreadId,
   ThreadMoveError,
   type ThreadMovePreview,
@@ -75,6 +76,8 @@ export interface ContinueInCloudInput {
   /** The calling agent's own run, which may move its own thread mid-turn. */
   readonly allowRunId?: RunId | undefined;
   readonly actorId?: MemberId | undefined;
+  /** Absent: Pair Cloud's default size. */
+  readonly machineSize?: SandboxSize | undefined;
 }
 
 /**
@@ -893,6 +896,7 @@ const make = Effect.gen(function* () {
         branch,
         seeded: true,
         rootSeeds: seeds.map(({ projectId, seedRef }) => ({ projectId, seedRef })),
+        ...(input.machineSize === undefined ? {} : { machineSize: input.machineSize }),
         runtimeMode: shell.runtimeMode,
         interactionMode: shell.interactionMode,
         message: input.message,
@@ -958,6 +962,7 @@ const make = Effect.gen(function* () {
         : onBase
           ? {}
           : { branch: checkout.branch, existingBranch: true as const }),
+      ...(input.machineSize === undefined ? {} : { machineSize: input.machineSize }),
       seeded,
       runtimeMode: shell.runtimeMode,
       interactionMode: shell.interactionMode,

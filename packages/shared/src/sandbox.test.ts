@@ -5,7 +5,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { cloudAvailability, newThreadPrefersCloud } from "./sandbox.ts";
+import { cloudAvailability, cloudMachineSizes, newThreadPrefersCloud } from "./sandbox.ts";
 
 const projectId = ProjectId.make("project-a");
 const driver = {
@@ -84,5 +84,29 @@ describe("newThreadPrefersCloud", () => {
     ],
   ] as const)("%s", (_name, settings, cloudLaunch, expected) => {
     expect(newThreadPrefersCloud(settings, projectId, cloudLaunch)).toBe(expected);
+  });
+});
+
+describe("cloudMachineSizes", () => {
+  it("lists the default driver's sizes with a boat type remap and marks the team default", () => {
+    const boat = {
+      kind: "boat",
+      id: ComputeDriverId.make("boat"),
+      label: "boat.dev",
+      apiKey: "",
+      size: "large",
+      types: { large: "xlarge" },
+    } as const;
+    expect(
+      cloudMachineSizes({
+        ...DEFAULT_SERVER_SETTINGS,
+        sandbox: { drivers: [driver, boat], defaultDriverId: boat.id },
+      }),
+    ).toEqual([
+      { size: "small", vcpus: 2, memoryGb: 4 },
+      { size: "default", vcpus: 4, memoryGb: 8 },
+      { size: "large", vcpus: 16, memoryGb: 32, default: true },
+    ]);
+    expect(cloudMachineSizes(DEFAULT_SERVER_SETTINGS)).toEqual([]);
   });
 });

@@ -10,6 +10,9 @@ import {
   SandboxDesktopError,
   SandboxDesktopInput,
   SandboxDesktopResult,
+  SandboxForkError,
+  SandboxForkInput,
+  SandboxForkResult,
   SandboxDriverCheckError,
   SandboxDriverCheckInput,
   SandboxDriverCheckResult,
@@ -647,6 +650,7 @@ export const WS_METHODS = {
   sandboxViewing: "sandbox.viewing",
   sandboxStopById: "sandbox.stopById",
   sandboxDesktop: "sandbox.desktop",
+  sandboxFork: "sandbox.fork",
   sandboxCheckDriver: "sandbox.checkDriver",
   teamImageSubscribe: "teamImage.subscribe",
   teamImageSaveRecipe: "teamImage.saveRecipe",
@@ -1246,6 +1250,12 @@ const WsSandboxDesktopRpc = Rpc.make(WS_METHODS.sandboxDesktop, {
   payload: SandboxDesktopInput,
   success: SandboxDesktopResult,
   error: Schema.Union([SandboxDesktopError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxForkRpc = Rpc.make(WS_METHODS.sandboxFork, {
+  payload: SandboxForkInput,
+  success: SandboxForkResult,
+  error: Schema.Union([SandboxForkError, EnvironmentAuthorizationError]),
 });
 
 const WsSandboxCheckDriverRpc = Rpc.make(WS_METHODS.sandboxCheckDriver, {
@@ -2626,6 +2636,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSandboxViewingRpc,
   WsSandboxStopByIdRpc,
   WsSandboxDesktopRpc,
+  WsSandboxForkRpc,
   WsSandboxCheckDriverRpc,
   WsTeamImageSubscribeRpc,
   WsTeamImageSaveRecipeRpc,

@@ -33,6 +33,7 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | "continue-in-cloud"
+  | "fork-to-machine"
   | `machine:${SandboxAction}`
   | "continue-locally"
   | "share-guest"
@@ -136,12 +137,19 @@ export interface ThreadActionMenuState {
     /** Why it can't now: the offer's short label, never its sentence. */
     readonly label: string | null;
   };
+  /** Set only for a cloud thread. */
+  readonly forkToMachine?: {
+    /** Why it can't fork now, shown in the label as the owner-only items are. */
+    readonly blocker: string | null;
+  };
   /** Set only when the member's own server can take this cloud thread. */
   readonly continueLocally?: {
     /** Why it can't now, shown in the label as the owner-only items are. */
     readonly disabledLabel: string | null;
   };
 }
+
+export const FORK_TO_MACHINE_LABEL = "Fork to new machine";
 
 const MACHINE_ACTION_ICONS: Readonly<Record<SandboxAction, string>> = {
   wake: "cloud",
@@ -295,6 +303,20 @@ export function buildThreadActionMenuItems(
             icon: "cloud-upload",
             separatorBefore: true,
             ...(state.continueInCloud.label === null ? {} : { disabled: true }),
+          },
+        ]
+      : []),
+    ...(state.forkToMachine
+      ? [
+          {
+            id: "fork-to-machine" as const,
+            label:
+              state.forkToMachine.blocker === null
+                ? `${FORK_TO_MACHINE_LABEL}…`
+                : `${FORK_TO_MACHINE_LABEL} (${state.forkToMachine.blocker.replace(/\.$/, "")})`,
+            icon: "git-branch",
+            separatorBefore: true,
+            ...(state.forkToMachine.blocker === null ? {} : { disabled: true }),
           },
         ]
       : []),

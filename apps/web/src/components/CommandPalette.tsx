@@ -73,6 +73,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   CloudUploadIcon,
+  GitForkIcon,
   LaptopIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
@@ -163,10 +164,17 @@ import {
 } from "../state/entities";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useCloudTarget, useContinueInCloudOffer, useThreadShare } from "../state/sandbox";
+import {
+  useCloudTarget,
+  useContinueInCloudOffer,
+  useForkToMachineOffer,
+  useThreadShare,
+} from "../state/sandbox";
 import { useSandboxActionRunner, useSandboxThreadMachine } from "./sandbox/useSandboxThreadStatus";
 import { useContinueLocally } from "../hooks/useContinueLocally";
 import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
+import { openForkToMachineDialog } from "./sandbox/ForkToMachineDialog";
+import { FORK_TO_MACHINE_LABEL } from "./threadActionMenu.logic";
 import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
 import { ASSIGN_THREAD_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/team";
 import {
@@ -543,6 +551,9 @@ function OpenCommandPaletteDialog(props: {
   const runSandboxAction = useSandboxActionRunner();
   const continueLocally = useContinueLocally();
   const continueInCloud = useContinueInCloudOffer(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
+  const forkToMachine = useForkToMachineOffer(
     activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
   );
   const canShareActiveThreadWithGuest = useAtomValue(
@@ -1670,6 +1681,20 @@ function OpenCommandPaletteDialog(props: {
           : {}),
         run: async () => {
           openContinueInCloudDialog(activeThreadRef);
+        },
+      });
+    }
+    if (forkToMachine !== null && canOperateActiveThread) {
+      const { blocker } = forkToMachine;
+      actionItems.push({
+        kind: "action",
+        value: "action:fork-to-machine",
+        searchTerms: ["fork", "machine", "cloud", "size", "copy", "branch", "bigger", "larger"],
+        title: `${FORK_TO_MACHINE_LABEL}…`,
+        icon: <GitForkIcon className={ITEM_ICON_CLASS} />,
+        ...(blocker === null ? {} : { disabled: true, description: blocker }),
+        run: async () => {
+          openForkToMachineDialog(activeThreadRef);
         },
       });
     }

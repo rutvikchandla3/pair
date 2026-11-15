@@ -103,6 +103,15 @@ export class SandboxAsleep extends Schema.TaggedError<SandboxAsleep>()("SandboxA
 export const SandboxSize = Schema.Literals(["small", "default", "large"]);
 export type SandboxSize = typeof SandboxSize.Type;
 
+/** A size a server's cloud machines come in; `default` marks the one a launch gets unasked. */
+export const CloudMachineSize = Schema.Struct({
+  size: SandboxSize,
+  vcpus: PositiveInt,
+  memoryGb: PositiveInt,
+  default: Schema.optionalKey(Schema.Literal(true)),
+});
+export type CloudMachineSize = typeof CloudMachineSize.Type;
+
 export const SandboxAdmissionReason = Schema.Literals([
   "team-cap",
   "member-cap",
@@ -275,6 +284,60 @@ export class SandboxDesktopError extends Schema.TaggedError<SandboxDesktopError>
         return "The machine is not running. Wake it to see its desktop.";
       case "unavailable":
         return this.detail ?? "Could not open the machine's desktop. Try again in a moment.";
+    }
+  }
+}
+
+/**
+ * A fork of a cloud thread onto a machine of its own: a copy of the source machine's disk, at
+ * `size`, on a new `branch` so the two machines never push the same one.
+ */
+export const SandboxForkInput = Schema.Struct({
+  commandId: CommandId,
+  sourceThreadId: ThreadId,
+  /** The fork's id, chosen by the caller so a resend lands on the same thread. */
+  threadId: ThreadId,
+  size: SandboxSize,
+  /** Absent: `<source branch>-fork`. */
+  branch: Schema.optionalKey(TrimmedNonEmptyString),
+  title: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type SandboxForkInput = typeof SandboxForkInput.Type;
+
+export const SandboxForkResult = Schema.Struct({ threadId: ThreadId });
+export type SandboxForkResult = typeof SandboxForkResult.Type;
+
+export class SandboxForkError extends Schema.TaggedError<SandboxForkError>()("SandboxForkError", {
+  reason: Schema.Literals([
+    "no-machine",
+    "machine-gone",
+    "unsupported",
+    "turn-running",
+    "workspace",
+    "no-branch",
+    "no-turn",
+    "unavailable",
+  ]),
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    switch (this.reason) {
+      case "no-machine":
+        return "This thread does not run on a cloud machine.";
+      case "machine-gone":
+        return "This thread's machine was discarded, so there is no disk to copy.";
+      case "unsupported":
+        return "This machine's provider can't copy a machine. Fork it on the same machine instead.";
+      case "turn-running":
+        return "Wait for the turn to finish, then fork to a new machine.";
+      case "workspace":
+        return "A workspace thread can't fork to a new machine yet.";
+      case "no-branch":
+        return "This thread has no branch to fork from yet.";
+      case "no-turn":
+        return "This thread has no finished turn to fork from yet.";
+      case "unavailable":
+        return "Could not fork to a new machine. Try again in a moment.";
     }
   }
 }

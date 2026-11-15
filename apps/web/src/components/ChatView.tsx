@@ -257,8 +257,10 @@ import {
   useThreadShareOrigin,
 } from "~/state/team";
 import { useCloudTarget } from "~/state/sandbox";
+import { cloudMachineSizeToSend } from "./sandbox/machineSize.logic";
 import { othersTurnStarterId } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
+  environmentCloudMachineSizesAtom,
   environmentSandboxDriversAtom,
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
@@ -790,6 +792,11 @@ export default function ChatView(props: ChatViewProps) {
     draftCloudLaunchTarget.environmentId !== draftThread.environmentId
       ? draftCloudLaunchTarget
       : null;
+  const draftCloudMachineSizes = useAtomValue(
+    environmentCloudMachineSizesAtom(
+      draftCloudLaunchTarget?.environmentId ?? draftThread?.environmentId ?? environmentId,
+    ),
+  );
   const routedCloudSettings = useEnvironmentSettings(routedCloud?.environmentId ?? environmentId);
   const routedCloudMemberId = useCurrentMemberId(routedCloud?.environmentId ?? null);
   const draftModelSettings = routedCloud ? routedCloudSettings : settings;
@@ -3133,6 +3140,7 @@ export default function ChatView(props: ChatViewProps) {
   const { onSend } = useComposerSend({
     environmentId,
     routedCloud: routedCloudSend,
+    cloudMachineSize: cloudMachineSizeToSend(draftCloudMachineSizes, draftThread?.machineSize),
     routeThreadKey,
     currentRouteThreadKeyRef,
     draftId,

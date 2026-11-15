@@ -174,9 +174,14 @@ const memberDriverView = (driver: SandboxDriverInstance): SandboxDriverInstance 
     ...(driver.size === undefined ? {} : { size: driver.size }),
     ...(driver.runningCap === undefined ? {} : { runningCap: driver.runningCap }),
   };
-  // The decoded boat type requires `apiKey`; a member gets it empty.
+  // The decoded boat type requires `apiKey`; a member gets it empty. `types` sizes the picker.
   return driver.kind === "boat"
-    ? { ...shown, kind: driver.kind, apiKey: "" }
+    ? {
+        ...shown,
+        kind: driver.kind,
+        apiKey: "",
+        ...(driver.types === undefined ? {} : { types: driver.types }),
+      }
     : { ...shown, kind: driver.kind };
 };
 

@@ -28,6 +28,7 @@ import {
   type RunId,
   type RuntimeMode,
   type SandboxId,
+  type SandboxSize,
   type ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -98,6 +99,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly existingBranch?: true | undefined;
+      readonly machineSize?: SandboxSize | undefined;
       /** A staged seed this launch claims; its branch need not be on origin. */
       readonly seedRef?: CloudStagingKey | undefined;
       /** A workspace's staged seeds, one for each repository project, claimed the same way. */
@@ -265,6 +267,7 @@ export class ThreadLaunchService extends Context.Service<
     readonly checkCloudLaunch: (input: {
       readonly projectId: ProjectId;
       readonly instanceId: ProviderInstanceId;
+      readonly machineSize?: SandboxSize | undefined;
     }) => Effect.Effect<
       CloudPlacement,
       Effect.Error<ReturnType<typeof CloudPreparation.resolveCloudLaunch>>
@@ -536,6 +539,7 @@ const make = Effect.gen(function* () {
     const launch = yield* CloudPreparation.resolveCloudLaunch(
       input.projectId,
       input.instanceId,
+      input.machineSize,
     ).pipe(Effect.provide(cloudServices));
     const project = yield* projects
       .getById(input.projectId)
@@ -1765,6 +1769,7 @@ const make = Effect.gen(function* () {
           ? yield* checkCloudLaunch({
               projectId: input.projectId,
               instanceId: input.modelSelection.instanceId,
+              machineSize: input.workspaceStrategy.machineSize,
             }).pipe(Effect.mapError(mapError(input, "resolve-project")))
           : null;
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {

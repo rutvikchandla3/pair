@@ -575,6 +575,8 @@ export const OrchestrationV2Sandbox = Schema.Struct({
   baseImage: Schema.optionalKey(SandboxBaseImageInfo),
   /** The team build it booted from; absent when it booted the base. */
   imageBuild: Schema.optionalKey(SandboxImageBuildRef),
+  /** A fork's machine: its first boot is a copy of this machine's disk. */
+  copyOf: Schema.optionalKey(SandboxId),
   /** When this sleep's working-tree snapshot reached the mirror; null until it does. */
   sleepSnapshotAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
   /** A scheduled run's machine: its disk is destroyed instead of kept once its threads settle. */
@@ -889,6 +891,8 @@ export const OrchestrationV2ThreadLaunchCloudStrategy = Schema.Struct({
   branch: Schema.optional(TrimmedNonEmptyString),
   /** `branch` already exists and must be on origin; without it `branch` is a new name from `baseRef`. */
   existingBranch: Schema.optional(Schema.Literal(true)),
+  /** Absent: the size the server's default driver is set to. */
+  machineSize: Schema.optional(SandboxSize),
 });
 export type OrchestrationV2ThreadLaunchCloudStrategy =
   typeof OrchestrationV2ThreadLaunchCloudStrategy.Type;
@@ -2447,6 +2451,7 @@ export const OrchestrationV2ThreadShellSandbox = Schema.Struct({
   ownerThreadId: ThreadId,
   /** Clients read its kind and label from the settings' `sandbox.drivers`. */
   driverId: Schema.optionalKey(ComputeDriverId),
+  size: Schema.optionalKey(SandboxSize),
   admission: Schema.optionalKey(
     Schema.Struct({
       reason: ForwardCompatibleNullable(SandboxAdmissionReason),
@@ -3886,6 +3891,13 @@ export const OrchestrationV2Command = Schema.Union([
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
+    /**
+     * The fork gets its own machine, which `sandbox.fork` provisions next, instead of sharing the
+     * source's: its checkout is at `worktreePath` there, on `branch`. Only the server sends it.
+     */
+    ownMachine: Schema.optional(
+      Schema.Struct({ branch: TrimmedNonEmptyString, worktreePath: TrimmedNonEmptyString }),
+    ),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
@@ -4378,6 +4390,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     size: SandboxSize,
     discardOnSettle: Schema.optionalKey(Schema.Boolean),
     imageBuild: Schema.optionalKey(SandboxImageBuildRef),
+    copyOf: Schema.optionalKey(SandboxId),
     /** A scheduled run's machine starts with its task's audience; null records none (`team`). Absent: private. */
     access: Schema.optionalKey(Schema.NullOr(SandboxAccessGrant)),
   }),

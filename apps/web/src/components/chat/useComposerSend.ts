@@ -22,6 +22,7 @@ import {
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ProjectId,
+  type SandboxSize,
   type ThreadId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -179,6 +180,8 @@ interface ComposerSendInput {
     readonly defaultBranch: string | null;
     readonly branchCheck: CloudBranchCheck;
   } | null;
+  /** Cloud's machine size, absent at the launch target's team default. */
+  readonly cloudMachineSize: SandboxSize | undefined;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly draftId: DraftId | null;
@@ -280,6 +283,7 @@ export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
     routedCloud,
+    cloudMachineSize,
     routeThreadKey,
     currentRouteThreadKeyRef,
     draftId,
@@ -1385,13 +1389,16 @@ export function useComposerSend(input: ComposerSendInput) {
               // The server runs setup inside the sandbox, so no runSetupScript here.
               ...(baseRefForCloud
                 ? {
-                    prepareCloud: routed
-                      ? // Default branch unknown yet: start fresh from the selected one.
-                        routedCloudLaunch({
-                          selectedBranch: baseRefForCloud,
-                          defaultBranch: routed.defaultBranch ?? baseRefForCloud,
-                        })
-                      : { baseRef: baseRefForCloud },
+                    prepareCloud: {
+                      ...(routed
+                        ? // Default branch unknown yet: start fresh from the selected one.
+                          routedCloudLaunch({
+                            selectedBranch: baseRefForCloud,
+                            defaultBranch: routed.defaultBranch ?? baseRefForCloud,
+                          })
+                        : { baseRef: baseRefForCloud }),
+                      ...(cloudMachineSize === undefined ? {} : { machineSize: cloudMachineSize }),
+                    },
                   }
                 : {}),
             }

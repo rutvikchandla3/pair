@@ -1262,12 +1262,14 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
-  it("keeps the picked Pair Cloud through a reload until the project changes", () => {
+  it("keeps the picked Pair Cloud and machine size through a reload until the project changes", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId, envMode: "cloud" });
     store.setDraftThreadContext(draftId, { cloudEnvironmentId: OTHER_TEST_ENVIRONMENT_ID });
+    store.setDraftThreadContext(draftId, { machineSize: "large" });
     store.setDraftThreadContext(draftId, { envMode: "cloud" });
     expect(store.getDraftThread(draftId)?.cloudEnvironmentId).toBe(OTHER_TEST_ENVIRONMENT_ID);
+    expect(store.getDraftThread(draftId)?.machineSize).toBe("large");
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {
         merge: (
@@ -1285,8 +1287,10 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(hydrated.draftThreadsByThreadKey[draftId]?.cloudEnvironmentId).toBe(
       OTHER_TEST_ENVIRONMENT_ID,
     );
+    expect(hydrated.draftThreadsByThreadKey[draftId]?.machineSize).toBe("large");
     store.setDraftThreadContext(draftId, { projectRef: remoteProjectRef });
     expect(store.getDraftThread(draftId)?.cloudEnvironmentId).toBeUndefined();
+    expect(store.getDraftThread(draftId)?.machineSize).toBeUndefined();
   });
 
   it("pins manual workspace choices and can return to automatic routing without losing the prompt", () => {
