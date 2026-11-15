@@ -62,6 +62,16 @@ import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ContinueInCloudSheet } from "./features/threads/ContinueInCloudSheet";
 import { ShareThreadSheet } from "./features/threads/ShareThreadSheet";
+import { BranchOffSheet } from "./features/lineage/BranchOffSheet";
+import { LineageSheet } from "./features/lineage/LineageSheet";
+import { OfferChangesSheet } from "./features/lineage/OfferChangesSheet";
+import { OfferSheet } from "./features/lineage/OfferSheet";
+import { UpdateSheet } from "./features/lineage/UpdateSheet";
+import { MyTasksFiltersSheet, SharedWithYouFiltersSheet } from "./features/inbox/InboxFilterSheets";
+import { InboxRequestSheet } from "./features/inbox/InboxRequestSheet";
+import { InboxScreen } from "./features/inbox/InboxScreen";
+import { MyTasksScreen } from "./features/inbox/MyTasksScreen";
+import { SharedWithYouScreen } from "./features/inbox/SharedWithYouScreen";
 import { SpaceAttachThreadSheet } from "./features/spaces/SpaceAttachThreadSheet";
 import { SpaceConfirmSheet } from "./features/spaces/SpaceConfirmSheet";
 import { SpaceMembersSheet } from "./features/spaces/SpaceMembersSheet";
@@ -219,6 +229,13 @@ const THREAD_SETTINGS_SHEET_OPTIONS = {
 // Settings pages are root routes so they share the workspace's columns and header. The
 // `Settings` route marks the Settings tab as open (see settings-navigation.ts).
 const SETTINGS_PAGE_OPTIONS = SHEET_GLASS_HEADER_OPTIONS;
+
+const LINEAGE_SHEET_OPTIONS: AppScreenOptions = {
+  ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
+  ...HORIZONTAL_FORM_SHEET_OPTIONS,
+  sheetAllowedDetents: formSheetDetents(0.6, 0.95),
+  sheetGrabberVisible: true,
+};
 
 const SPACE_SHEET_OPTIONS: AppScreenOptions = {
   ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
@@ -735,6 +752,33 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetGrabberVisible: true,
       },
     }),
+    Inbox: createNativeStackScreen({
+      screen: InboxScreen,
+      linking: "inbox/:environmentId",
+      options: { headerShown: false },
+    }),
+    InboxRequest: createNativeStackScreen({
+      screen: InboxRequestSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
+    MyTasks: createNativeStackScreen({
+      screen: MyTasksScreen,
+      linking: "my-tasks/:environmentId",
+      options: { headerShown: false },
+    }),
+    MyTasksFilters: createNativeStackScreen({
+      screen: MyTasksFiltersSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
+    SharedWithYou: createNativeStackScreen({
+      screen: SharedWithYouScreen,
+      linking: "shared/:environmentId",
+      options: { headerShown: false },
+    }),
+    SharedWithYouFilters: createNativeStackScreen({
+      screen: SharedWithYouFiltersSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
     SpaceRoom: createNativeStackScreen({
       screen: SpaceRoomScreen,
       linking: "spaces/:environmentId/:spaceId",
@@ -1007,6 +1051,27 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetAllowedDetents: formSheetDetents(0.6, 0.95),
         sheetGrabberVisible: true,
       },
+    }),
+    // Branch off and its lineage (Spaces redesign Part 2): sheets over the thread.
+    ThreadBranchOff: createNativeStackScreen({
+      screen: BranchOffSheet,
+      options: LINEAGE_SHEET_OPTIONS,
+    }),
+    ThreadLineage: createNativeStackScreen({
+      screen: LineageSheet,
+      options: LINEAGE_SHEET_OPTIONS,
+    }),
+    ThreadUpdate: createNativeStackScreen({
+      screen: UpdateSheet,
+      options: LINEAGE_SHEET_OPTIONS,
+    }),
+    ThreadOffer: createNativeStackScreen({
+      screen: OfferSheet,
+      options: LINEAGE_SHEET_OPTIONS,
+    }),
+    ThreadOfferChanges: createNativeStackScreen({
+      screen: OfferChangesSheet,
+      options: LINEAGE_SHEET_OPTIONS,
     }),
     GitCommit: createNativeStackScreen({
       screen: GitCommitSheet,

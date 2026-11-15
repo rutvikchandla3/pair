@@ -25,6 +25,7 @@ import {
   ProviderInstanceId,
   RunId,
   SpaceId,
+  SpaceTaskId,
   ThreadId,
   type TeamMember,
 } from "@t3tools/contracts";
@@ -556,58 +557,27 @@ describe("buildThreadListV2Items", () => {
     ];
     const input = { threads, environmentId: null, searchQuery: "", now: NOW };
 
-    it("shelves teammates' active threads, keeps pinned and followed ones, and drops settled ones", () => {
-      const expanded = buildThreadListV2Items({
-        ...input,
-        teamViewers: new Map([[environmentId, viewer]]),
-        teamShelfExpanded: true,
-      });
+    it("lists a teammate's thread only once pinned or followed, with its owner", () => {
+      const teamViewers = new Map([[environmentId, viewer]]);
+      const layout = buildThreadListV2Items({ ...input, teamViewers });
 
-      expect(
-        expanded.items.map((item) => [item.thread.id, item.team === true, item.owner?.name]),
-      ).toEqual([
-        ["team-pinned", false, "Alice"],
-        ["mine", false, undefined],
-        ["team-followed", false, "Alice"],
-        ["team-active", true, "Alice"],
+      expect(layout.items.map((item) => [item.thread.id, item.owner?.name])).toEqual([
+        ["team-pinned", "Alice"],
+        ["mine", undefined],
+        ["team-followed", "Alice"],
       ]);
-      expect(expanded.teamCount).toBe(1);
-      expect(expanded.teamShelfHeaderIndex).toBe(3);
-      expect(expanded.settledCount).toBe(0);
-
-      const collapsed = buildThreadListV2Items({
-        ...input,
-        teamViewers: new Map([[environmentId, viewer]]),
-      });
-      expect(collapsed.items.map((item) => item.thread.id)).not.toContain("team-active");
-      expect(collapsed.teamCount).toBe(1);
-    });
-
-    it("keeps the Team shelf in team mode when nothing is shared", () => {
-      const nothingShared = {
-        ...input,
-        threads: [threads[0]!, threads[4]!],
-        teamViewers: new Map([[environmentId, viewer]]),
-      };
-      const layout = buildThreadListV2Items(nothingShared);
-      expect(layout.teamCount).toBe(0);
-      expect(layout.teamShelfHeaderIndex).toBe(1);
-      const listed = buildThreadListV2ListItems({
-        items: layout.items,
-        pendingTasks: [],
-        teamCount: layout.teamCount,
-        teamShelfHeaderIndex: layout.teamShelfHeaderIndex,
-      });
-      expect(listed.map((entry) => entry.type)).toEqual(["v2-thread", "v2-team-shelf"]);
+      expect(layout.settledCount).toBe(0);
+      expect(
+        buildThreadListV2Items({ ...input, searchQuery: "team-active", teamViewers }).items,
+      ).toEqual([]);
     });
 
     it("lists a solo server exactly as before", () => {
       const solo = buildThreadListV2Items({ ...input, teamViewers: new Map() });
 
       expect(solo).toEqual(buildThreadListV2Items(input));
-      expect(solo.items.some((item) => "owner" in item || "team" in item)).toBe(false);
+      expect(solo.items.some((item) => "owner" in item)).toBe(false);
       expect(solo.settledCount).toBe(1);
-      expect(solo.teamShelfHeaderIndex).toBeNull();
     });
   });
 
@@ -1357,14 +1327,27 @@ describe("cross-section thread drops", () => {
   });
 });
 
-it("excludes subagents and space rooms from navigation, search and ordering while retaining user forks", () => {
+it("excludes subagents and space rooms from navigation, search and ordering while retaining user forks and task threads", () => {
   const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
+  const spaceId = SpaceId.make("spc_0a5f802f033aef633fa4");
   const room = makeThread({
     id: ThreadId.make("room"),
     title: "Child room",
+    source: { ...root.source, space: { kind: "room", spaceId } },
+  });
+  const task = makeThread({
+    id: ThreadId.make("task"),
+    title: "Task",
     source: {
       ...root.source,
-      space: { kind: "room", spaceId: SpaceId.make("spc_0a5f802f033aef633fa4") },
+      space: {
+        kind: "task",
+        spaceId,
+        taskId: SpaceTaskId.make("stk_0a5f802f033aef633fa4"),
+        linkedBy: MemberId.make("member-me"),
+        linkedAt: "2026-05-01T00:00:00.000Z",
+        via: "start",
+      },
     },
   });
   const child = makeThread({
@@ -1377,12 +1360,12 @@ it("excludes subagents and space rooms from navigation, search and ordering whil
     title: "Fork",
     lineage: { parentThreadId: root.id, rootThreadId: root.id, relationshipToParent: "fork" },
   });
-  const threads = [root, child, fork, room];
+  const threads = [root, child, fork, room, task];
   expect(
     buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW }).items.map(
       (item) => item.thread.id,
     ),
-  ).toEqual([fork.id, root.id]);
+  ).toEqual([fork.id, root.id, task.id]);
   expect(
     buildThreadListV2Items({ threads, environmentId: null, searchQuery: "Child", now: NOW }).items,
   ).toEqual([]);
@@ -1390,7 +1373,7 @@ it("excludes subagents and space rooms from navigation, search and ordering whil
     getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
       (thread) => thread.id,
     ),
-  ).toEqual([fork.id, root.id]);
+  ).toEqual([fork.id, root.id, task.id]);
 });
 
 const BASE_MS = Date.parse(NOW);

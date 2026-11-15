@@ -75,6 +75,7 @@ import {
 } from "../../state/team";
 import { useThreadPresence } from "../../state/presence";
 import { buildThreadTeamHeaderMenu } from "./thread-team-menu";
+import { useLineageMenu } from "../lineage/useLineageMenu";
 import { buildThreadCloudHeaderMenu, buildThreadMachineHeaderMenu } from "./thread-machine-menu";
 import {
   useContinueInCloudOffer,
@@ -590,6 +591,7 @@ function ThreadRouteContent(
       ? null
       : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
   );
+  const withLineageMenu = useLineageMenu(selectedThread);
   const teamHeaderMenu =
     selectedThread !== null && threadTeamMenu !== null && canOperateThread
       ? buildThreadTeamHeaderMenu(
@@ -1143,7 +1145,7 @@ function ThreadRouteContent(
                 headerColor={headerColor}
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
-                teamMenu={teamHeaderMenu}
+                teamMenu={withLineageMenu(teamHeaderMenu)}
                 spaceMenu={spaceHeader?.menu ?? null}
                 machineMenu={machineHeaderMenu ?? cloudHeaderMenu}
                 viewers={threadViewers}

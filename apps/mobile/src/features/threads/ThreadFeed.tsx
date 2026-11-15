@@ -24,6 +24,9 @@ import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { MessageAuthorName } from "./MessageAuthorName";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
+import { ThreadLineagePillSpace } from "../lineage/ThreadLineageChrome";
+import { ThreadLineageNotice } from "../lineage/ThreadLineageNotice";
+import { useCanForkThread } from "../lineage/useLineageMenu";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
@@ -208,6 +211,7 @@ import {
   isContextCompactionActivityGroup,
   isContextHandoffActivityGroup,
   isLinkRequestActivityGroup,
+  lineageNoticeOfActivityGroup,
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -443,10 +447,15 @@ function AssistantForkButton(props: {
   const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
   const selectDetail = useSelectWorkspaceDetail();
   const [busy, setBusy] = useState(false);
-  const canFork = canForkProjectedAssistantItem({
-    projectedItem: props.projectedItem,
-    capabilities: support.providerSession?.capabilities,
-  });
+  const ownerMayFork = useCanForkThread(
+    scopeThreadRef(props.environmentId, props.projectedItem.sourceThreadId),
+  );
+  const canFork =
+    ownerMayFork &&
+    canForkProjectedAssistantItem({
+      projectedItem: props.projectedItem,
+      capabilities: support.providerSession?.capabilities,
+    });
   const runId = props.projectedItem.item.runId;
 
   if (!canFork || runId === null) return null;
@@ -1828,6 +1837,19 @@ function renderFeedEntry(
         environmentId={props.environmentId}
         projectedItem={entry.activities[0]!.projectedItem}
         iconColor={iconSubtleColor}
+      />
+    );
+  }
+
+  const lineageNotice =
+    entry.type === "activity-group" ? lineageNoticeOfActivityGroup(entry) : null;
+  if (entry.type === "activity-group" && lineageNotice !== null) {
+    return (
+      <ThreadLineageNotice
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+        notice={lineageNotice}
+        message={entry.activities[0]!.summary}
       />
     );
   }
@@ -3934,6 +3956,10 @@ export const ThreadFeed = memo(function ThreadFeed({
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                <ThreadLineagePillSpace
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                />
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
                 ) : null}

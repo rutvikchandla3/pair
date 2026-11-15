@@ -5,6 +5,7 @@ import IconAlignLeft from "@tabler/icons-react-native/IconAlignLeft";
 import IconAlertCircle from "@tabler/icons-react-native/IconAlertCircle";
 import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import IconApps from "@tabler/icons-react-native/IconApps";
+import IconAt from "@tabler/icons-react-native/IconAt";
 import IconArchive from "@tabler/icons-react-native/IconArchive";
 import IconCalendarClock from "@tabler/icons-react-native/IconCalendarClock";
 import IconArrowBackUp from "@tabler/icons-react-native/IconArrowBackUp";
@@ -89,6 +90,8 @@ import IconLayoutSidebarRight from "@tabler/icons-react-native/IconLayoutSidebar
 import IconLetterSpacing from "@tabler/icons-react-native/IconLetterSpacing";
 import IconMicrophone from "@tabler/icons-react-native/IconMicrophone";
 import IconLink from "@tabler/icons-react-native/IconLink";
+import IconInbox from "@tabler/icons-react-native/IconInbox";
+import IconListCheck from "@tabler/icons-react-native/IconListCheck";
 import IconListNumbers from "@tabler/icons-react-native/IconListNumbers";
 import IconMenu2 from "@tabler/icons-react-native/IconMenu2";
 import IconMessageCircleQuestion from "@tabler/icons-react-native/IconMessageCircleQuestion";
@@ -169,6 +172,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.uturn.backward": IconArrowBackUp,
   "arrow.uturn.forward": IconArrowForwardUp,
   archivebox: IconArchive,
+  at: IconAt,
   "archivebox.fill": IconArchive,
   bell: IconBell,
   "bell.badge": IconBellRinging,
@@ -229,6 +233,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   laptopcomputer: IconDeviceLaptop,
   link: IconLink,
   "list.number": IconListNumbers,
+  checklist: IconListCheck,
   "line.3.horizontal": IconMenu2,
   "line.3.horizontal.decrease": IconFilter,
   "line.3.horizontal.decrease.circle": IconFilter,
@@ -285,6 +290,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "textformat.size": IconTypography,
   "textformat.size.larger": IconTextIncrease,
   "textformat.size.smaller": IconTextDecrease,
+  tray: IconInbox,
   "tray.and.arrow.up": IconUpload,
   trash: IconTrash,
   wifi: IconWifi,
