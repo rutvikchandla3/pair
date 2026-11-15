@@ -1,6 +1,13 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
 import { pendingGuestMessageCount, threadHasImportedHistory } from "@t3tools/contracts";
 import type {
+  BranchLineage,
+  BranchLineageStep,
+  Offer,
+  OfferId,
+  OrchestrationV2ThreadShellBranchLink,
+} from "@t3tools/contracts";
+import type {
   Space,
   SpaceAction,
   SpaceActionId,
@@ -118,6 +125,8 @@ import type * as Statement from "effect/sql/Statement";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import * as SandboxProjection from "../sandbox/lifecycle/SandboxProjection.ts";
 import * as SpaceProjection from "../space/SpaceProjection.ts";
+import * as BranchLineageProjection from "../lineage/BranchLineageProjection.ts";
+import type { TurnStartLineage } from "../lineage/LineageAgentNotes.ts";
 import { threadAllowsSql } from "../team/threadAccessSql.ts";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
@@ -626,6 +635,17 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     memberId: MemberId,
   ) => Effect.Effect<ThreadMemberState | null, ProjectionStoreV2Error>;
+  /** The member's highest-ordinal run on the thread, null when they prompted none. */
+  readonly getMemberLatestRun: (
+    threadId: ThreadId,
+    memberId: MemberId,
+  ) => Effect.Effect<
+    {
+      readonly status: OrchestrationV2Run["status"];
+      readonly completedAt: DateTime.Utc | null;
+    } | null,
+    ProjectionStoreV2Error
+  >;
   readonly listThreadMemberStates: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadMemberStateEntry>, ProjectionStoreV2Error>;
@@ -730,6 +750,45 @@ export interface ProjectionStoreV2Shape {
   readonly listSandboxThreads: (
     sandboxId: SandboxId,
   ) => Effect.Effect<ReadonlyArray<SandboxProjection.SandboxThreadRow>, ProjectionStoreV2Error>;
+  /** The thread's `PAIR_THREAD_SLOT` on its machine; null off a machine or while archived. */
+  readonly slotFor: (threadId: ThreadId) => Effect.Effect<number | null, ProjectionStoreV2Error>;
+  /** Branch off: the branch's lineage record, or null when the thread isn't a branch. */
+  readonly getBranchLineage: (
+    branchThreadId: ThreadId,
+  ) => Effect.Effect<BranchLineage | null, ProjectionStoreV2Error>;
+  /** Every branch of a source, oldest first. */
+  readonly listBranchesOf: (
+    sourceThreadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<BranchLineage>, ProjectionStoreV2Error>;
+  readonly getOffer: (offerId: OfferId) => Effect.Effect<Offer | null, ProjectionStoreV2Error>;
+  /** Open offers first, then the most recent. */
+  readonly listOffersForSource: (
+    sourceThreadId: ThreadId,
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<Offer>, ProjectionStoreV2Error>;
+  readonly listOffersForBranch: (
+    branchThreadId: ThreadId,
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<Offer>, ProjectionStoreV2Error>;
+  /** Open offers to live sources the member holds, newest first: the Inbox's offer items. */
+  readonly listOpenOffersForHolder: (
+    memberId: MemberId,
+  ) => Effect.Effect<ReadonlyArray<Offer>, ProjectionStoreV2Error>;
+  /** The thread's armed or running lineage step; it holds the thread's queue. */
+  readonly getLineageStep: (
+    threadId: ThreadId,
+  ) => Effect.Effect<BranchLineageStep | null, ProjectionStoreV2Error>;
+  readonly listArmedStepThreadIds: () => Effect.Effect<
+    ReadonlyArray<ThreadId>,
+    ProjectionStoreV2Error
+  >;
+  /** The shells' `branchLink`s, for `threadShellFromProjection`. */
+  readonly getBranchLinks: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<
+    ReadonlyMap<ThreadId, OrchestrationV2ThreadShellBranchLink>,
+    ProjectionStoreV2Error
+  >;
   /** Build ids on sandbox records that are not destroyed. */
   readonly listSandboxImageBuildIds: () => Effect.Effect<
     ReadonlySet<TeamImageBuildId>,
@@ -804,7 +863,11 @@ export interface ProjectionStoreV2Shape {
       | "contextHandoffs"
       | "contextTransfers"
       | "turnItems"
-    > & { readonly hasConversation: boolean },
+    > & {
+      readonly hasConversation: boolean;
+      /** What a lineage step left for the agent; absent on readers that skip it. */
+      readonly lineage?: TurnStartLineage;
+    },
     ProjectionStoreV2Error
   >;
   readonly getTurnStartHistory: (
@@ -1208,6 +1271,10 @@ export function applyToProjection(
     // Spaces project into their own tables; a room line is still its room's activity.
     case "space.action.updated":
     case "space.notes.changed":
+    // Branch off projects into its own tables; its notices are turn items.
+    case "thread.branch-lineage.updated":
+    case "thread.offer.updated":
+    case "thread.lineage-step.updated":
       return projection;
     case "space.updated":
       return projection.thread.space?.kind === "room"
@@ -1363,6 +1430,7 @@ const ThreadMemberStateColumns = Schema.Struct({
   lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   opens: Schema.NullOr(Schema.fromJsonString(ThreadMemberState.fields.opens)),
   followedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  followSource: ThreadMemberState.fields.followSource,
 });
 const encodeThreadMemberStateColumns = Schema.encodeEffect(ThreadMemberStateColumns);
 const ThreadMemberStateRow = Schema.Struct({
@@ -1376,8 +1444,10 @@ const memberStateOfRow = ({
   threadId: _threadId,
   memberId: _memberId,
   updatedAt: _updatedAt,
+  followSource,
   ...state
-}: typeof ThreadMemberStateRow.Type): ThreadMemberState => state;
+}: typeof ThreadMemberStateRow.Type): ThreadMemberState =>
+  followSource == null ? state : { ...state, followSource };
 const MEMBER_STATE_THREAD_CHUNK = 500;
 const decodeMemberSnoozes = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -1843,6 +1913,8 @@ const linkCardStillAsks = (
 
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
+  /** From `getBranchLinks`; the in-memory projection does not carry lineage. */
+  branchLink?: OrchestrationV2ThreadShellBranchLink,
 ): OrchestrationV2ThreadShell {
   const providerSession =
     projection.providerSessions
@@ -2008,6 +2080,7 @@ export function threadShellFromProjection(
     ...(projection.sandbox === undefined
       ? {}
       : { sandbox: SandboxProjection.sandboxShellSummary(projection.sandbox) }),
+    ...(branchLink === undefined ? {} : { branchLink }),
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -2219,6 +2292,7 @@ function shellFromState(input: {
   readonly state: ShellThreadState;
   readonly visibleItemCount: number;
   readonly sandbox: OrchestrationV2Sandbox | undefined;
+  readonly branchLink: OrchestrationV2ThreadShellBranchLink | undefined;
 }): OrchestrationV2ThreadShell {
   return {
     createdBy: input.state.thread.createdBy,
@@ -2306,6 +2380,7 @@ function shellFromState(input: {
     ...(input.sandbox === undefined
       ? {}
       : { sandbox: SandboxProjection.sandboxShellSummary(input.sandbox) }),
+    ...(input.branchLink === undefined ? {} : { branchLink: input.branchLink }),
     deletedAt: input.state.thread.deletedAt,
   };
 }
@@ -2368,6 +2443,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       last_snooze_wake_at AS "lastSnoozeWakeAt",
       opens_json AS "opens",
       followed_at AS "followedAt",
+      follow_source AS "followSource",
       updated_at AS "updatedAt"
     `;
 
@@ -2427,6 +2503,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       last_snooze_wake_at,
                       opens_json,
                       followed_at,
+                      follow_source,
                       updated_at
                     )
                     VALUES (
@@ -2441,6 +2518,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ${columns.lastSnoozeWakeAt},
                       ${columns.opens},
                       ${columns.followedAt},
+                      ${columns.followSource ?? null},
                       ${updatedAt}
                     )
                     ON CONFLICT(thread_id, member_id)
@@ -2454,6 +2532,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       last_snooze_wake_at = excluded.last_snooze_wake_at,
                       opens_json = excluded.opens_json,
                       followed_at = excluded.followed_at,
+                      follow_source = excluded.follow_source,
                       updated_at = excluded.updated_at
                   `;
                   break;
@@ -3281,6 +3360,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "space.action.updated":
               yield* withSql(SpaceProjection.applySpaceActionUpdated(event));
               break;
+            case "thread.branch-lineage.updated":
+              yield* withSql(BranchLineageProjection.applyBranchLineageUpdated(event));
+              break;
+            case "thread.offer.updated":
+              yield* withSql(BranchLineageProjection.applyOfferUpdated(event));
+              break;
+            case "thread.lineage-step.updated":
+              yield* withSql(BranchLineageProjection.applyLineageStepUpdated(event));
+              break;
             case "space.notes.changed":
               yield* withSql(SpaceProjection.applySpaceNotesChanged(event));
               break;
@@ -3366,7 +3454,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "space.updated" &&
             event.type !== "space.action.updated" &&
             event.type !== "space.notes.changed" &&
-            event.type !== "space.task.updated"
+            event.type !== "space.task.updated" &&
+            // Lineage records are not activity; their notices are.
+            event.type !== "thread.branch-lineage.updated" &&
+            event.type !== "thread.offer.updated" &&
+            event.type !== "thread.lineage-step.updated"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
@@ -5026,6 +5118,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       OR json_array_length(payload_json, '$.attachments') > 0)
               ) AS present
             `;
+            // Branch off: runless notes for the agent, and an Update whose merge is still open.
+            // Only threads in a lineage pay for the notes lookup.
+            const branchLineage = yield* withSql(
+              BranchLineageProjection.getBranchLineage(threadId),
+            );
+            const hasBranches =
+              branchLineage === null &&
+              (yield* sql<{ readonly present: number }>`
+                SELECT 1 AS present FROM orchestration_v2_projection_branch_lineage
+                WHERE source_thread_id = ${threadId} LIMIT 1
+              `).length > 0;
+            const agentNotices =
+              branchLineage === null && !hasBranches
+                ? []
+                : yield* sql<PayloadRow>`
+                    SELECT payload_json FROM orchestration_v2_projection_turn_items
+                    WHERE thread_id = ${threadId} AND run_id IS NULL AND type = 'system_notice'
+                      AND json_extract(payload_json, '$.lineage.kind') = 'agent-told'
+                    ORDER BY ordinal ASC, turn_item_id ASC
+                  `.pipe(Effect.flatMap(decodeRows(decodeTurnItemPayload, threadId)));
+            const sourceOfBranch =
+              branchLineage?.update == null
+                ? null
+                : yield* getThread(branchLineage.sourceThreadId).pipe(
+                    Effect.map((source): OrchestrationV2AppThread | null => source),
+                    Effect.orElseSucceed(() => null),
+                  );
             return {
               hasConversation:
                 conversation[0]?.present === 1 ||
@@ -5043,6 +5162,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               contextHandoffs,
               contextTransfers,
               turnItems,
+              lineage: {
+                notices: agentNotices,
+                openUpdate:
+                  branchLineage?.update == null
+                    ? null
+                    : {
+                        sourceTitle: sourceOfBranch?.title ?? null,
+                        conflictedPaths: branchLineage.update.conflictedPaths,
+                      },
+              },
             };
           }),
         )
@@ -6013,7 +6142,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND json_extract(payload_json, '$.queueHeld') IS NOT 1)
             AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs
               WHERE thread_id = ${threadId}
-                AND status IN ('preparing', 'starting', 'running', 'waiting'))`;
+                AND status IN ('preparing', 'starting', 'running', 'waiting'))
+            AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_lineage_threads
+              WHERE thread_id = ${threadId} AND step_json IS NOT NULL)`;
             return rows.length > 0;
           }),
         )
@@ -7593,7 +7724,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
         selectShellSandboxes(threadRows),
       ]);
+      const branchLinks = yield* withSql(
+        BranchLineageProjection.readBranchLinks([...targetThreadIds]),
+      );
       return {
+        branchLinks,
         targetThreadIds,
         threadRows,
         runRows,
@@ -7616,6 +7751,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       providerThreadRows,
       pendingTurnItemRows,
       sandboxes,
+      branchLinks,
     }: Effect.Success<ReturnType<typeof readShellSnapshotRows>>) {
       const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
         runRows,
@@ -7646,6 +7782,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               statesByThreadId,
             }),
             sandbox: shellSandbox(state, sandboxes),
+            branchLink: branchLinks.get(state.thread.id),
           }),
         );
 
@@ -8068,6 +8205,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ),
               selectShellSandboxes([rowsByThreadId.get(threadId)!]),
             ]);
+            const branchLinks = yield* withSql(BranchLineageProjection.readBranchLinks([threadId]));
             const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
               runRows,
               itemCountRows,
@@ -8095,6 +8233,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               state,
               visibleItemCount: visibleItemCountForShell({ threadId, statesByThreadId }),
               sandbox: shellSandbox(state, sandboxes),
+              branchLink: branchLinks.get(threadId),
             });
           }),
         )
@@ -8109,6 +8248,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `,
         );
         return rows[0] === undefined ? null : memberStateOfRow(rows[0]);
+      },
+      (effect, threadId) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
+
+    const getMemberLatestRun = Effect.fn("ProjectionStore.getMemberLatestRun")(
+      function* (threadId: ThreadId, memberId: MemberId) {
+        const rows = yield* sql<{
+          readonly status: OrchestrationV2Run["status"];
+          readonly completed_at: string | null;
+        }>`
+          SELECT status, completed_at FROM orchestration_v2_projection_runs
+          WHERE thread_id = ${threadId} AND author_id = ${memberId}
+          ORDER BY ordinal DESC
+          LIMIT 1
+        `;
+        const row = rows[0];
+        if (row === undefined) return null;
+        return {
+          status: row.status,
+          completedAt: row.completed_at === null ? null : DateTime.makeUnsafe(row.completed_at),
+        };
       },
       (effect, threadId) =>
         effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
@@ -8339,6 +8500,54 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       withSql(SandboxProjection.listSandboxThreads(sandboxId)).pipe(
         Effect.mapError(sandboxReadError(sandboxId)),
       );
+    const slotFor: ProjectionStoreV2Shape["slotFor"] = (threadId) =>
+      withSql(SandboxProjection.slotFor(threadId)).pipe(
+        Effect.mapError(controlReadError(threadId)),
+      );
+    const lineageReadError = (key: string) => (cause: unknown) =>
+      new ProjectionStoreReadError({ threadId: ThreadId.make(`lineage:${key}`), cause });
+    const getBranchLineage: ProjectionStoreV2Shape["getBranchLineage"] = (branchThreadId) =>
+      withSql(BranchLineageProjection.getBranchLineage(branchThreadId)).pipe(
+        Effect.mapError(lineageReadError(branchThreadId)),
+      );
+    const listBranchesOf: ProjectionStoreV2Shape["listBranchesOf"] = (sourceThreadId) =>
+      withSql(BranchLineageProjection.listBranchesOf(sourceThreadId)).pipe(
+        Effect.mapError(lineageReadError(sourceThreadId)),
+      );
+    const getOffer: ProjectionStoreV2Shape["getOffer"] = (offerId) =>
+      withSql(BranchLineageProjection.getOffer(offerId)).pipe(
+        Effect.mapError(lineageReadError(offerId)),
+      );
+    const listOffersForSource: ProjectionStoreV2Shape["listOffersForSource"] = (
+      sourceThreadId,
+      limit,
+    ) =>
+      withSql(BranchLineageProjection.listOffersForSource(sourceThreadId, limit)).pipe(
+        Effect.mapError(lineageReadError(sourceThreadId)),
+      );
+    const listOffersForBranch: ProjectionStoreV2Shape["listOffersForBranch"] = (
+      branchThreadId,
+      limit,
+    ) =>
+      withSql(BranchLineageProjection.listOffersForBranch(branchThreadId, limit)).pipe(
+        Effect.mapError(lineageReadError(branchThreadId)),
+      );
+    const listOpenOffersForHolder: ProjectionStoreV2Shape["listOpenOffersForHolder"] = (memberId) =>
+      Effect.flatMap(serverOwnerId, (ownerId) =>
+        withSql(BranchLineageProjection.listOpenOffersForHolder(memberId, ownerId)),
+      ).pipe(Effect.mapError(lineageReadError(`holder:${memberId}`)));
+    const getLineageStep: ProjectionStoreV2Shape["getLineageStep"] = (threadId) =>
+      withSql(BranchLineageProjection.getLineageStep(threadId)).pipe(
+        Effect.mapError(lineageReadError(threadId)),
+      );
+    const listArmedStepThreadIds: ProjectionStoreV2Shape["listArmedStepThreadIds"] = () =>
+      withSql(BranchLineageProjection.listArmedStepThreadIds()).pipe(
+        Effect.mapError(lineageReadError("armed-steps")),
+      );
+    const getBranchLinks: ProjectionStoreV2Shape["getBranchLinks"] = (threadIds) =>
+      withSql(BranchLineageProjection.readBranchLinks(threadIds)).pipe(
+        Effect.mapError(lineageReadError("links")),
+      );
     const listSandboxImageBuildIds: ProjectionStoreV2Shape["listSandboxImageBuildIds"] = () =>
       withSql(SandboxProjection.listImageBuildIds()).pipe(
         Effect.mapError(
@@ -8395,6 +8604,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
       getThreadMemberState: readOnReader(getThreadMemberState),
+      getMemberLatestRun: readOnReader(getMemberLatestRun),
       listThreadMemberStates: readOnReader(listThreadMemberStates),
       getMemberStatesForThreads: readOnReader(getMemberStatesForThreads),
       listFollowedThreadIds: readOnReader(listFollowedThreadIds),
@@ -8419,6 +8629,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listSpaceNotesBeforeAction: readOnReader(listSpaceNotesBeforeAction),
       findSpaceMessage: readOnReader(findSpaceMessage),
       listSandboxThreads: readOnReader(listSandboxThreads),
+      slotFor: readOnReader(slotFor),
+      getBranchLineage: readOnReader(getBranchLineage),
+      listBranchesOf: readOnReader(listBranchesOf),
+      getOffer: readOnReader(getOffer),
+      listOffersForSource: readOnReader(listOffersForSource),
+      listOffersForBranch: readOnReader(listOffersForBranch),
+      listOpenOffersForHolder: readOnReader(listOpenOffersForHolder),
+      getLineageStep: readOnReader(getLineageStep),
+      listArmedStepThreadIds: readOnReader(listArmedStepThreadIds),
+      getBranchLinks: readOnReader(getBranchLinks),
       listSandboxImageBuildIds: readOnReader(listSandboxImageBuildIds),
       countSandboxAdmission: readOnReader(countSandboxAdmission),
       countSandboxStates: countSandboxStates.pipe(NodeSqliteClient.readOnly),

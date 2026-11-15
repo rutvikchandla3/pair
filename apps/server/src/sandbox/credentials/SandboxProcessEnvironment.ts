@@ -6,6 +6,7 @@ import {
   type ProviderInstanceId,
   SandboxId,
   type ServerSettings as ServerSettingsSchema,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { RunnerInfo } from "@t3tools/contracts/runner";
 import {
@@ -147,6 +148,16 @@ export const FALLBACK_GIT_IDENTITY: GitIdentity = {
 };
 
 /** A sandbox has no global git identity; commits there name the server's, as local threads do. */
+/** The first port a machine's threads get; each thread's `PORT` is this plus its slot. */
+export const THREAD_PORT_BASE = 3000;
+
+/**
+ * Each thread on a machine gets its own `PORT` and `PAIR_THREAD_SLOT` (slot 0 is the owner's), so
+ * dev servers don't collide and a setup script can make a per-thread database.
+ */
+export const threadSlotEnvironment = (slot: number | null): Record<string, string> =>
+  slot === null ? {} : { PAIR_THREAD_SLOT: String(slot), PORT: String(THREAD_PORT_BASE + slot) };
+
 export const serverGitIdentity = (
   processRunner: ProcessRunner.ProcessRunner["Service"],
 ): Effect.Effect<GitIdentity> => {
@@ -219,11 +230,16 @@ const make = Effect.gen(function* () {
     for (const [name, value] of Object.entries((yield* host.info).environment)) {
       if (value !== undefined) base[name] = value;
     }
+    const slot =
+      threadId === undefined
+        ? null
+        : yield* projections.slotFor(ThreadId.make(threadId)).pipe(Effect.mapError(fail));
     return {
       ...base,
       ...layered,
       ...committer,
       ...(threadId === undefined ? {} : { T3CODE_THREAD_ID: threadId }),
+      ...threadSlotEnvironment(slot),
     };
   });
 

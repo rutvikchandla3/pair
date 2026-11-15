@@ -1,4 +1,4 @@
-import { CommandId, NonNegativeInt } from "@t3tools/contracts";
+import { type BranchLineageStep, CommandId, NonNegativeInt } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -31,6 +31,7 @@ import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
 import * as TeamImageEffects from "../sandbox/image/TeamImageEffects.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
+import * as BranchLineageStepExecutor from "../lineage/BranchLineageStepExecutor.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -144,11 +145,41 @@ export const layerExecutor: Layer.Layer<
     const checkpointMirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
     // Optional too: the live layer ships with team-image builds.
     const teamImages = yield* Effect.serviceOption(TeamImageEffects.TeamImageEffects);
+    // Optional: branch off's executor; without one a step completes having done nothing.
+    const lineageSteps = yield* Effect.serviceOption(
+      BranchLineageStepExecutor.BranchLineageStepExecutor,
+    );
+    const completeLineageStep = (
+      effect: EffectOutbox.ClaimedEffectV2,
+      step: BranchLineageStep,
+      failed: boolean,
+    ) =>
+      threads
+        .dispatch({
+          type: "thread.lineage-step.complete",
+          commandId: CommandId.make(`${effect.id}:complete`),
+          threadId: step.threadId,
+          stepId: step.id,
+          ...(failed ? { failed: true } : {}),
+        })
+        .pipe(Effect.asVoid);
     return OrchestrationEffectExecutorV2.of({
       reportExhausted: Effect.fn("OrchestrationEffectExecutorV2.reportExhausted")(
         function* (effect, cause) {
           if (EffectOutbox.isTeamImageEffect(effect)) {
             if (Option.isSome(teamImages)) yield* teamImages.value.reportExhausted(effect, cause);
+            return;
+          }
+          if (effect.request.type === "lineage-step.run") {
+            // A step that never completes would hold its thread's queue for good.
+            yield* completeLineageStep(effect, effect.request.step, true).pipe(
+              Effect.catchCause((completeCause) =>
+                Effect.logWarning("Failed to release a lineage step after its last attempt", {
+                  effectId: effect.id,
+                  cause: Cause.pretty(completeCause),
+                }),
+              ),
+            );
             return;
           }
           if (effect.request.type === "provider-thread.rollback") {
@@ -681,6 +712,20 @@ export const layerExecutor: Layer.Layer<
             return sandboxEffects
               .handOver({ sandboxId: effect.request.sandboxId, fromThreadId: effect.threadId })
               .pipe(Effect.mapError(sandboxExecutionError(effect)));
+          case "lineage-step.run": {
+            const step = effect.request.step;
+            return (Option.isNone(lineageSteps) ? Effect.void : lineageSteps.value.run(step)).pipe(
+              Effect.andThen(completeLineageStep(effect, step, false)),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
         }
       }),
     });
@@ -706,6 +751,7 @@ const EFFECT_TIMEOUTS: Partial<
   "sandbox.release-waiters": Duration.seconds(60),
   "sandbox.request-wake": Duration.seconds(60),
   "sandbox.hand-over": Duration.seconds(60),
+  "lineage-step.run": Duration.minutes(10),
   "team-image.build.launch": Duration.seconds(60),
   // A commit of a 10 GB layer on a slow disk can pass 10 minutes.
   "team-image.build.capture": Duration.minutes(20),

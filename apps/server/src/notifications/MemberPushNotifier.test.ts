@@ -5,6 +5,8 @@ import {
   EventId,
   MemberId,
   MessageId,
+  type Offer,
+  OfferId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -35,6 +37,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as TeamImageService from "../sandbox/image/TeamImageService.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
@@ -187,6 +190,10 @@ const makeHarness = Effect.fnUntraced(function* (options: {
   readonly unregistered?: ReadonlyArray<string>;
   readonly endpoint?: string;
   readonly shell?: OrchestrationV2ThreadShell;
+  /** Other threads, read by id. */
+  readonly shells?: ReadonlyArray<OrchestrationV2ThreadShell>;
+  /** Every machine's attached threads. */
+  readonly sandboxThreads?: ReadonlyArray<ThreadId>;
   readonly cloudOnly?: boolean;
   /** `ThreadAccess.allowsThread` on a cloud-only server. */
   readonly opens?: (memberId: MemberId) => boolean;
@@ -247,7 +254,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
           getThreadShell: (threadId) =>
             Effect.sync(() => {
               shellReads.push(threadId);
-              return currentShell;
+              return options.shells?.find((other) => other.id === threadId) ?? currentShell;
             }),
           getShellSnapshot: () =>
             Effect.succeed({
@@ -259,6 +266,16 @@ const makeHarness = Effect.fnUntraced(function* (options: {
           streamDomainEvents: Stream.fromEffectRepeat(
             Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
           ),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          listSandboxThreads: () =>
+            Effect.succeed(
+              (options.sandboxThreads ?? []).map((threadId) => ({
+                threadId,
+                attachedAt: DateTime.makeUnsafe(NOW),
+                archived: false,
+              })),
+            ),
         }),
         Layer.mock(TeamImageService.TeamImageService)({
           buildFinished: Stream.fromEffectRepeat(
@@ -591,6 +608,141 @@ describe("MemberPushNotifier", () => {
       assert.deepStrictEqual(
         harness.requests.flat().map(({ to, title, data }) => ({ to, title, data })),
         [{ to: token(ALICE), title: "Archived by Bob", data: { deepLink: "/settings/archive" } }],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("pushes an offer to the source's holder and each outcome to its sender only", () =>
+    Effect.gen(function* () {
+      const branchId = ThreadId.make("thread-branch");
+      const harness = yield* makeHarness({
+        shells: [
+          shell({
+            id: branchId,
+            title: "Fix the login bug (Bob)",
+            ownerId: BOB.id,
+            lineage: { rootThreadId: branchId, parentThreadId: null, relationshipToParent: null },
+          }),
+        ],
+      });
+      const offer = (id: string, change: Partial<Offer> = {}): Offer => ({
+        id: OfferId.make(`ofr_${id.padStart(20, "0")}`),
+        sourceThreadId: THREAD_ID,
+        branchThreadId: branchId,
+        senderId: BOB.id,
+        senderKind: "person",
+        note: null,
+        state: "open",
+        commits: [],
+        files: [],
+        additions: 0,
+        deletions: 0,
+        base: "a".repeat(40),
+        tip: "b".repeat(40),
+        replaced: false,
+        armedAt: null,
+        returnReason: null,
+        returnPaths: [],
+        decidedBy: null,
+        decidedAt: null,
+        revertedAt: null,
+        revertedBy: null,
+        waiting: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+        ...change,
+      });
+      let sequence = 0;
+      const updated = (payload: Offer) =>
+        harness.emit({
+          id: EventId.make(`event-offer-${++sequence}`),
+          type: "thread.offer.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe(NOW),
+          payload,
+        });
+      yield* updated(offer("1"));
+      // Arming Apply mid-turn is not news.
+      yield* updated(offer("1", { armedAt: NOW }));
+      yield* updated(offer("1", { state: "applied", decidedBy: ALICE.id, decidedAt: NOW }));
+      yield* updated(offer("2", { state: "declined", decidedBy: ALICE.id, decidedAt: NOW }));
+      yield* updated(offer("3", { state: "returned", returnReason: "conflict" }));
+      yield* updated(offer("4", { state: "withdrawn" }));
+      // Alice offering to her own thread and applying it tells nobody.
+      yield* updated(offer("5", { senderId: ALICE.id }));
+      yield* updated(
+        offer("5", { senderId: ALICE.id, state: "applied", decidedBy: ALICE.id, decidedAt: NOW }),
+      );
+
+      assert.deepStrictEqual(
+        harness.requests.flat().map((m) => [m.to, m.title, m.body, m.data.deepLink]),
+        [
+          [token(ALICE), "Changes offered", "Fix the login bug", "/threads/env-1/thread-1"],
+          [
+            token(BOB),
+            "Changes applied",
+            "Fix the login bug (Bob)",
+            "/threads/env-1/thread-branch",
+          ],
+          [token(BOB), "Offer declined", "Fix the login bug (Bob)", "/threads/env-1/thread-branch"],
+          [
+            token(BOB),
+            "Offer came back",
+            "Fix the login bug (Bob)",
+            "/threads/env-1/thread-branch",
+          ],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("pushes a discarded machine once to the holders of its other threads", () =>
+    Effect.gen(function* () {
+      const carolThread = ThreadId.make("thread-carol");
+      const bobThread = ThreadId.make("thread-bob");
+      const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+      const harness = yield* makeHarness({
+        shell: shell({ ownerId: ALICE.id }),
+        shells: [
+          shell({ id: carolThread, title: "Carol's fix", ownerId: CAROL.id }),
+          shell({ id: bobThread, title: "Bob's fix", ownerId: BOB.id }),
+        ],
+        sandboxThreads: [THREAD_ID, carolThread, bobThread],
+      });
+      const sandbox = (state: "ready" | "destroyed", ownerMemberId: MemberId) =>
+        harness.emit({
+          id: EventId.make(`event-sandbox-${state}`),
+          type: "sandbox.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe(NOW),
+          payload: {
+            id: sandboxId,
+            projectId: ProjectId.make("project-1"),
+            ownerThreadId: THREAD_ID,
+            ownerMemberId,
+            driverId: ComputeDriverId.make("docker"),
+            size: "small",
+            state,
+            generation: 1,
+            driverRef: null,
+            admission: null,
+            runnerLostAt: null,
+            sleepReason: null,
+            failure: null,
+            createdAt: DateTime.makeUnsafe(NOW),
+            updatedAt: DateTime.makeUnsafe(NOW),
+          },
+        });
+      yield* sandbox("ready", ALICE.id);
+      yield* sandbox("destroyed", ALICE.id);
+      yield* sandbox("destroyed", ALICE.id);
+
+      assert.deepStrictEqual(
+        harness.requests.flat().map((m) => [m.to, m.title, m.body]),
+        [
+          [token(CAROL), "Machine discarded", "Carol's fix"],
+          [token(BOB), "Machine discarded", "Bob's fix"],
+        ],
       );
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );

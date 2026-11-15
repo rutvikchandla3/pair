@@ -316,6 +316,7 @@ export class SandboxForkError extends Schema.TaggedError<SandboxForkError>()("Sa
     "workspace",
     "no-branch",
     "no-turn",
+    "not-owner",
     "unavailable",
   ]),
   cause: Schema.optional(Schema.Defect()),
@@ -336,6 +337,8 @@ export class SandboxForkError extends Schema.TaggedError<SandboxForkError>()("Sa
         return "This thread has no branch to fork from yet.";
       case "no-turn":
         return "This thread has no finished turn to fork from yet.";
+      case "not-owner":
+        return "Only the thread's owner can fork it. Branch off to work on your own.";
       case "unavailable":
         return "Could not fork to a new machine. Try again in a moment.";
     }

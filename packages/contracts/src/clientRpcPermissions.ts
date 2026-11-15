@@ -59,6 +59,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.spacesAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.spacesNotes]: AuthOrchestrationOperateScope,
   [WS_METHODS.spacesReply]: AuthOrchestrationOperateScope,
+  // Done and Snooze change what the caller's Inbox shows, as a thread's snooze does.
+  [WS_METHODS.inboxDismiss]: AuthOrchestrationOperateScope,
+  [WS_METHODS.inboxSnooze]: AuthOrchestrationOperateScope,
+  [WS_METHODS.inboxUnsnooze]: AuthOrchestrationOperateScope,
   // Draining holds every member's new cloud turns, as an update restarts the server.
   [WS_METHODS.serverDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCancelDrain]: AuthEnvironmentMaintainScope,
@@ -124,6 +128,23 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.teamProviderAccountsMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.teamGitHubTokenSet]: AuthOrchestrationOperateScope,
   [WS_METHODS.teamGitHubTokenClear]: AuthOrchestrationOperateScope,
+  // Branch off starts a thread and maybe a machine, as a cloud launch does.
+  [WS_METHODS.threadBranchOff]: AuthOrchestrationOperateScope,
+  // Update, Offer, Apply and the rest write to a thread's worktree and its record.
+  [WS_METHODS.threadUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadAbortUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadUndoUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadBringBack]: AuthOrchestrationOperateScope,
+  [WS_METHODS.offerCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.offerWithdraw]: AuthOrchestrationOperateScope,
+  [WS_METHODS.offerApply]: AuthOrchestrationOperateScope,
+  [WS_METHODS.offerDecline]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadRevertOffer]: AuthOrchestrationOperateScope,
+  // Starts a machine on the caller's machine time.
+  [WS_METHODS.threadMoveToOwnMachine]: AuthOrchestrationOperateScope,
+  // Runs a model on the caller's provider account.
+  [WS_METHODS.threadBranchOffSummary]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadStartFromMain]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

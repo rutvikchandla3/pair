@@ -56,6 +56,8 @@ import { SandboxImageToolkit } from "./toolkits/sandboxImage/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import * as SpaceHandlers from "./toolkits/space/handlers.ts";
 import { SpaceToolkit } from "./toolkits/space/tools.ts";
+import * as LineageHandlers from "./toolkits/lineage/handlers.ts";
+import { LineageToolkit } from "./toolkits/lineage/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -1166,6 +1168,8 @@ export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, Proj
 
 const layerSpaceToolkit = toolkitRegistration(SpaceToolkit, SpaceHandlers.layer);
 
+const layerLineageToolkit = toolkitRegistration(LineageToolkit, LineageHandlers.layer);
+
 const layerSandboxImageToolkit = toolkitRegistration(
   SandboxImageToolkit,
   SandboxImageHandlers.layer,
@@ -1240,6 +1244,7 @@ export const layerTools = Layer.mergeAll(
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerSpaceToolkit,
+  layerLineageToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

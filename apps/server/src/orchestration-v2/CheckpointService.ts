@@ -26,6 +26,7 @@ import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
+const TURN_BASE_REFS_PREFIX = "refs/t3/lineage/turn-base";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
 
 export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
@@ -141,7 +142,18 @@ export interface CheckpointServiceV2Shape {
     readonly appRunOrdinal: number | null;
     readonly capturedAt: DateTime.Utc;
     readonly forceMissing?: boolean;
+    /** Diff from the previous checkpoint's turn base when one exists (`captureTurnBase`). */
+    readonly turnBase?: boolean;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
+  /**
+   * Records the working tree after a lineage step (Apply, Revert, Update) as the base the next
+   * turn's file summary diffs from, so the step's files never count as the turn's. The
+   * checkpoint itself stays, so Revert to that turn still discards what the step wrote.
+   */
+  readonly captureTurnBase: (input: {
+    readonly scope: OrchestrationV2CheckpointScope;
+    readonly ordinalWithinScope: number;
+  }) => Effect.Effect<CheckpointRef, CheckpointServiceV2Error>;
   readonly restore: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly checkpoint: OrchestrationV2Checkpoint;
@@ -178,6 +190,15 @@ export const checkpointRefForScopeOrdinal = Effect.fn("checkpointRefForScopeOrdi
     const scopeKey = Hex.encode(digest).slice(0, 32);
     return CheckpointRef.make(
       `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}/ordinal/${input.ordinalWithinScope}`,
+    );
+  },
+);
+
+export const turnBaseRefForScopeOrdinal = Effect.fn("turnBaseRefForScopeOrdinal")(
+  function* (input: { readonly scopeId: CheckpointScopeId; readonly ordinalWithinScope: number }) {
+    const checkpointRef = yield* checkpointRefForScopeOrdinal(input);
+    return CheckpointRef.make(
+      `${TURN_BASE_REFS_PREFIX}/${checkpointRef.slice(CHECKPOINT_REFS_PREFIX.length + 1)}`,
     );
   },
 );
@@ -268,6 +289,8 @@ export const layer: Layer.Layer<
     const crypto = yield* Digest.Digest;
     const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
       checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Digest.Digest, crypto));
+    const turnBaseRefFor = (input: Parameters<typeof turnBaseRefForScopeOrdinal>[0]) =>
+      turnBaseRefForScopeOrdinal(input).pipe(Effect.provideService(Digest.Digest, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const hosts = yield* WorkspaceHosts.WorkspaceHosts;
     const workspaceLocks = yield* KeyedLock.make<string>();
@@ -396,10 +419,25 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const previousCheckpointRef = yield* checkpointRefFor({
+          const previousOrdinal = {
             scopeId: input.scope.id,
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
-          });
+          };
+          const turnBaseRef =
+            input.turnBase === true && input.forceMissing !== true
+              ? yield* turnBaseRefFor(previousOrdinal)
+              : null;
+          const previousCheckpointRef =
+            turnBaseRef !== null &&
+            (yield* checkpointStore
+              .hasCheckpointRef({
+                cwd: input.scope.cwd,
+                roots: input.scope.roots,
+                checkpointRef: turnBaseRef,
+              })
+              .pipe(Effect.orElseSucceed(() => false)))
+              ? turnBaseRef
+              : yield* checkpointRefFor(previousOrdinal);
 
           if (input.forceMissing === true) {
             return makeCheckpoint({
@@ -521,13 +559,69 @@ export const layer: Layer.Layer<
         ),
       );
 
+    const captureTurnBase: CheckpointServiceV2Shape["captureTurnBase"] = (input) =>
+      withWorkspaceLock(
+        input.scope.cwd,
+        Effect.gen(function* () {
+          const checkpointRef = yield* turnBaseRefFor({
+            scopeId: input.scope.id,
+            ordinalWithinScope: input.ordinalWithinScope,
+          });
+          // previous = ref replaces the ref and skips the file summary.
+          const coarse = yield* coarseFor(input.scope.cwd);
+          if (coarse !== undefined) {
+            yield* coarse.checkpointCapture({
+              _tag: "turn",
+              cwd: input.scope.cwd,
+              roots: input.scope.roots,
+              checkpointRef,
+              previousCheckpointRef: checkpointRef,
+            });
+          } else {
+            yield* CheckpointCapture.captureTurn({
+              cwd: input.scope.cwd,
+              roots: input.scope.roots,
+              checkpointRef,
+              previousCheckpointRef: checkpointRef,
+            }).pipe(Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore));
+          }
+          return checkpointRef;
+        }),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CheckpointCaptureError({
+              scopeId: input.scope.id,
+              cause,
+            }),
+        ),
+      );
+
+    // A turn base after a discarded checkpoint, or after the one restored, no longer describes
+    // the working tree.
     const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = (input) =>
       withWorkspaceLock(
         input.scope.cwd,
-        checkpointStore.deleteCheckpointRefs({
-          cwd: input.scope.cwd,
-          roots: input.scope.roots,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+        Effect.gen(function* () {
+          const turnBaseRefs = yield* Effect.forEach(
+            [
+              ...new Set(
+                input.checkpoints.flatMap((checkpoint) => [
+                  checkpoint.ordinalWithinScope,
+                  Math.max(0, checkpoint.ordinalWithinScope - 1),
+                ]),
+              ),
+            ],
+            (ordinalWithinScope) => turnBaseRefFor({ scopeId: input.scope.id, ordinalWithinScope }),
+          );
+          yield* checkpointStore.deleteCheckpointRefs({
+            cwd: input.scope.cwd,
+            roots: input.scope.roots,
+            checkpointRefs: [
+              ...input.checkpoints.map((checkpoint) => checkpoint.ref),
+              ...turnBaseRefs,
+            ],
+          });
         }),
       ).pipe(
         Effect.mapError(
@@ -591,6 +685,7 @@ export const layer: Layer.Layer<
       captureBaseline,
       materializeBaselineCheckpoint,
       capture,
+      captureTurnBase,
       restore,
       deleteStaleRefs,
     } satisfies CheckpointServiceV2Shape);

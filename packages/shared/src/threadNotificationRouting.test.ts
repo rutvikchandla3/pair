@@ -36,6 +36,11 @@ const ALL_KINDS: ReadonlyArray<ThreadNotificationKind> = [
   "message",
   "assigned",
   "archived",
+  "offer",
+  "offer-applied",
+  "offer-declined",
+  "offer-returned",
+  "machine-discarded",
 ];
 
 // Alice owns the thread; Bob is another member; Carol follows it (neither owner nor prompter).
@@ -88,6 +93,37 @@ describe("shouldNotifyMember", () => {
       row: "Alice archives her own thread",
       event: { kind: "archived", actorId: alice, prompterId: null, ownerId: alice },
       notified: [],
+    },
+    {
+      row: "Bob offers changes to Alice's thread",
+      event: { kind: "offer", actorId: bob, prompterId: null, ownerId: alice },
+      notified: [alice],
+    },
+    ...(["offer-applied", "offer-declined"] as const).map((kind) => ({
+      row: `${kind} by Alice on Bob's offer`,
+      event: { kind, actorId: alice, prompterId: null, ownerId: alice, senderId: bob },
+      notified: [bob],
+    })),
+    {
+      row: "Bob applies his own offer to his thread",
+      event: { kind: "offer-applied", actorId: bob, prompterId: null, ownerId: bob, senderId: bob },
+      notified: [],
+    },
+    {
+      row: "Bob's offer comes back",
+      event: {
+        kind: "offer-returned",
+        actorId: null,
+        prompterId: null,
+        ownerId: bob,
+        senderId: bob,
+      },
+      notified: [bob],
+    },
+    {
+      row: "Bob discards the machine Alice's thread is on",
+      event: { kind: "machine-discarded", actorId: bob, prompterId: null, ownerId: alice },
+      notified: [alice],
     },
   ] satisfies ReadonlyArray<{
     row: string;
@@ -144,6 +180,11 @@ describe("threadNotificationTitle", () => {
       "New message",
       "Assigned to you",
       "Archived by Alice",
+      "Changes offered",
+      "Changes applied",
+      "Offer declined",
+      "Offer came back",
+      "Machine discarded",
     ]);
   });
 });

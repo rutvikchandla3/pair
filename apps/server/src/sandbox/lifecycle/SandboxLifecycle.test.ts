@@ -1560,7 +1560,9 @@ it.layer(layerTest)("shared sandboxes", (it) => {
         driver: { ...fake.driver, kind: "boat" },
       });
       const forks = yield* SandboxFork.SandboxFork.pipe(
-        Effect.provide(SandboxFork.layer.pipe(Layer.provide(runtime.layerDriver))),
+        Effect.provide(
+          SandboxFork.layer.pipe(Layer.provide([runtime.layerDriver, TeamState.layerTest()])),
+        ),
       );
       const { threadId: owner, sandboxId } = yield* provisioned("fork-copy");
       yield* runAnswering(runtime, answerCreate);
@@ -1574,7 +1576,7 @@ it.layer(layerTest)("shared sandboxes", (it) => {
       const {
         run: { id: runId },
       } = yield* prompt(owner, "fork-copy-turn");
-      const fork = (key: string) =>
+      const fork = (key: string, actorId?: MemberId) =>
         forks.fork({
           commandId: CommandId.make(`fork:${key}`),
           sourceThreadId: owner,
@@ -1582,9 +1584,15 @@ it.layer(layerTest)("shared sandboxes", (it) => {
           size: "large",
           createdBy: "user",
           creationSource: "web",
+          ...(actorId === undefined ? {} : { actorId }),
         });
       const busy = yield* fork("fork-copy-busy").pipe(Effect.flip);
       assert.equal(busy.reason, "turn-running");
+      // Fork stays the owner's tool; a teammate branches off instead.
+      const teammate = yield* fork("fork-copy-teammate", MemberId.make("member:teammate")).pipe(
+        Effect.flip,
+      );
+      assert.equal(teammate.reason, "not-owner");
       yield* dispatch({
         type: "prepared-run.fail",
         commandId: CommandId.make("fail:fork-copy-turn"),

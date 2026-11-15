@@ -366,7 +366,7 @@ const copyImageClone = Effect.fn("CloudPreparation.copyImageClone")(function* (
  * a worktree from `origin/<branch>` or `origin/<baseRef>` (an `existingBranch` must be pushed).
  */
 /** A thread's checkout on the machine: one folder per branch under the sandbox root. */
-const worktreePathFor = (checkoutRoot: string, branch: string) =>
+export const worktreePathFor = (checkoutRoot: string, branch: string) =>
   `${checkoutRoot}/worktrees/${branch.replaceAll("/", "-")}`;
 
 /** Where the machine keeps a project's clone, from its checkout's origin. */
@@ -571,13 +571,14 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
       branch: input.branch,
     });
     if (restored !== null) {
+      const rebuild = rebuilt && restored.seeded !== true;
       return {
         clonePath,
         worktreePath,
         branch: input.branch,
         // A rebuild never deletes the work it brought back; a failed first checkout is undone.
-        created: !rebuilt,
-        restoredFrom: rebuilt ? ("mirror" as const) : ("seed" as const),
+        created: !rebuild,
+        restoredFrom: rebuild ? ("mirror" as const) : ("seed" as const),
         snapshotAt: restored.snapshotAt,
         cloneSource,
       };

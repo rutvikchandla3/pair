@@ -20,6 +20,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
 import { holderOf } from "./MemberThreadState.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
@@ -154,6 +155,7 @@ export const layerFromProjectStore: Layer.Layer<
     const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
     const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
     const team = yield* Effect.serviceOption(TeamState.TeamState);
+    const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         yield* refuseAboveCeiling(managedPolicy, input.thread);
@@ -201,12 +203,20 @@ export const layerFromProjectStore: Layer.Layer<
         const gitAuthor = Option.isNone(team)
           ? undefined
           : yield* team.value.gitAuthorFor(holderOf(input.thread, team.value.ownerId));
+        // Only a machine's threads have one; a failed read leaves the thread without its own port.
+        const threadSlot =
+          input.thread.sandboxId === undefined || Option.isNone(projections)
+            ? null
+            : yield* projections.value
+                .slotFor(input.thread.id)
+                .pipe(Effect.orElseSucceed(() => null));
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
           ...(gitAuthor === undefined ? {} : { gitAuthor }),
+          ...(threadSlot === null ? {} : { threadSlot }),
         });
       }),
     });

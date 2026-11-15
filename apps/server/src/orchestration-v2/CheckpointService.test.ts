@@ -23,6 +23,9 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceHostLoopback from "../workspaceHost/WorkspaceHostLoopback.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -252,4 +255,99 @@ it.effect("a second snapshot of a sandbox checkout moves its ref to the newer tr
     // The working tree and index are untouched: both edits are still uncommitted.
     assert.equal(yield* git("status", "--porcelain"), " M a.txt\n?? b.txt\n");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a lineage step's turn base keeps its files out of the next turn and out of Revert", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-turn-base-" });
+    const git = (...args: ReadonlyArray<string>) =>
+      spawner.string(
+        ChildProcess.make("git", ["-c", "user.email=t@t", "-c", "user.name=T", ...args], { cwd }),
+      );
+    yield* git("init");
+    yield* fs.writeFileString(`${cwd}/turn.txt`, "one\n");
+    yield* fs.writeFileString(`${cwd}/applied.txt`, "one\n");
+    yield* git("add", ".");
+    yield* git("commit", "-m", "initial");
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:turn-base"),
+      threadId: ThreadId.make("thread:turn-base"),
+      runId: RunId.make("run:turn-base:1"),
+      nodeId: NodeId.make("node:turn-base:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:turn-base"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd,
+      createdAt: DateTime.makeUnsafe("2026-11-15T00:00:00.000Z"),
+    };
+    const turn = (ordinalWithinScope: number) => ({
+      scope,
+      ordinalWithinScope,
+      runId: RunId.make(`run:turn-base:${ordinalWithinScope}`),
+      nodeId: scope.nodeId!,
+      appRunOrdinal: ordinalWithinScope,
+      capturedAt: scope.createdAt,
+      turnBase: true,
+    });
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
+      yield* fs.writeFileString(`${cwd}/turn.txt`, "one\nturn one\n");
+      const first = yield* checkpoints.capture(turn(1));
+      // An Apply between turns 1 and 2.
+      yield* fs.writeFileString(`${cwd}/applied.txt`, "one\napplied\n");
+      yield* checkpoints.captureTurnBase({ scope, ordinalWithinScope: 1 });
+      yield* fs.writeFileString(`${cwd}/turn.txt`, "one\nturn one\nturn two\n");
+      const second = yield* checkpoints.capture(turn(2));
+      assert.deepEqual(
+        second.files.map((file) => file.path),
+        ["turn.txt"],
+      );
+
+      // Revert to turn 1, which was before the Apply, discards the applied file too.
+      yield* checkpoints.restore({ scope, checkpoint: first });
+      assert.equal(yield* fs.readFileString(`${cwd}/applied.txt`), "one\n");
+      yield* checkpoints.deleteStaleRefs({ scope, checkpoints: [second] });
+      const turnBase = yield* CheckpointService.turnBaseRefForScopeOrdinal({
+        scopeId: scope.id,
+        ordinalWithinScope: 1,
+      });
+      const left = yield* spawner.exitCode(
+        ChildProcess.make("git", ["rev-parse", "--verify", "--quiet", turnBase], { cwd }),
+      );
+      assert.notEqual(left, 0);
+      // Without a turn base, a turn diffs from the previous checkpoint as before.
+      yield* fs.writeFileString(`${cwd}/applied.txt`, "one\napplied again\n");
+      const third = yield* checkpoints.capture(turn(2));
+      assert.deepEqual(
+        third.files.map((file) => file.path),
+        ["applied.txt"],
+      );
+    }).pipe(
+      Effect.provide(
+        CheckpointService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              CheckpointStore.layer.pipe(
+                Layer.provide(
+                  VcsDriverRegistry.layer.pipe(
+                    Layer.provide(VcsProcess.layer),
+                    Layer.provide(ServerConfig.layerTest(cwd, { prefix: "t3-turn-base-" })),
+                    Layer.provide(WorkspaceHostTesting.layerFromContext),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Layer.provide(WorkspaceHostTesting.layerFromContext),
+          Layer.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
 );

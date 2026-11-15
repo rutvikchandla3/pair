@@ -108,6 +108,28 @@ import {
   type SpaceCoreCommand,
   type SpaceThreadLinkCommand,
 } from "../space/SpaceDecisions.ts";
+import type {
+  BranchLineageError,
+  BranchLineageStep,
+  LineageNotice,
+  Offer,
+} from "@t3tools/contracts";
+import {
+  decideLineageRecord,
+  decideOfferApplied,
+  decideOfferArm,
+  decideOfferCreate,
+  decideOfferDecline,
+  decideOfferReturned,
+  decideOfferRevertArm,
+  decideOfferReverted,
+  decideOfferWithdraw,
+  decideStepArm,
+  isRefusal,
+  lineageNoticeMessage,
+  type LineageNoticeContext,
+  lineageRefusal,
+} from "../lineage/BranchLineageDecisions.ts";
 import {
   decideNotesEdit,
   decideNotesUndo,
@@ -221,14 +243,18 @@ import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { authorshipFields, decideHumanAuthorship } from "./HumanAuthorship.ts";
 import {
+  changesOnSettle,
   clearedForSettle,
   EMPTY_MEMBER_STATE,
   followedView,
-  hasPersonalState,
   holderOf,
   isNonHolderMemberEvent,
+  permanentFollowView,
   personalStateOf,
+  promptFollowedView,
+  promptFollowEnds,
   transferHolder,
+  unfollowedView,
   withPersonalState,
 } from "./MemberThreadState.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -813,6 +839,22 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
+      return command.targetThreadId;
+    // Branch off: offers live on the source's stream, a lineage record on its branch's.
+    case "thread.branch-lineage.record":
+    case "offer.create":
+    case "offer.withdraw":
+    case "offer.arm":
+    case "offer.decline":
+    case "offer.applied":
+    case "offer.returned":
+    case "offer.reverted":
+    case "thread.lineage-step.arm":
+    case "thread.lineage-step.complete":
+      return command.threadId;
+    case "thread.machine.move":
+      return command.threadId;
+    case "thread.branch-off":
       return command.targetThreadId;
   }
 }
@@ -4057,11 +4099,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.searchQuery,
         )
       : null;
-    const visited: OrchestrationV2AppThread = {
+    const read: OrchestrationV2AppThread = {
       ...thread,
       ...(movesForward ? { lastVisitedAt: visitedAt.value } : {}),
       ...(opens ? { opens } : {}),
     };
+    // Settle, and this read after the member's last turn ended, are what end a prompt's follow.
+    const visited =
+      actor !== null &&
+      !actor.isHolder &&
+      read.followSource === "prompt" &&
+      promptFollowEnds(
+        read,
+        yield* projectionStore
+          .getMemberLatestRun(row.id, actor.memberId)
+          .pipe(mapDispatchError(command)),
+      )
+        ? unfollowedView(read)
+        : read;
     // Viewing a thread changes read state only. Loading its transcript (or
     // bumping updatedAt) makes a routine read receipt scale with its history.
     yield* emit(
@@ -4103,8 +4158,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const view = yield* personalView(row, actor);
     const now = yield* DateTime.now;
     const next =
-      command.type === "thread.follow" ? followedView(view, now) : { ...view, followedAt: null };
-    if ((next.followedAt ?? null) === (view.followedAt ?? null)) return;
+      command.type === "thread.follow"
+        ? permanentFollowView(followedView(view, now))
+        : unfollowedView(view);
+    if (
+      (next.followedAt ?? null) === (view.followedAt ?? null) &&
+      (next.followSource ?? null) === (view.followSource ?? null)
+    ) {
+      return;
+    }
     yield* emit(
       events,
       command,
@@ -4836,7 +4898,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const alreadyPinned = thread.pinnedAt != null;
           const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
           return {
-            ...thread,
+            ...permanentFollowView(thread),
             pinnedAt: alreadyPinned ? thread.pinnedAt : now,
             ...(alreadyPinned || command.orderKey === undefined
               ? {}
@@ -5405,7 +5467,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .listThreadMemberStates(row.id)
         .pipe(mapDispatchError(command));
       for (const entry of memberStates) {
-        if (!hasPersonalState(entry.state)) continue;
+        if (!changesOnSettle(entry.state)) continue;
         const state = clearedForSettle(entry.state);
         yield* emitThreadEvent({
           ...eventBase,
@@ -5763,9 +5825,692 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedAt: now,
         type: "system_notice",
         message: command.message,
+        ...(command.lineage === undefined ? {} : { lineage: command.lineage }),
       },
     });
   });
+
+  // Branch off (Spaces redesign Part 2): lineage records, offers and the armed-step gate. The
+  // service checks access first; these re-decide under the thread locks.
+  const lineageRefused = (command: OrchestrationV2ServerCommand, refusal: BranchLineageError) =>
+    new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: refusal,
+    });
+
+  const lineageHolderOf = (thread: OrchestrationV2AppThread): MemberId | null =>
+    Option.match(serverOwnerId, {
+      onNone: () => thread.ownerId ?? null,
+      onSome: (ownerId) => holderOf(thread, ownerId),
+    });
+
+  const lineageNameOf = Effect.fn("Orchestrator.lineageNameOf")(function* () {
+    const members = Option.isNone(team) ? new Map() : yield* Ref.get(team.value.members);
+    return (memberId: MemberId) => {
+      const member = members.get(memberId);
+      return member === undefined
+        ? "Someone"
+        : member.removedAt === null
+          ? member.name
+          : "A former member";
+    };
+  });
+
+  const lineageTurnRunning = (threadId: ThreadId) =>
+    projectionStore
+      .getThreadRecords(threadId, ["runs"], {
+        runStatuses: ["preparing", "starting", "running", "waiting"],
+      })
+      .pipe(
+        Effect.map((records) => records.runs.some(isActiveRun)),
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      );
+
+  const lineageRead = <A, E>(threadId: ThreadId, read: Effect.Effect<A, E>) =>
+    read.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+
+  /** One runless row per thread per command; ids derive from both, so a replay can't duplicate. */
+  const emitLineageNotice = Effect.fn("Orchestrator.emitLineageNotice")(function* (
+    command: OrchestrationV2ServerCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    thread: OrchestrationV2AppThread,
+    notice: LineageNotice,
+    context: Pick<LineageNoticeContext, "sourceThreadId" | "branchThreadId" | "offer"> & {
+      readonly titles?: ReadonlyMap<ThreadId, string>;
+    },
+  ) {
+    const nameOf = yield* lineageNameOf();
+    const titles = new Map(context.titles);
+    for (const threadId of [context.sourceThreadId, context.branchThreadId]) {
+      if (titles.has(threadId)) continue;
+      titles.set(threadId, (yield* findThread(threadId))?.title ?? "a deleted thread");
+    }
+    const pendingItems = (yield* Ref.get(events)).flatMap((event) =>
+      event.type === "turn-item.updated" && event.threadId === thread.id ? [event.payload] : [],
+    );
+    const actorId =
+      "actorId" in notice ? notice.actorId : "senderId" in notice ? notice.senderId : undefined;
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`turn-item:lineage-notice:${command.commandId}:${thread.id}`),
+        threadId: thread.id,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: pendingItems }),
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "system_notice",
+        message: lineageNoticeMessage(notice, {
+          ...context,
+          nameOf,
+          titleOf: (threadId) => titles.get(threadId) ?? "a thread",
+          where: thread.id === context.sourceThreadId ? "source" : "branch",
+        }),
+        ...(actorId === undefined ? {} : { actorId }),
+        lineage: notice,
+      },
+    });
+  });
+
+  const lineageStepEffect = (
+    commandId: CommandId,
+    step: BranchLineageStep,
+  ): PendingOrchestrationEffectV2 => ({
+    id: `effect:${commandId}:lineage-step.run`,
+    commandId,
+    threadId: step.threadId,
+    request: { type: "lineage-step.run", step },
+  });
+
+  /** Idle, the step runs now; during a turn it waits for the turn's end (`startArmedLineageStep`). */
+  const armLineageStep = Effect.fn("Orchestrator.armLineageStep")(function* (
+    command: OrchestrationV2ServerCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    step: Omit<BranchLineageStep, "state">,
+  ) {
+    const decided = decideStepArm({
+      step,
+      pending: yield* lineageRead(step.threadId, projectionStore.getLineageStep(step.threadId)),
+      turnRunning: yield* lineageTurnRunning(step.threadId),
+    });
+    if (isRefusal(decided)) return yield* lineageRefused(command, decided);
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.lineage-step.updated",
+      threadId: step.threadId,
+      occurredAt: yield* DateTime.now,
+      payload: { stepId: decided.id, step: decided },
+    });
+    if (decided.state === "running") {
+      yield* Ref.update(effects, (pending) => [
+        ...pending,
+        lineageStepEffect(command.commandId, decided),
+      ]);
+    }
+  });
+
+  /** At a turn boundary, before the queue: an armed step's effect goes first. Under the lock. */
+  const startArmedLineageStep = Effect.fn("Orchestrator.startArmedLineageStep")(function* (
+    threadId: ThreadId,
+  ) {
+    const step = yield* lineageRead(threadId, projectionStore.getLineageStep(threadId));
+    if (step === null || step.state !== "armed") return;
+    if (yield* lineageTurnRunning(threadId)) return;
+    const running: BranchLineageStep = { ...step, state: "running" };
+    yield* writeSystemEvents(
+      [
+        {
+          type: "thread.lineage-step.updated",
+          threadId,
+          occurredAt: yield* DateTime.now,
+          payload: { stepId: running.id, step: running },
+        },
+      ],
+      [lineageStepEffect(CommandId.make(`command:system:lineage-step:${step.id}`), running)],
+    );
+  });
+
+  const resumeArmedLineageSteps = Effect.gen(function* () {
+    const threadIds = yield* projectionStore.listArmedStepThreadIds();
+    for (const threadId of threadIds) {
+      yield* threadDispatch.withLock(threadId, startArmedLineageStep(threadId)).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to resume an armed lineage step after recovery", {
+            threadId,
+            cause,
+          }),
+        ),
+      );
+    }
+  });
+
+  const dispatchBranchOff = Effect.fn("orchestrationV2.dispatch.branchOff")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.branch-off" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const source = yield* findThread(command.sourceThreadId);
+    if (source === null || source.deletedAt !== null)
+      return yield* lineageRefused(
+        command,
+        lineageRefusal("not-found", `Thread ${command.sourceThreadId} is gone.`),
+      );
+    if ((yield* findThread(command.targetThreadId)) !== null) {
+      return yield* new OrchestratorThreadAlreadyExistsError({
+        commandId: command.commandId,
+        threadId: command.targetThreadId,
+      });
+    }
+    if ((yield* lineageRead(source.id, projectionStore.getBranchLineage(source.id))) !== null)
+      return yield* lineageRefused(
+        command,
+        lineageRefusal("branch-of-branch", "Branch off isn't offered on a branch."),
+      );
+    // A branch joins only its own source's machine: unrelated threads never share one.
+    if (command.sandboxId !== null && command.sandboxId !== source.sandboxId)
+      return yield* lineageRefused(
+        command,
+        lineageRefusal("machine-gone", `Thread ${source.id} no longer runs on that machine.`),
+      );
+    if (
+      command.lineage.branchThreadId !== command.targetThreadId ||
+      command.lineage.sourceThreadId !== command.sourceThreadId
+    )
+      return yield* lineageRefused(
+        command,
+        lineageRefusal("failed", "The lineage record names other threads."),
+      );
+    const now = yield* DateTime.now;
+    const emitEvent = emit(events, command);
+    // Its own worktree and branch, on the brancher's account; nothing is copied from the source.
+    const branch: OrchestrationV2AppThread = {
+      createdBy: command.createdBy,
+      creationSource: command.creationSource,
+      id: command.targetThreadId,
+      projectId: source.projectId,
+      title: command.title,
+      providerInstanceId: command.modelSelection.instanceId,
+      modelSelection: command.modelSelection,
+      runtimeMode: command.runtimeMode,
+      interactionMode: command.interactionMode,
+      branch: command.branch,
+      worktreePath: command.worktreePath,
+      activeProviderThreadId: null,
+      pullRequests: [],
+      ownerId: command.actorId,
+      ...(command.sandboxId === null ? {} : { sandboxId: command.sandboxId }),
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: command.targetThreadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    yield* emitEvent({
+      type: "thread.created",
+      threadId: branch.id,
+      providerInstanceId: branch.providerInstanceId,
+      occurredAt: now,
+      payload: branch,
+    });
+    yield* emitEvent({
+      type: "thread.branch-lineage.updated",
+      threadId: branch.id,
+      occurredAt: now,
+      payload: command.lineage,
+    });
+    const context = {
+      sourceThreadId: source.id,
+      branchThreadId: branch.id,
+      titles: new Map([
+        [source.id, source.title],
+        [branch.id, branch.title],
+      ]),
+    };
+    yield* emitLineageNotice(
+      command,
+      events,
+      branch,
+      {
+        kind: "branched-from",
+        actorId: command.actorId,
+        sourceThreadId: source.id,
+        sourceOwnerId: source.ownerId ?? null,
+        turn: command.sourceTurn,
+        uncommittedFiles: command.uncommittedFiles,
+        runsOn: command.lineage.runsOn,
+      },
+      context,
+    );
+    yield* emitLineageNotice(
+      command,
+      events,
+      source,
+      { kind: "branched-off", actorId: command.actorId, branchThreadId: branch.id },
+      context,
+    );
+  });
+
+  const dispatchBranchLineageRecord = Effect.fn("orchestrationV2.dispatch.branchLineageRecord")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.branch-lineage.record" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const branch = yield* findThread(command.threadId);
+      if (branch === null || branch.deletedAt !== null)
+        return yield* lineageRefused(
+          command,
+          lineageRefusal("not-found", `Thread ${command.threadId} is gone.`),
+        );
+      const refused = decideLineageRecord({
+        threadId: command.threadId,
+        existing: yield* lineageRead(branch.id, projectionStore.getBranchLineage(branch.id)),
+        next: command.lineage,
+      });
+      if (refused !== null) return yield* lineageRefused(command, refused);
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.branch-lineage.updated",
+        threadId: branch.id,
+        occurredAt: yield* DateTime.now,
+        payload: command.lineage,
+      });
+      if (command.notice !== undefined) {
+        yield* emitLineageNotice(command, events, branch, command.notice, {
+          sourceThreadId: command.lineage.sourceThreadId,
+          branchThreadId: branch.id,
+        });
+      }
+    },
+  );
+
+  /**
+   * Move to my own machine: one commit leaves the old machine's membership, provisions the new
+   * one and records who moved it. The checkout comes back from the mirror when the machine is up.
+   */
+  const dispatchThreadMachineMove = Effect.fn("orchestrationV2.dispatch.threadMachineMove")(
+    function* (
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.machine.move" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const thread = yield* findThread(command.threadId);
+      if (thread === null || thread.deletedAt !== null)
+        return yield* lineageRefused(
+          command,
+          lineageRefusal("not-found", `Thread ${command.threadId} is gone.`),
+        );
+      if (thread.sandboxId === undefined)
+        return yield* lineageRefused(
+          command,
+          lineageRefusal("not-cloud", "Only a cloud thread runs on a machine."),
+        );
+      const record = yield* lineageRead(thread.id, projectionStore.getSandbox(thread.sandboxId));
+      if (record !== null && record.ownerThreadId === thread.id)
+        return yield* lineageRefused(
+          command,
+          lineageRefusal("not-allowed", "This thread already has a machine of its own."),
+        );
+      if (command.actorId !== thread.ownerId && command.actorId !== record?.ownerMemberId)
+        return yield* lineageRefused(
+          command,
+          lineageRefusal(
+            "not-owner",
+            "Only the thread's owner or its machine's owner can move it.",
+          ),
+        );
+      const now = yield* DateTime.now;
+      const moved: OrchestrationV2AppThread = {
+        ...thread,
+        sandboxId: command.sandboxId,
+        worktreePath: command.worktreePath,
+        updatedAt: now,
+      };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: thread.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: moved,
+      });
+      yield* dispatchSandboxCommand(
+        {
+          type: "sandbox.provision",
+          commandId: command.commandId,
+          threadId: thread.id,
+          sandboxId: command.sandboxId,
+          projectId: thread.projectId,
+          driverId: command.driverId,
+          size: command.size,
+          ...(command.imageBuild === undefined ? {} : { imageBuild: command.imageBuild }),
+        },
+        events,
+        effects,
+        moved,
+      );
+      const lineage = yield* lineageRead(thread.id, projectionStore.getBranchLineage(thread.id));
+      if (lineage !== null && lineage.runsOn !== "new-machine") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.branch-lineage.updated",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: { ...lineage, runsOn: "new-machine", revision: lineage.revision + 1 },
+        });
+      }
+      yield* emitLineageNotice(
+        command,
+        events,
+        moved,
+        { kind: "moved-machine", actorId: command.actorId },
+        { sourceThreadId: lineage?.sourceThreadId ?? thread.id, branchThreadId: thread.id },
+      );
+    },
+  );
+
+  type OfferCommand = Extract<
+    OrchestrationV2ServerCommand,
+    {
+      readonly type:
+        | "offer.create"
+        | "offer.withdraw"
+        | "offer.arm"
+        | "offer.decline"
+        | "offer.applied"
+        | "offer.returned"
+        | "offer.reverted";
+    }
+  >;
+
+  /** On the source's stream, with the branch's lock too: notices go to both threads. */
+  const dispatchOfferCommand = Effect.fn("orchestrationV2.dispatch.offer")(function* (
+    command: OfferCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const source = yield* findThread(command.threadId);
+    if (source === null)
+      return yield* lineageRefused(
+        command,
+        lineageRefusal("not-found", `Thread ${command.threadId} is gone.`),
+      );
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const occurredAt = yield* DateTime.now;
+    const emitOffer = (offer: Offer) =>
+      emit(
+        events,
+        command,
+      )({ type: "thread.offer.updated", threadId: source.id, occurredAt, payload: offer });
+    const noticeOn = (
+      thread: OrchestrationV2AppThread | null,
+      notice: LineageNotice,
+      offer: Offer,
+    ) =>
+      thread === null || thread.deletedAt !== null
+        ? Effect.void
+        : emitLineageNotice(command, events, thread, notice, {
+            sourceThreadId: offer.sourceThreadId,
+            branchThreadId: offer.branchThreadId,
+            offer,
+          });
+
+    if (command.type === "offer.create") {
+      const offer = command.offer;
+      const decided =
+        offer.sourceThreadId !== source.id || source.deletedAt !== null
+          ? lineageRefusal("source-unavailable", `Thread ${source.id} can't take offers.`)
+          : decideOfferCreate({
+              offer,
+              lineage: yield* lineageRead(
+                source.id,
+                projectionStore.getBranchLineage(offer.branchThreadId),
+              ),
+              openOffers: (yield* lineageRead(
+                source.id,
+                projectionStore.listOffersForBranch(offer.branchThreadId, 20),
+              )).filter((candidate) => candidate.state === "open"),
+              exists: (yield* lineageRead(source.id, projectionStore.getOffer(offer.id))) !== null,
+              now,
+            });
+      if (isRefusal(decided)) return yield* lineageRefused(command, decided);
+      for (const updated of decided) yield* emitOffer(updated);
+      const created = decided[decided.length - 1]!;
+      yield* noticeOn(
+        source,
+        { kind: "offer", offerId: created.id, senderId: created.senderId },
+        created,
+      );
+      yield* noticeOn(
+        yield* findThread(created.branchThreadId),
+        { kind: "offer-sent", offerId: created.id, senderId: created.senderId },
+        created,
+      );
+      return;
+    }
+
+    const offer = yield* lineageRead(source.id, projectionStore.getOffer(command.offerId));
+    if (offer === null || offer.sourceThreadId !== source.id)
+      return yield* lineageRefused(
+        command,
+        lineageRefusal("not-found", `Offer ${command.offerId} is gone.`),
+      );
+    const branch = yield* findThread(offer.branchThreadId);
+    const holderId = lineageHolderOf(source);
+    switch (command.type) {
+      case "offer.withdraw": {
+        const decided = decideOfferWithdraw({ offer, actorId: command.actorId, now });
+        if (isRefusal(decided)) return yield* lineageRefused(command, decided);
+        yield* emitOffer(decided);
+        yield* noticeOn(
+          source,
+          { kind: "withdrawn", offerId: offer.id, senderId: offer.senderId },
+          offer,
+        );
+        return;
+      }
+      case "offer.arm": {
+        const decided = decideOfferArm({
+          offer,
+          actorId: command.actorId,
+          holderId,
+          stepPending:
+            (yield* lineageRead(source.id, projectionStore.getLineageStep(source.id))) !== null,
+          sourceArchived: source.archivedAt !== null || source.deletedAt !== null,
+          now,
+        });
+        if (isRefusal(decided)) return yield* lineageRefused(command, decided);
+        yield* emitOffer(decided);
+        yield* armLineageStep(command, events, effects, {
+          id: `step:${command.commandId}`,
+          threadId: source.id,
+          kind: "apply",
+          offerId: offer.id,
+          onConflict: null,
+          armedBy: command.actorId,
+          armedAt: now,
+        });
+        return;
+      }
+      case "offer.decline": {
+        const decided = decideOfferDecline({ offer, actorId: command.actorId, holderId, now });
+        if (isRefusal(decided)) return yield* lineageRefused(command, decided);
+        yield* emitOffer(decided);
+        const notice: LineageNotice = {
+          kind: "declined",
+          offerId: offer.id,
+          actorId: command.actorId,
+          senderId: offer.senderId,
+        };
+        yield* noticeOn(source, notice, offer);
+        yield* noticeOn(branch, notice, offer);
+        return;
+      }
+      case "offer.applied": {
+        const decided = decideOfferApplied({ offer, actorId: command.actorId, now });
+        if (isRefusal(decided)) return yield* lineageRefused(command, decided);
+        yield* emitOffer(decided);
+        const notice: LineageNotice = {
+          kind: "applied",
+          offerId: offer.id,
+          actorId: command.actorId,
+          senderId: offer.senderId,
+          files: command.files,
+        };
+        yield* noticeOn(source, notice, offer);
+        yield* noticeOn(branch, notice, offer);
+        return;
+      }
+      case "offer.returned": {
+        const decided = decideOfferReturned({
+          offer,
+          reason: command.reason,
+          paths: command.paths,
+          now,
+        });
+        if (isRefusal(decided)) return yield* lineageRefused(command, decided);
+        yield* emitOffer(decided);
+        yield* noticeOn(
+          branch,
+          { kind: "returned", offerId: offer.id, paths: command.paths },
+          offer,
+        );
+        return;
+      }
+      case "offer.reverted": {
+        const decided = decideOfferReverted({ offer, actorId: command.actorId, now });
+        if (isRefusal(decided)) return yield* lineageRefused(command, decided);
+        yield* emitOffer(decided);
+        yield* noticeOn(
+          source,
+          {
+            kind: "reverted",
+            offerId: offer.id,
+            actorId: command.actorId,
+            senderId: offer.senderId,
+            files: command.files,
+          },
+          offer,
+        );
+        return;
+      }
+    }
+  });
+
+  const dispatchLineageStepArm = Effect.fn("orchestrationV2.dispatch.lineageStepArm")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.lineage-step.arm" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const thread = yield* findThread(command.threadId);
+    if (thread === null || thread.deletedAt !== null)
+      return yield* lineageRefused(
+        command,
+        lineageRefusal("not-found", `Thread ${command.threadId} is gone.`),
+      );
+    const holderId = lineageHolderOf(thread);
+    if (command.kind === "revert") {
+      const offer =
+        command.offerId === null
+          ? null
+          : yield* lineageRead(thread.id, projectionStore.getOffer(command.offerId));
+      const refused =
+        offer === null || offer.sourceThreadId !== thread.id
+          ? lineageRefusal("not-found", "There are no applied changes to revert.")
+          : decideOfferRevertArm({ offer, actorId: command.actorId, holderId });
+      if (refused !== null) return yield* lineageRefused(command, refused);
+    } else {
+      const lineage = yield* lineageRead(thread.id, projectionStore.getBranchLineage(thread.id));
+      const refused =
+        lineage === null
+          ? lineageRefusal("not-found", `Thread ${thread.id} is not a branch.`)
+          : command.actorId !== holderId
+            ? lineageRefusal("not-owner", "Only the branch's owner can update it.")
+            : lineage.update !== null
+              ? lineageRefusal("update-open", "Finish or abort the open Update first.")
+              : null;
+      if (refused !== null) return yield* lineageRefused(command, refused);
+    }
+    yield* armLineageStep(command, events, effects, {
+      id: `step:${command.commandId}`,
+      threadId: thread.id,
+      kind: command.kind,
+      offerId: command.offerId,
+      onConflict: command.kind === "update" ? (command.onConflict ?? "self") : null,
+      armedBy: command.actorId,
+      armedAt: DateTime.formatIso(yield* DateTime.now),
+    });
+  });
+
+  /** A failed Apply puts the offer back to open, so its owner can try again. */
+  const dispatchLineageStepComplete = Effect.fn("orchestrationV2.dispatch.lineageStepComplete")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.lineage-step.complete" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const pending = yield* lineageRead(
+        command.threadId,
+        projectionStore.getLineageStep(command.threadId),
+      );
+      if (pending === null || pending.id !== command.stepId) return;
+      const occurredAt = yield* DateTime.now;
+      const emitEvent = emit(events, command);
+      yield* emitEvent({
+        type: "thread.lineage-step.updated",
+        threadId: command.threadId,
+        occurredAt,
+        payload: { stepId: pending.id, step: null },
+      });
+      if (command.failed !== true || pending.kind !== "apply" || pending.offerId === null) return;
+      const offer = yield* lineageRead(command.threadId, projectionStore.getOffer(pending.offerId));
+      if (offer === null || offer.state !== "open" || offer.armedAt === null) return;
+      yield* emitEvent({
+        type: "thread.offer.updated",
+        threadId: command.threadId,
+        occurredAt,
+        payload: { ...offer, armedAt: null, updatedAt: DateTime.formatIso(occurredAt) },
+      });
+    },
+  );
 
   /** Ids derive from the command id, so a replay through the receipt can't duplicate a row. */
   const dispatchThreadHistoryImport = Effect.fn("orchestrationV2.dispatch.threadHistoryImport")(
@@ -6164,6 +6909,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             worktreePath: command.ownMachine.worktreePath,
           }),
       ownerId: command.sideChat === true ? sourceOwnerId : (command.actorId ?? sourceOwnerId),
+      // A side chat someone else opens on a cloud thread is read-only; intake keeps it so.
+      ...(command.sideChat === true &&
+      sharedSandboxId !== undefined &&
+      command.actorId !== undefined &&
+      command.actorId !== sourceOwnerId
+        ? { interactionMode: "plan" as const }
+        : {}),
     };
 
     yield* emitEvent({
@@ -7266,9 +8018,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const senderView = yield* personalView(projection.thread, sender);
       const now = yield* DateTime.now;
       const unsnoozes = senderView.snoozedUntil != null && !automaticWake;
+      // Answering a question follows for good, as answering any other request does.
+      const follows = command.messageId.startsWith("async-answer:")
+        ? followedView
+        : promptFollowedView;
       const next = automaticWake
         ? senderView
-        : followedView(
+        : follows(
             unsnoozes ? { ...senderView, snoozedUntil: null, snoozedAt: null } : senderView,
             now,
           );
@@ -15894,6 +16650,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "space.reply.retry":
         yield* dispatchSpaceAgentCommand(command, events, effects);
         break;
+      case "thread.branch-off":
+        yield* dispatchBranchOff(command, events);
+        break;
+      case "thread.branch-lineage.record":
+        yield* dispatchBranchLineageRecord(command, events);
+        break;
+      case "thread.machine.move":
+        yield* dispatchThreadMachineMove(command, events, effects);
+        break;
+      case "offer.create":
+      case "offer.withdraw":
+      case "offer.arm":
+      case "offer.decline":
+      case "offer.applied":
+      case "offer.returned":
+      case "offer.reverted":
+        yield* dispatchOfferCommand(command, events, effects);
+        break;
+      case "thread.lineage-step.arm":
+        yield* dispatchLineageStepArm(command, events, effects);
+        break;
+      case "thread.lineage-step.complete":
+        yield* dispatchLineageStepComplete(command, events);
+        break;
       default:
         return yield* dispatchUnsupported(command);
     }
@@ -15960,7 +16740,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      if (command.type === "queue.resume" || command.type === "queued-run.start") {
+      if (
+        command.type === "queue.resume" ||
+        command.type === "queued-run.start" ||
+        command.type === "thread.lineage-step.complete"
+      ) {
         yield* mapDispatchError(command)(
           startNextQueuedRun(
             command.threadId,
@@ -16157,6 +16941,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||
+      // A finished lineage step releases the queue it held.
+      command.type === "thread.lineage-step.complete" ||
       (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined)
     ) {
       yield* mapDispatchError(command)(
@@ -16205,6 +16991,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? dispatch
         : threadDispatch.withLock(command.sourceThreadId, dispatch);
     }
+    // Branch off writes to two threads; the source's lock always comes before its branch's.
+    if (command.type === "thread.branch-off")
+      return yield* threadDispatch.withLock(command.sourceThreadId, dispatch);
+    if (
+      command.type === "offer.create" ||
+      command.type === "offer.withdraw" ||
+      command.type === "offer.arm" ||
+      command.type === "offer.decline" ||
+      command.type === "offer.applied" ||
+      command.type === "offer.returned" ||
+      command.type === "offer.reverted"
+    ) {
+      const branchThreadId =
+        command.type === "offer.create"
+          ? command.offer.branchThreadId
+          : (yield* projectionStore
+              .getOffer(command.offerId)
+              .pipe(Effect.orElseSucceed(() => null)))?.branchThreadId;
+      return yield* branchThreadId === undefined || branchThreadId === command.threadId
+        ? dispatch
+        : threadDispatch.withLock(
+            command.threadId,
+            threadDispatch.withLock(branchThreadId, dispatchWithReceiptEffect(command)),
+          );
+    }
     if (command.type === "thread.delete")
       return yield* threadDispatch.withLock(
         command.threadId,
@@ -16236,7 +17047,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // Thread locks don't serialize the team cap across threads, so the admission lock comes first.
   const takesSandboxSlot = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
-    if (startsSandbox(command.type)) return true;
+    if (startsSandbox(command.type) || command.type === "thread.machine.move") return true;
     // A delegated task provisions its own machine, or its first prompt waits on its parent's.
     if (command.type === "delegated_task.request" && command.sandbox !== undefined) return true;
     const promptThreadId =
@@ -16297,6 +17108,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? releaseUnattendedHolds(threadId, run.id)
               : Effect.void
             ).pipe(
+              // An armed Apply, Revert or Update runs at this boundary, before the next queued message.
+              Effect.andThen(startArmedLineageStep(threadId)),
               Effect.andThen(
                 startNextQueuedRun(threadId, {
                   endedRunId: run.id,
@@ -16541,7 +17354,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
   return OrchestratorV2.of({
-    resumeQueuedRuns,
+    resumeQueuedRuns: resumeArmedLineageSteps.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to resume armed lineage steps after recovery", { cause }),
+      ),
+      Effect.andThen(resumeQueuedRuns),
+    ),
     recoverDelegatedTasks,
     recoverDelegatedTask,
     delegatedTaskResultPending,

@@ -13,7 +13,12 @@ export type ThreadNotificationKind =
   | "request"
   | "message"
   | "assigned"
-  | "archived";
+  | "archived"
+  | "offer"
+  | "offer-applied"
+  | "offer-declined"
+  | "offer-returned"
+  | "machine-discarded";
 
 export interface ThreadNotificationEvent {
   readonly kind: ThreadNotificationKind;
@@ -23,6 +28,8 @@ export interface ThreadNotificationEvent {
   readonly prompterId: MemberId | null;
   /** The thread's holder after the event. */
   readonly ownerId: MemberId | null;
+  /** The offer's sender, for an offer's outcome. */
+  readonly senderId?: MemberId | null;
 }
 
 export interface ThreadNotificationViewer {
@@ -33,14 +40,22 @@ export interface ThreadNotificationViewer {
 /**
  * Who hears of a thread event. A single-member server hears every agent event and none of its
  * own actions. On a team server nobody hears their own action; agent events reach the prompter
- * and the owner, member actions reach the owner. Followers are neither, so they never hear.
+ * and the owner, member actions reach the owner, and an offer's outcome reaches its sender.
+ * Followers are neither, so they never hear.
  */
 export function shouldNotifyMember(
   event: ThreadNotificationEvent,
   viewer: ThreadNotificationViewer,
 ): boolean {
   const isMemberAction =
-    event.kind === "message" || event.kind === "assigned" || event.kind === "archived";
+    event.kind === "message" ||
+    event.kind === "assigned" ||
+    event.kind === "archived" ||
+    event.kind === "offer" ||
+    event.kind === "offer-applied" ||
+    event.kind === "offer-declined" ||
+    event.kind === "offer-returned" ||
+    event.kind === "machine-discarded";
   if (!viewer.teamMode || viewer.memberId === null) return !isMemberAction;
   const me = viewer.memberId;
   if (event.actorId === me) return false;
@@ -56,7 +71,13 @@ export function shouldNotifyMember(
     case "message":
     case "assigned":
     case "archived":
+    case "offer":
+    case "machine-discarded":
       return event.ownerId === me;
+    case "offer-applied":
+    case "offer-declined":
+    case "offer-returned":
+      return event.senderId === me;
   }
 }
 
@@ -86,6 +107,16 @@ export function threadNotificationTitle(
       return "Assigned to you";
     case "archived":
       return `Archived by ${archiverName ?? "another member"}`;
+    case "offer":
+      return "Changes offered";
+    case "offer-applied":
+      return "Changes applied";
+    case "offer-declined":
+      return "Offer declined";
+    case "offer-returned":
+      return "Offer came back";
+    case "machine-discarded":
+      return "Machine discarded";
   }
 }
 

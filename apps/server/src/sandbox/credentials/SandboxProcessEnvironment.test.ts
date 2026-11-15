@@ -117,6 +117,7 @@ const layerWith = (settings: Parameters<typeof ServerSettings.layerTest>[0]) => 
     Layer.provide(
       Layer.mock(ProjectionStoreV2)({
         getSandbox: (id) => Effect.succeed(id === sandboxId ? record : null),
+        slotFor: (threadId) => Effect.succeed(threadId === "thread-a" ? 1 : null),
       }),
     ),
     // The server's own git identity; the sandbox has none.
@@ -168,6 +169,8 @@ describe("SandboxProcessEnvironment", () => {
           { name: "GH_TOKEN", value: "team-gh", sensitive: true },
           { name: "PATH", value: "/evil", sensitive: false },
           { name: "T3CODE_THREAD_ID", value: "spoofed", sensitive: false },
+          // The thread's own slot wins over a team-wide port.
+          { name: "PORT", value: "8080", sensitive: false },
         ],
       },
       projectSettingsOverrides: {
@@ -208,6 +211,8 @@ describe("SandboxProcessEnvironment", () => {
         GIT_CONFIG_KEY_1: "user.email",
         GIT_CONFIG_VALUE_1: "t3code@users.noreply.github.com",
         T3CODE_THREAD_ID: "thread-a",
+        PAIR_THREAD_SLOT: "1",
+        PORT: "3001",
       });
       expect(Object.values(env)).not.toContain("server-secret");
       expect(reads).toEqual([[readable]]);
@@ -334,6 +339,9 @@ describe("SandboxProcessEnvironment", () => {
           HTTPS_PROXY: "http://proxy:3128",
           CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-ada",
           T3CODE_THREAD_ID: "thread-a",
+          // A Claude session serves one thread, so it gets that thread's slot.
+          PAIR_THREAD_SLOT: "1",
+          PORT: "3001",
         });
         // The account's token is read with the team's references, in one batch.
         expect(reads).toEqual([[readable, adaToken]]);

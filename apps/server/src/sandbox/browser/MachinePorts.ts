@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import { parseProcessTable, stoppableProcessGroup } from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
@@ -21,6 +22,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import { threadWorkspaceRoot } from "../../project/threadWorkspaceRoot.ts";
 import type { WorkspaceHost } from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
+import { THREAD_PORT_BASE } from "../credentials/SandboxProcessEnvironment.ts";
 import { RunnerHub } from "../runnerHub/RunnerHub.ts";
 import { MachineBrowser } from "./MachineBrowser.ts";
 
@@ -65,9 +67,27 @@ export const make = Effect.fn("MachinePorts.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   // Only a cloud-only server runs machine browsers.
   const browser = yield* Effect.serviceOption(MachineBrowser);
+  const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   // The machine's Chrome is not a member's server: never listed, never stopped from here.
   const browserPid = (sandboxId: SandboxId) =>
     Option.isSome(browser) ? browser.value.processId(sandboxId) : Effect.undefined;
+
+  /** Each live thread's own port on the machine (`THREAD_PORT_BASE` + slot). */
+  const slotPorts = Effect.fn("MachinePorts.slotPorts")(function* (sandboxId: SandboxId) {
+    const ports = new Map<number, ThreadId>();
+    if (Option.isNone(projections)) return ports;
+    const rows = yield* projections.value
+      .listSandboxThreads(sandboxId)
+      .pipe(Effect.orElseSucceed(() => []));
+    for (const row of rows) {
+      if (row.archived) continue;
+      const slot = yield* projections.value
+        .slotFor(row.threadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (slot !== null) ports.set(THREAD_PORT_BASE + slot, row.threadId);
+    }
+    return ports;
+  });
 
   const machineOf = Effect.fn("MachinePorts.machineOf")(function* (threadId: ThreadId) {
     const root = yield* workspaceRoot(threadId);
@@ -108,10 +128,12 @@ export const make = Effect.fn("MachinePorts.make")(function* (
         const host = yield* hosts.forPath(machine.root);
         if (host.invoke === undefined) return Stream.fromEffect(emptyList);
         const { runnerPid } = yield* processTable(host);
-        // The runner leaves thread fields empty; a listener nobody claimed is the thread's.
+        const byPort = yield* slotPorts(machine.sandboxId);
+        // The runner leaves thread fields empty. A listener on another thread's own `PORT` is that
+        // thread's ("Hanad · :3001"); one nobody claimed is the viewing thread's.
         const own = (server: DiscoveredLocalServer): DiscoveredLocalServer =>
           server.terminal === null && (server.agent ?? null) === null
-            ? { ...server, agent: { threadId } }
+            ? { ...server, agent: { threadId: byPort.get(server.port) ?? threadId } }
             : server;
         return host.invoke.portListeners(configuredUrls).pipe(
           Stream.mapEffect((servers) =>

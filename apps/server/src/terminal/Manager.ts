@@ -1292,6 +1292,11 @@ function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return scrubbed;
 }
 
+const threadSlotOverlay = (env: NodeJS.ProcessEnv): Record<string, string> =>
+  env.PAIR_THREAD_SLOT === undefined || env.PORT === undefined
+    ? {}
+    : { PAIR_THREAD_SLOT: env.PAIR_THREAD_SLOT, PORT: env.PORT };
+
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   runtimeEnv: Record<string, string> | null | undefined,
@@ -2498,7 +2503,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
               host.kind === "sandbox"
-                ? yield* sandboxScriptEnvironment(host, session.cwd, session.runtimeEnv)
+                ? {
+                    // The blocklist drops an inherited PORT; a machine's thread keeps its own.
+                    ...threadSlotOverlay(baseEnv),
+                    ...(yield* sandboxScriptEnvironment(host, session.cwd, session.runtimeEnv)),
+                  }
                 : session.runtimeEnv,
               platform,
               info.homeDirectory,

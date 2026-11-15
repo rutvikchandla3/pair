@@ -10,10 +10,12 @@ import { canCopyMachine } from "@t3tools/shared/sandbox";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { isForkableSourceRunStatus } from "../../orchestration-v2/ThreadForkService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as TeamState from "../../team/TeamState.ts";
 import { ComputeDriverRegistry } from "../compute/ComputeDriverRegistry.ts";
 import { SandboxCheckoutRoot, sandboxIdForLaunch } from "./CloudPreparation.ts";
 
@@ -45,6 +47,7 @@ export const layer = Layer.effect(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const threads = yield* ThreadManagement.ThreadManagementService;
     const registry = yield* ComputeDriverRegistry;
+    const team = yield* Effect.serviceOption(TeamState.TeamState);
     const refuse = (reason: SandboxForkError["reason"]) => new SandboxForkError({ reason });
     const unavailable = (cause: unknown) => new SandboxForkError({ reason: "unavailable", cause });
 
@@ -54,6 +57,11 @@ export const layer = Layer.effect(
           .getThreadRecords(input.sourceThreadId, ["runs"])
           .pipe(Effect.mapError(unavailable));
         if (source.sandboxId === undefined) return yield* refuse("no-machine");
+        // Fork stays the owner's tool; anyone else branches off instead.
+        const holder = source.ownerId ?? Option.getOrUndefined(team)?.ownerId;
+        if (input.actorId !== undefined && holder !== undefined && input.actorId !== holder) {
+          return yield* refuse("not-owner");
+        }
         const record = yield* projections
           .getSandbox(source.sandboxId)
           .pipe(Effect.mapError(unavailable));

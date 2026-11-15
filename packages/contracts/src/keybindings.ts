@@ -47,6 +47,9 @@ const THREAD_KEYBINDING_COMMANDS = [
   "thread.assign",
   "thread.share",
   "thread.follow",
+  "thread.branchOff",
+  "thread.updateFromSource",
+  "thread.offerChanges",
   ...THREAD_JUMP_KEYBINDING_COMMANDS,
 ] as const;
 
@@ -89,6 +92,9 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "chiefOfStaff.toggle",
   "space.new",
   "space.newTask",
+  "inbox.open",
+  "myTasks.open",
+  "sharedWithYou.open",
   "theme.select",
   "appearance.cycle",
   "themeEditor.toggle",

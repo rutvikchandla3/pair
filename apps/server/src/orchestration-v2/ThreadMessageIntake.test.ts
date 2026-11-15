@@ -697,6 +697,98 @@ it.effect.each([
 );
 
 it.effect.each([
+  // [command, holder of the thread, has a machine, cloud-only server, actor, mode, outcome]
+  ["fork", "member-bob", true, true, "member-bob", "default", "dispatched"],
+  ["fork", "member-bob", true, true, "member-carol", "default", "not_owner_to_fork"],
+  // No admin override: an admin who could fork into the holder's checkout could act as them.
+  ["fork", "member-bob", true, true, "member-admin", "default", "not_owner_to_fork"],
+  ["fork", "member-bob", true, true, undefined, "default", "rejected"],
+  // An ownerless thread is held by the server's owner.
+  ["fork", null, true, true, "member-owner", "default", "dispatched"],
+  ["fork", null, true, true, "member-admin", "default", "not_owner_to_fork"],
+  ["fork", "member-bob", false, true, "member-carol", "default", "dispatched"],
+  ["fork", "member-bob", true, false, "member-carol", "default", "dispatched"],
+  // Anyone who can open the thread starts a side chat; the orchestrator opens it in plan mode.
+  ["side-chat", "member-bob", true, true, "member-carol", "default", "dispatched"],
+  ["send", "member-bob", true, true, "member-carol", "plan", "dispatched"],
+  ["send", "member-bob", true, true, "member-carol", "default", "side_chat_read_only"],
+  ["send", "member-bob", true, true, "member-bob", "default", "dispatched"],
+  ["send", "member-bob", false, true, "member-carol", "default", "dispatched"],
+  ["mode", "member-bob", true, true, "member-carol", "default", "side_chat_read_only"],
+  ["mode", "member-bob", true, true, "member-admin", "default", "side_chat_read_only"],
+  ["mode", "member-bob", true, true, "member-carol", "plan", "dispatched"],
+  ["mode", "member-bob", true, true, "member-bob", "default", "dispatched"],
+] as const)(
+  "%s on a thread held by %s (machine %s, cloud-only %s) from %s in %s mode: %s",
+  ([kind, holder, hasMachine, cloudOnly, actor, mode, outcome]) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-held");
+      const commandId = CommandId.make(`held-${kind}`);
+      const actorField = actor === undefined ? {} : { actorId: MemberId.make(actor) };
+      const command: OrchestrationV2Command =
+        kind === "send"
+          ? {
+              type: "message.dispatch",
+              commandId,
+              threadId,
+              messageId: MessageId.make("message-held"),
+              text: "make it so",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+              ...actorField,
+            }
+          : kind === "mode"
+            ? {
+                type: "thread.interaction-mode.set",
+                commandId,
+                threadId,
+                interactionMode: mode,
+                ...actorField,
+              }
+            : {
+                type: "thread.fork",
+                commandId,
+                sourceThreadId: threadId,
+                targetThreadId: ThreadId.make("thread-forked"),
+                sourcePoint: { type: "latest_stable" },
+                ...(kind === "side-chat" ? { sideChat: true } : {}),
+                createdBy: "user",
+                creationSource: "web",
+                ...actorField,
+              };
+      const captured: OrchestrationV2ServerCommand[] = [];
+      const result = yield* dispatchCommand(command).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            getThreadShell: () =>
+              Effect.succeed({
+                id: threadId,
+                ownerId: holder === null ? null : MemberId.make(holder),
+                interactionMode: kind === "mode" ? "plan" : mode,
+                lineage: { sideChat: kind === "send" || kind === "mode" },
+                ...(hasMachine ? { sandboxId: SandboxId.make("sbx_0123456789abcdef0123") } : {}),
+              } as never),
+          }),
+        ),
+        Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
+        Effect.flip,
+        Effect.map((error) =>
+          error._tag === "ThreadMessageIntakeForbiddenError"
+            ? error.reason
+            : error._tag === "OrchestratorCommandRejectedError"
+              ? "rejected"
+              : "dispatched",
+        ),
+      );
+      expect(result).toBe(outcome);
+      expect(captured).toHaveLength(outcome === "dispatched" ? 1 : 0);
+    }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect.each([
   // An admin who cannot open the machine's threads, its owner, a member, and an unknown machine.
   ["member-admin", "sbx_0123456789abcdef0123", "sleep", "dispatched"],
   ["member-admin", "sbx_0123456789abcdef0123", "discard", "dispatched"],

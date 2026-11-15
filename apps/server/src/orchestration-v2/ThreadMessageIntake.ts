@@ -3,6 +3,7 @@ import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments
 import {
   type ChatAttachment,
   type OrchestrationV2Command,
+  type OrchestrationV2ThreadShell,
   MemberId,
   type SandboxStopByIdInput,
   ThreadId,
@@ -58,6 +59,8 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
       "not_owner_to_assign",
       "space_room",
       "space_task_owner_only",
+      "not_owner_to_fork",
+      "side_chat_read_only",
     ]),
   },
 ) {
@@ -79,6 +82,10 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
         return "A space's room takes posts, not thread commands.";
       case "space_task_owner_only":
         return "Only the task's owner can change its model.";
+      case "not_owner_to_fork":
+        return "Only the thread's owner can fork it. Branch off to work on your own.";
+      case "side_chat_read_only":
+        return "This side chat is read-only for you, so it stays in plan mode.";
     }
   }
 }
@@ -151,6 +158,53 @@ const assertMayAssign = Effect.fn("ThreadMessageIntake.assertMayAssign")(functio
   });
 });
 
+/**
+ * On a cloud-only server Fork reuses the holder's checkout, so a cloud thread is forked by its
+ * holder only; others Branch off. No admin override. Side chats have their own rule.
+ */
+const assertMayFork = Effect.fn("ThreadMessageIntake.assertMayFork")(function* (
+  command: Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>,
+) {
+  if (command.sideChat === true) return;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  if (!cloudOnly) return;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const shell = yield* threads.getThreadShell(command.sourceThreadId);
+  if (shell === null || shell.sandboxId === undefined) return;
+  if (command.actorId === undefined) return yield* withoutActor(command);
+  const team = yield* TeamState.TeamState;
+  if (command.actorId === (shell.ownerId ?? team.ownerId)) return;
+  return yield* new ThreadMessageIntakeForbiddenError({
+    threadId: command.sourceThreadId,
+    memberId: command.actorId,
+    reason: "not_owner_to_fork",
+  });
+});
+
+/** A cloud thread's side chat is read-only for anyone but its holder: it stays in plan mode. */
+const assertSideChatReadOnly = Effect.fn("ThreadMessageIntake.assertSideChatReadOnly")(function* (
+  command: Extract<
+    OrchestrationV2Command,
+    { readonly type: "message.dispatch" | "thread.interaction-mode.set" }
+  >,
+  shell: OrchestrationV2ThreadShell,
+) {
+  if (shell.sandboxId === undefined || shell.lineage.sideChat !== true) return;
+  if (command.actorId === undefined) return;
+  const team = yield* TeamState.TeamState;
+  if (command.actorId === (shell.ownerId ?? team.ownerId)) return;
+  const mode =
+    command.type === "thread.interaction-mode.set"
+      ? command.interactionMode
+      : shell.interactionMode;
+  if (mode === "plan") return;
+  return yield* new ThreadMessageIntakeForbiddenError({
+    threadId: command.threadId,
+    memberId: command.actorId,
+    reason: "side_chat_read_only",
+  });
+});
+
 /** A member's own view of a room. Every other generic command on a room is refused. */
 const ROOM_MEMBER_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.visit",
@@ -184,13 +238,11 @@ const SPACE_TASK_GUARDED_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> =
  * model is its owner's. The Orchestrator checks that a task's new owner is in its space.
  */
 const assertSpaceRules = Effect.fn("ThreadMessageIntake.assertSpaceRules")(function* (
-  command: OrchestrationV2Command,
+  command: OrchestrationV2Command & { readonly threadId: ThreadId },
+  shell: OrchestrationV2ThreadShell,
 ) {
-  if (ROOM_MEMBER_COMMANDS.has(command.type) || !("threadId" in command)) return;
-  const threads = yield* ThreadManagement.ThreadManagementService;
-  const shell = yield* threads.getThreadShell(command.threadId);
-  const space = shell?.space;
-  if (shell === null || space === undefined) return;
+  const space = shell.space;
+  if (space === undefined) return;
   const forbid = (reason: ThreadMessageIntakeForbiddenError["reason"], memberId: MemberId) =>
     new ThreadMessageIntakeForbiddenError({ threadId: command.threadId, memberId, reason });
   const actorId = "actorId" in command ? command.actorId : undefined;
@@ -211,7 +263,17 @@ const assertSpaceRules = Effect.fn("ThreadMessageIntake.assertSpaceRules")(funct
 const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission")(function* (
   command: OrchestrationV2Command,
 ) {
-  yield* assertSpaceRules(command);
+  if (command.type === "thread.fork") return yield* assertMayFork(command);
+  if (!ROOM_MEMBER_COMMANDS.has(command.type) && "threadId" in command) {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const shell = yield* threads.getThreadShell(command.threadId);
+    if (shell !== null) {
+      yield* assertSpaceRules(command, shell);
+      if (command.type === "message.dispatch" || command.type === "thread.interaction-mode.set") {
+        yield* assertSideChatReadOnly(command, shell);
+      }
+    }
+  }
   const team = yield* TeamState.TeamState;
   if (command.type === "thread.owner.set") {
     if (!(yield* team.isActive(command.ownerId))) {

@@ -45,6 +45,15 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
+import {
+  BranchLineage,
+  BranchLineageStep,
+  LineageNotice,
+  Offer,
+  OfferId,
+  OfferReturnReason,
+  OrchestrationV2ThreadShellBranchLink,
+} from "./branchLineage.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ScopedThreadRef } from "./environment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
@@ -681,6 +690,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ),
   /** A non-holder's follow, present only in their view; the holder follows implicitly. */
   followedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** `prompt`: a follow that prompting added, which ends on its own. Absent is permanent. */
+  followSource: Schema.optional(Schema.NullOr(Schema.Literal("prompt"))),
   opens: Schema.optional(LenientThreadOpens),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -2000,6 +2011,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     message: Schema.String,
     /** The member whose action the notice records; `message` already names them. */
     actorId: Schema.optional(MemberId),
+    /** A branch-off row; clients word it for the viewer, and older ones show `message`. */
+    lineage: ForwardCompatibleOptional(LineageNotice),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2144,6 +2157,8 @@ export const ThreadMemberState = Schema.Struct({
   followedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** `prompt`: prompting added the follow, so it ends on settle or once read after their turn. */
+  followSource: Schema.optional(Schema.NullOr(Schema.Literal("prompt"))),
 });
 export type ThreadMemberState = typeof ThreadMemberState.Type;
 
@@ -2172,6 +2187,32 @@ const OrchestrationV2GitCredentialIssued = Schema.Struct({
   permissions: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   expiresAt: Schema.NullOr(IsoDateTime),
 });
+
+/** Branch-off events; their payloads hold no dates, so the JSON mirror shares them. */
+const OrchestrationV2LineageEventMembers = <const Base extends Schema.Struct.Fields>(base: Base) =>
+  [
+    /** On the branch's stream: the whole lineage record after any change. */
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("thread.branch-lineage.updated"),
+      payload: BranchLineage,
+    }),
+    /** On the source's stream: the whole offer after any change. */
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("thread.offer.updated"),
+      payload: Offer,
+    }),
+    /** The thread's pending lineage step, or null once it completes. */
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("thread.lineage-step.updated"),
+      payload: Schema.Struct({
+        stepId: TrimmedNonEmptyString,
+        step: Schema.NullOr(BranchLineageStep),
+      }),
+    }),
+  ] as const;
 
 const OrchestrationV2EventBase = Schema.Struct({
   id: EventId,
@@ -2378,6 +2419,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     type: Schema.Literal("space.task.updated"),
     payload: SpaceTask,
   }),
+  ...OrchestrationV2LineageEventMembers(OrchestrationV2EventBase.fields),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
@@ -2563,6 +2605,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   sandboxId: Schema.optionalKey(SandboxId),
   sandbox: Schema.optionalKey(OrchestrationV2ThreadShellSandbox),
   space: Schema.optionalKey(ThreadSpace),
+  /** Branch off: on a branch its source, on a source its open offers. Absent elsewhere. */
+  branchLink: Schema.optionalKey(OrchestrationV2ThreadShellBranchLink),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -3004,6 +3048,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("system_notice"),
     message: Schema.String,
     actorId: Schema.optional(MemberId),
+    lineage: ForwardCompatibleOptional(LineageNotice),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3388,6 +3433,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     type: Schema.Literal("space.task.updated"),
     payload: SpaceTask,
   }),
+  ...OrchestrationV2LineageEventMembers(OrchestrationV2JsonEventBaseFields),
 ]);
 export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
 
@@ -3694,6 +3740,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.interaction-mode.set"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     interactionMode: ProviderInteractionMode,
@@ -4131,6 +4178,129 @@ export const OrchestrationV2SpaceCommand = Schema.Union([
 ]);
 export type OrchestrationV2SpaceCommand = typeof OrchestrationV2SpaceCommand.Type;
 
+const LineageOfferCommandFields = {
+  commandId: CommandId,
+  /** The offer's source thread, whose stream records it. */
+  threadId: ThreadId,
+  offerId: OfferId,
+} as const;
+
+/**
+ * Branch off's records. Only `BranchLineageService` and the step executor dispatch these; the
+ * decider re-checks each transition under the thread's lock, so the first of a racing Apply and
+ * Withdraw wins.
+ */
+export const OrchestrationV2LineageCommand = Schema.Union([
+  /**
+   * The brancher's own thread off `sourceThreadId`, with its own worktree and branch. With
+   * `sandboxId` it joins the source's machine; with null it waits for `sandbox.provision`.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.branch-off"),
+    commandId: CommandId,
+    actorId: MemberId,
+    ...OrchestrationV2CreationFields,
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    title: TrimmedNonEmptyString,
+    modelSelection: ModelSelection,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+    branch: TrimmedNonEmptyString,
+    worktreePath: TrimmedNonEmptyString,
+    sandboxId: Schema.NullOr(SandboxId),
+    lineage: BranchLineage,
+    /** The source's turn the branch starts from, and its uncommitted files then. */
+    sourceTurn: NonNegativeInt,
+    uncommittedFiles: NonNegativeInt,
+  }),
+  /** On the branch's stream; `revision` must move forward. */
+  Schema.Struct({
+    type: Schema.Literal("thread.branch-lineage.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    lineage: BranchLineage,
+    notice: Schema.optional(LineageNotice),
+  }),
+  /** Replaces the branch's open offer, if any. */
+  Schema.Struct({
+    type: Schema.Literal("offer.create"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    offer: Offer,
+  }),
+  /** Only the sender, while open and not armed. Without an actor the server withdraws it. */
+  Schema.Struct({
+    type: Schema.Literal("offer.withdraw"),
+    ...LineageOfferCommandFields,
+    actorId: Schema.optional(MemberId),
+  }),
+  /** Apply: only the source's holder, while open. Runs at the next turn boundary. */
+  Schema.Struct({
+    type: Schema.Literal("offer.arm"),
+    ...LineageOfferCommandFields,
+    actorId: MemberId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("offer.decline"),
+    ...LineageOfferCommandFields,
+    actorId: MemberId,
+  }),
+  /** The step executor wrote the armed offer into the source's files. */
+  Schema.Struct({
+    type: Schema.Literal("offer.applied"),
+    ...LineageOfferCommandFields,
+    actorId: MemberId,
+    files: NonNegativeInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("offer.returned"),
+    ...LineageOfferCommandFields,
+    reason: OfferReturnReason,
+    paths: Schema.Array(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("offer.reverted"),
+    ...LineageOfferCommandFields,
+    actorId: MemberId,
+    files: NonNegativeInt,
+  }),
+  /** Revert (on a source) or Update (on a branch), run at the next turn boundary. */
+  Schema.Struct({
+    type: Schema.Literal("thread.lineage-step.arm"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    actorId: MemberId,
+    kind: Schema.Literals(["revert", "update"]),
+    offerId: Schema.NullOr(OfferId),
+    onConflict: Schema.NullOr(Schema.Literals(["agent", "self"])),
+  }),
+  /**
+   * Move to my own machine: the thread leaves its machine's membership for a new machine of its
+   * own, provisioned in the same commit and checked out from the mirror. Never the machine's owner.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.machine.move"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    actorId: MemberId,
+    sandboxId: SandboxId,
+    driverId: ComputeDriverId,
+    size: SandboxSize,
+    imageBuild: Schema.optionalKey(SandboxImageBuildRef),
+    worktreePath: TrimmedNonEmptyString,
+  }),
+  /** Clears the step and releases the thread's queue. A stale `stepId` changes nothing. */
+  Schema.Struct({
+    type: Schema.Literal("thread.lineage-step.complete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    stepId: TrimmedNonEmptyString,
+    failed: Schema.optional(Schema.Boolean),
+  }),
+]);
+export type OrchestrationV2LineageCommand = typeof OrchestrationV2LineageCommand.Type;
+
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
   Schema.Struct({
@@ -4197,6 +4367,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     message: TrimmedNonEmptyString,
+    lineage: Schema.optional(LineageNotice),
   }),
   /** Writes an export as this empty thread's runless history, ending with a `from` move row. */
   Schema.Struct({
@@ -4454,6 +4625,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ...OrchestrationV2GitCredentialIssued.fields,
   }),
   ...OrchestrationV2SpaceCommand.members,
+  ...OrchestrationV2LineageCommand.members,
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 

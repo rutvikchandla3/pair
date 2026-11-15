@@ -100,7 +100,14 @@ export class MirrorSync extends Context.Service<
       readonly clonePath: string;
       readonly worktreePath: string;
       readonly branch: string;
-    }) => Effect.Effect<{ readonly snapshotAt: DateTime.Utc | null } | null, MirrorSyncError>;
+    }) => Effect.Effect<
+      {
+        readonly snapshotAt: DateTime.Utc | null;
+        /** The branch was seeded for this checkout (`sandboxSeedRef`), so nothing was lost. */
+        readonly seeded?: boolean;
+      } | null,
+      MirrorSyncError
+    >;
     /**
      * The thread's mirror branch and, when it sits on the tip, its snapshot, as a bundle file
      * removed when the scope closes. `file` is null when the receiver has every object. Null when
@@ -552,7 +559,13 @@ export const make = Effect.fn("MirrorSync.make")(function* (
       yield* git(host, worktreePath, ["read-tree", "--reset", "-u", snapshot.oid]);
       yield* git(host, worktreePath, ["reset", "--quiet"]);
     }
-    return { snapshotAt: snapshot?.takenAt ?? null };
+    // A seed marks one checkout; a later rebuild of the same thread is a rebuild.
+    const seedRef = CheckpointMirror.sandboxSeedRef(threadId);
+    const seeded = (yield* mirror.tips(projectId, [seedRef]).pipe(Effect.mapError(failed))).has(
+      seedRef,
+    );
+    if (seeded) yield* mirror.deleteRefs(projectId, [seedRef]).pipe(Effect.mapError(failed));
+    return { snapshotAt: snapshot?.takenAt ?? null, ...(seeded ? { seeded } : {}) };
   }, Effect.scoped);
 
   const recordHead: MirrorSync["Service"]["recordHead"] = Effect.fn("MirrorSync.recordHead")(
