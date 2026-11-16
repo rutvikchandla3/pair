@@ -110,8 +110,7 @@ const callWith = (
   }).pipe(
     Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
     Effect.provideService(McpSchema.McpServerClient, mcpClient),
-    Effect.provide(serverLayer(confirm, calls)),
-    Effect.provide(layerServices),
+    Effect.provide(serverLayer(confirm, calls).pipe(Layer.provideMerge(layerServices))),
   );
 
 const chiefOfStaff = { via: "home-thread" as const, memberId };
