@@ -21,11 +21,13 @@ import {
   type SpaceRoomEntry,
   type SpaceTask,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import * as ServerConfig from "../../apps/server/src/config.ts";
 import { ProjectionStoreV2 } from "../../apps/server/src/orchestration-v2/ProjectionStore.ts";
 import { SPACE_AGENT_REQUEST_OPTIONS } from "../../apps/server/src/space/SpaceAgentAdapter.ts";
 import {
@@ -267,7 +269,11 @@ const world = (entry: Case, now: DateTime.Utc) => {
     definitions: SPACE_AGENT_TOOL_DEFINITIONS,
     call: Effect.fn("SpaceAgentTools.call")(() => Effect.die("The eval mocks tool results")),
   });
-  return SpaceContextLive.layer.pipe(Layer.provide(Layer.mergeAll(projections, team, tools)));
+  return SpaceContextLive.layer.pipe(
+    Layer.provide(Layer.mergeAll(projections, team, tools)),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-space-agent-eval-" })),
+    Layer.provide(NodeServices.layer),
+  );
 };
 
 const assembleRequest = Effect.fn("spaceAgentEval.assemble")(function* (entry: Case) {

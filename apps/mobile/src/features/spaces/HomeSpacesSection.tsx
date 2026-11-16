@@ -32,6 +32,7 @@ import {
   moveSpaceInOrder,
   rememberSpaceOrder,
 } from "./homeSpaceRows";
+import { SpaceMark } from "./SpaceMark";
 
 const ROW = "min-h-11 flex-row items-center gap-3 px-4 active:opacity-70";
 const NO_ORDER: ReadonlyArray<SpaceId> = [];
@@ -279,7 +280,7 @@ function SpaceRow(props: {
       }
       className={ROW}
     >
-      <SymbolView name="person.2" size={16} tintColorClassName="accent-icon-muted" />
+      <SpaceMark space={space} />
       <Text
         numberOfLines={1}
         className={cn(

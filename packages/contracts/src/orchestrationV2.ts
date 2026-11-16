@@ -63,6 +63,7 @@ import {
   SpaceMembershipChange,
   SpaceId,
   SpaceMention,
+  SpacePostAttachments,
   SpacePairVia,
   SpaceRepositoryIds,
   SpaceRoomEntry,
@@ -4097,6 +4098,8 @@ export const OrchestrationV2SpaceCommand = Schema.Union([
     text: TrimmedNonEmptyString,
     mentions: Schema.Array(SpaceMention),
     quoteEntryId: Schema.optional(MessageId),
+    /** Already claimed into the room thread. */
+    attachments: Schema.optional(SpacePostAttachments),
     /** `user` only for a person in a client; agents and API tokens never queue `@pair`. */
     authorKind: Schema.Literals(["user", "agent"]),
   }),

@@ -19,6 +19,7 @@ import {
   SpaceBrief,
   SpaceId,
   SpaceMention,
+  SpacePostAttachments,
   SpaceName,
   SpaceRepositoryIds,
   SpaceRoomEntry,
@@ -205,6 +206,7 @@ export const SpacePostInput = Schema.Struct({
   text: TrimmedNonEmptyString,
   mentions: Schema.Array(SpaceMention),
   quoteEntryId: Schema.optionalKey(MessageId),
+  attachments: Schema.optionalKey(SpacePostAttachments),
 });
 export type SpacePostInput = typeof SpacePostInput.Type;
 

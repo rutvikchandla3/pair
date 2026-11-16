@@ -12,6 +12,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ChatImageAttachment } from "./chatAttachment.ts";
 
 export const SpaceId = TrimmedNonEmptyString.check(Schema.isPattern(/^spc_[0-9a-f]{20}$/)).pipe(
   Schema.brand("SpaceId"),
@@ -21,6 +22,13 @@ export type SpaceId = typeof SpaceId.Type;
 const SPACE_NAME_MAX_LENGTH = 80;
 const SPACE_BRIEF_MAX_LENGTH = 20_000;
 const SPACE_POST_MAX_LENGTH = 20_000;
+
+export const SPACE_POST_MAX_IMAGES = 8;
+/** Images on a post; uploaded first, then claimed into the room thread when the post lands. */
+export const SpacePostAttachments = Schema.Array(ChatImageAttachment).check(
+  Schema.isMaxLength(SPACE_POST_MAX_IMAGES),
+);
+export type SpacePostAttachments = typeof SpacePostAttachments.Type;
 
 export const SpaceName = TrimmedNonEmptyString.check(Schema.isMaxLength(SPACE_NAME_MAX_LENGTH));
 export const SpaceBrief = Schema.String.check(Schema.isMaxLength(SPACE_BRIEF_MAX_LENGTH));
@@ -271,6 +279,7 @@ export const SpaceRoomEntry = Schema.Union([
     authorKind: SpacePostAuthorKind,
     text: TrimmedNonEmptyString.check(Schema.isMaxLength(SPACE_POST_MAX_LENGTH)),
     mentions: Schema.Array(SpaceMention),
+    attachments: Schema.optionalKey(SpacePostAttachments),
     /** An inline quote-reply; there are no side threads. */
     quote: Schema.optionalKey(
       Schema.Struct({ entryId: MessageId, authorId: MemberId, text: Schema.String }),

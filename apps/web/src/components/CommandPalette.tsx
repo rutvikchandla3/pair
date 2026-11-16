@@ -2,6 +2,7 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { openSpaceDialog } from "../spaceDialogStore";
+import { SpaceMark } from "./spaces/SpaceMark";
 import { useSpaceShortcutTarget } from "./spaces/SpaceShortcuts";
 import { useBranchOffPaletteItems } from "./branchOff/BranchOffShortcuts";
 import { useForkAllowed } from "./branchOff/useBranchOff";
@@ -2069,7 +2070,7 @@ function OpenCommandPaletteDialog(props: {
       value: `action:space-open:${environmentId}:${space.id}`,
       searchTerms: ["space", "room", "open space", space.name],
       title: space.archivedAt === null ? `Open ${space.name}` : `Open ${space.name} (archived)`,
-      icon: <UsersRoundIcon className={ITEM_ICON_CLASS} />,
+      icon: <SpaceMark space={space} />,
       run: async () => {
         await navigate({
           to: "/spaces/$environmentId/$spaceId",

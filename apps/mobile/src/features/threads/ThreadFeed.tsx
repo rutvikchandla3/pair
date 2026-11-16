@@ -560,7 +560,7 @@ function MessageImage(props: {
   );
 }
 
-function MessageAttachmentImage(props: {
+export function MessageAttachmentImage(props: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
   readonly name: string;

@@ -23,6 +23,7 @@ import {
   SpaceTaskStatusIcon,
   spaceToneTextClass,
 } from "../spaces/SpaceStatusIcon";
+import { SpaceMark } from "../spaces/SpaceMark";
 import { PageTopBar } from "./PageTopBar";
 
 type Params = { readonly environmentId: string };
@@ -86,7 +87,7 @@ export function MyTasksScreen(props: StaticScreenProps<Params>) {
           <View key={section.space?.id ?? "all"} className="pt-2">
             {section.space === null ? null : (
               <View className="flex-row items-center gap-2 px-4 pt-3 pb-1">
-                <SymbolView name="person.2" size={13} tintColorClassName="accent-icon-muted" />
+                <SpaceMark space={section.space} size="sm" />
                 <Text numberOfLines={1} className="text-sm font-t3-medium text-foreground">
                   {section.space.name}
                 </Text>

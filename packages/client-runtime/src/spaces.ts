@@ -342,6 +342,19 @@ export function orderSpaceMembers(
     });
 }
 
+/** A space's tile: its first letter or digit, on a hue from its id so every client agrees. */
+export function spaceMark(space: Pick<Space, "id" | "name">): {
+  readonly letter: string;
+  readonly color: string;
+} {
+  let hash = 0;
+  for (const char of space.id) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  return {
+    letter: (/[\p{L}\p{N}]/u.exec(space.name)?.[0] ?? "#").toUpperCase(),
+    color: `hsl(${hash % 360}, 55%, 46%)`,
+  };
+}
+
 export function isSpaceOwner(space: Pick<Space, "ownerId">, memberId: MemberId | null): boolean {
   return memberId !== null && space.ownerId === memberId;
 }

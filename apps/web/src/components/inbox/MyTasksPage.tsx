@@ -5,7 +5,7 @@ import {
   spaceThreadsByTask,
 } from "@t3tools/client-runtime/spaces";
 import type { EnvironmentId, OrchestrationV2ThreadShell, Space } from "@t3tools/contracts";
-import { ListTodoIcon, UsersRoundIcon } from "lucide-react";
+import { ListTodoIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useClosedMyTasks, useTeamEnvironmentIds } from "../../state/inbox";
@@ -16,6 +16,7 @@ import {
   useSpaceSidebarShells,
   useSpaceViewer,
 } from "../../state/spaces";
+import { SpaceMark } from "../spaces/SpaceMark";
 import { SpaceOverviewTaskRow } from "../spaces/SpaceRoomPanel";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -119,7 +120,7 @@ function MyTasksBody(props: {
           <section key={section.space?.id ?? "all"} className="flex flex-col gap-1">
             {section.space === null ? null : (
               <h2 className="flex items-center gap-1.5 px-2 pt-2 font-medium text-sm">
-                <UsersRoundIcon className="size-3.5 text-muted-foreground" />
+                <SpaceMark space={section.space} />
                 {section.space.name}
               </h2>
             )}
@@ -188,7 +189,7 @@ function TaskGroup(props: {
                 trailing={
                   props.showSpace ? (
                     <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-muted-foreground text-xs">
-                      <UsersRoundIcon className="size-3" />
+                      <SpaceMark space={space} size="xs" />
                       {space.name}
                     </span>
                   ) : null

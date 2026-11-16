@@ -18,6 +18,7 @@ import { MemberAvatar } from "../team/MemberAvatar";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { type SpacePairFeedContext, SpacePairFeedRow, SpacePairStatus } from "./SpacePairFeed";
+import { SpacePostImages } from "./SpacePostImages";
 import { SpaceRecordLine, SpaceSystemLine, formatSpaceTime } from "./SpaceRecord";
 
 const isRecordRow = (row: SpaceFeedRow<SpacePairFeedItem>) =>
@@ -142,6 +143,9 @@ export function SpaceFeed(props: SpaceFeedProps) {
               ),
             )}
           </p>
+          {entry.attachments === undefined || entry.attachments.length === 0 ? null : (
+            <SpacePostImages environmentId={props.environmentId} images={entry.attachments} />
+          )}
           {entry.pairRequested ? (
             <SpacePairStatus
               reply={props.pairContext.pairRoom.byTrigger.get(entry.id)}
