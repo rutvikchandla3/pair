@@ -1,16 +1,27 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import { MemberId } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import { ServerConfig } from "../config.ts";
-import { homeThreadsFile, loadHomeThreads, parseHomeThreads } from "./homeThreads.ts";
+import {
+  homeThreadsFile,
+  indexHomeThreads,
+  invalidateHomeThreads,
+  loadHomeThreads,
+  parseHomeThreads,
+  readHomeThreads,
+} from "./homeThreads.ts";
+
+const homeThreadsView = (contents: string) => indexHomeThreads(parseHomeThreads(contents));
 
 it("maps each home key to its member and thread", () => {
-  const index = parseHomeThreads(
+  const index = homeThreadsView(
     JSON.stringify({ "home:member-a": "thread-1", "home:member-b": "thread-2" }),
   );
   expect(index.memberIdForThread("thread-1")).toBe(MemberId.make("member-a"));
@@ -20,8 +31,22 @@ it("maps each home key to its member and thread", () => {
   expect(index.hasHomeThread(MemberId.make("member-c"))).toBe(false);
 });
 
+it("keeps only home:<member> keys, mapped to their thread", () => {
+  assert.deepStrictEqual(
+    [
+      ...parseHomeThreads(
+        JSON.stringify({ "home:m1": "t1", other: "x", "m2:codex": "t2", "home:m2": "t3" }),
+      ),
+    ],
+    [
+      ["t1", "m1"],
+      ["t3", "m2"],
+    ],
+  );
+});
+
 it("ignores keys that are not homes and values that are not thread ids", () => {
-  const index = parseHomeThreads(
+  const index = homeThreadsView(
     JSON.stringify({
       voice: "thread-1",
       "home:": "thread-2",
@@ -37,11 +62,16 @@ it("ignores keys that are not homes and values that are not thread ids", () => {
 
 it("treats unreadable contents as no home threads", () => {
   for (const contents of ["", "not json", "[]", "null", '"home:member-a"']) {
-    const index = parseHomeThreads(contents);
+    const index = homeThreadsView(contents);
     expect(index.hasHomeThread(MemberId.make("member-a"))).toBe(false);
     expect(index.memberIdForThread("thread-1")).toBeUndefined();
+    assert.lengthOf(parseHomeThreads(contents), 0);
   }
 });
+
+const homeLayer = ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3-cos-home-threads-",
+}).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.effect("reads the home threads file from the state directory", () =>
   Effect.gen(function* () {
@@ -53,11 +83,41 @@ it.effect("reads the home threads file from the state directory", () =>
     yield* fs.writeFileString(file, JSON.stringify({ "home:member-a": "thread-1" }));
     const index = yield* loadHomeThreads;
     expect(index.memberIdForThread("thread-1")).toBe(MemberId.make("member-a"));
-  }).pipe(
-    Effect.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-home-threads-test-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
-      ),
-    ),
-  ),
+  }).pipe(Effect.provide(homeLayer)),
+);
+
+it.effect("rereads threads.json only after five seconds", () =>
+  Effect.gen(function* () {
+    invalidateHomeThreads();
+    const config = yield* ServerConfig;
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const file = homeThreadsFile(config.stateDir, path);
+    yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
+    yield* fileSystem.writeFileString(file, JSON.stringify({ "home:m1": "t1" }));
+    assert.strictEqual((yield* readHomeThreads).get("t1"), "m1");
+    yield* fileSystem.writeFileString(file, JSON.stringify({ "home:m1": "t2" }));
+    assert.strictEqual((yield* readHomeThreads).get("t2"), undefined);
+    assert.strictEqual((yield* readHomeThreads).get("t1"), "m1");
+    yield* TestClock.adjust(Duration.seconds(6));
+    assert.strictEqual((yield* readHomeThreads).get("t2"), "m1");
+  }).pipe(Effect.provide(homeLayer)),
+);
+
+it.effect("sees a written home thread at once after invalidating", () =>
+  Effect.gen(function* () {
+    invalidateHomeThreads();
+    const config = yield* ServerConfig;
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const file = homeThreadsFile(config.stateDir, path);
+    yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
+    yield* fileSystem.writeFileString(file, JSON.stringify({ "home:m1": "t1" }));
+    assert.strictEqual((yield* readHomeThreads).get("t1"), "m1");
+    // A new home thread written inside the TTL window is invisible until invalidated.
+    yield* fileSystem.writeFileString(file, JSON.stringify({ "home:m1": "t1", "home:m2": "t2" }));
+    assert.strictEqual((yield* readHomeThreads).get("t2"), undefined);
+    invalidateHomeThreads();
+    assert.strictEqual((yield* readHomeThreads).get("t2"), "m2");
+  }).pipe(Effect.provide(homeLayer)),
 );

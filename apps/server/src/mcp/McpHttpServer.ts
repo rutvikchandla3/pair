@@ -25,6 +25,9 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
+import * as ChiefOfStaffAudit from "../chiefOfStaff/ChiefOfStaffAudit.ts";
+import { chiefOfStaffCaller } from "../chiefOfStaff/caller.ts";
+import * as ChiefOfStaffHomeThreads from "../chiefOfStaff/homeThreads.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
@@ -51,6 +54,8 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
+import * as ChiefOfStaffAuditHandlers from "./toolkits/chiefOfStaffAudit/handlers.ts";
+import { ChiefOfStaffAuditToolkit } from "./toolkits/chiefOfStaffAudit/tools.ts";
 import * as ChiefOfStaffMemoryHandlers from "./toolkits/chiefOfStaffMemory/handlers.ts";
 import { ChiefOfStaffMemoryToolkit } from "./toolkits/chiefOfStaffMemory/tools.ts";
 import * as SandboxImageHandlers from "./toolkits/sandboxImage/handlers.ts";
@@ -908,13 +913,38 @@ const handoffTargetIds = (
   return typeof threadId === "string" ? [threadId] : [];
 };
 
-/** Tool analytics must never include IDs, prompts or free text. */
-const withToolAnalytics =
+/** Declared tool failures carry their code only in the text content; recover it for the audit. */
+const auditErrorCode = (
+  result: McpSchema.CallToolResult | undefined,
+  fallback: string | undefined,
+): string => {
+  if (fallback !== undefined && fallback !== "unknown") return fallback;
+  const block = result?.content?.find((part) => part.type === "text");
+  const text = block?.type === "text" ? block.text : undefined;
+  if (typeof text !== "string") return fallback ?? "unknown";
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const code =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as { readonly code?: unknown }).code
+        : undefined;
+    return typeof code === "string" ? code : (fallback ?? "unknown");
+  } catch {
+    return fallback ?? "unknown";
+  }
+};
+
+/**
+ * Records every tool call after it returns: analytics without IDs, prompts or free text,
+ * and a Chief of staff audit entry. Both run detached from the response.
+ */
+const withToolRecording =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
     const server = yield* McpServer.McpServer;
     const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
-    if (Option.isNone(analytics)) return yield* registration;
+    const audit = yield* Effect.serviceOption(ChiefOfStaffAudit.ChiefOfStaffAudit);
+    if (Option.isNone(analytics) && Option.isNone(audit)) return yield* registration;
     const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
     const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
     const shellOf = (threadId: string) =>
@@ -968,6 +998,33 @@ const withToolAnalytics =
           result: McpSchema.CallToolResult | undefined,
           durationMs: number,
         ) {
+          if (Option.isSome(audit)) {
+            const scope = Option.getOrUndefined(
+              yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+            );
+            if (scope !== undefined) {
+              const homeThreads =
+                scope.thread === undefined
+                  ? ChiefOfStaffHomeThreads.EMPTY_HOME_THREADS
+                  : yield* ChiefOfStaffHomeThreads.readHomeThreads;
+              const caller = chiefOfStaffCaller(scope, homeThreads);
+              if (caller !== undefined) {
+                const outcome = toolOutcome(result);
+                const status = outcome.outcome === "ok" ? "ok" : "error";
+                yield* audit.value.record({
+                  ...caller,
+                  tool,
+                  args,
+                  outcome: status,
+                  ...(status === "error"
+                    ? { errorCode: auditErrorCode(result, outcome.errorCode) }
+                    : {}),
+                  durationMs,
+                });
+              }
+            }
+          }
+          if (Option.isNone(analytics)) return;
           const handoff =
             HANDOFF_TOOLS.has(tool) ||
             isInputTargetHandoff(tool, args) ||
@@ -1103,7 +1160,7 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
   Layer.effectDiscard(
-    withToolAnalytics(
+    withToolRecording(
       withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
     ),
   ).pipe(
@@ -1120,7 +1177,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(register)).pipe(
+  Layer.effectDiscard(withToolRecording(register)).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
@@ -1176,6 +1233,11 @@ export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, Proj
 const layerSpaceToolkit = toolkitRegistration(SpaceToolkit, SpaceHandlers.layer);
 
 const layerLineageToolkit = toolkitRegistration(LineageToolkit, LineageHandlers.layer);
+
+const layerChiefOfStaffAuditToolkit = toolkitRegistration(
+  ChiefOfStaffAuditToolkit,
+  ChiefOfStaffAuditHandlers.layer,
+);
 
 const layerSandboxImageToolkit = toolkitRegistration(
   SandboxImageToolkit,
@@ -1253,6 +1315,7 @@ export const layerTools = Layer.mergeAll(
   layerSpaceToolkit,
   layerLineageToolkit,
   layerChiefOfStaffMemoryToolkit,
+  layerChiefOfStaffAuditToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

@@ -157,6 +157,7 @@ import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
 import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
 import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
+import * as ChiefOfStaffAudit from "./chiefOfStaff/ChiefOfStaffAudit.ts";
 import * as ChiefOfStaffHome from "./chiefOfStaff/ChiefOfStaffHome.ts";
 import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
 import * as ChiefOfStaffMemory from "./chiefOfStaff/ChiefOfStaffMemory.ts";
@@ -1027,6 +1028,7 @@ const layerMakeRoutes = Layer.mergeAll(
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+    Layer.provide(ChiefOfStaffAudit.layer),
     Layer.provide(SandboxFork.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   ),
   // Follows delegated tasks running in linked environments, including after a restart.

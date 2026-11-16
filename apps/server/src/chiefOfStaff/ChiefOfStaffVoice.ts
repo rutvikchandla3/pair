@@ -33,6 +33,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { buildCodexInitializeParams } from "../provider/CodexProvider.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ChiefOfStaffHost, type VoiceAppServer } from "./ChiefOfStaffHost.ts";
+import { CHIEF_OF_STAFF_MCP_LABEL } from "./caller.ts";
 import { ChiefOfStaffHome } from "./ChiefOfStaffHome.ts";
 import {
   backingThreadParams,
@@ -67,7 +68,6 @@ export class ChiefOfStaffVoice extends Context.Service<
   }
 >()("t3/chiefOfStaff/ChiefOfStaffVoice") {}
 
-const MCP_LABEL = "Chief of staff";
 const STATUS_PUSH_DELAY = Duration.seconds(2);
 const SDP_ANSWER_TIMEOUT = Duration.seconds(30);
 const STOP_TIMEOUT = Duration.seconds(2);
@@ -317,7 +317,7 @@ const make = Effect.gen(function* () {
       const homeThread = yield* home.ensureHome(caller);
       const credential = yield* Effect.acquireRelease(
         registry.issueClient({
-          label: MCP_LABEL,
+          label: CHIEF_OF_STAFF_MCP_LABEL,
           access: toolAccess,
           memberId: caller.memberId,
         }),
