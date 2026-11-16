@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, MemberId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
-import { CHIEF_OF_STAFF_MCP_LABEL, chiefOfStaffCaller } from "./caller.ts";
+import { CHIEF_OF_STAFF_MCP_LABEL, ChiefOfStaffClients, chiefOfStaffCaller } from "./caller.ts";
 
 const environmentId = EnvironmentId.make("environment:cos-caller");
 const member = MemberId.make("member-a");
@@ -33,31 +33,55 @@ const withThread = (threadId: ThreadId): McpInvocationScope => ({
   thread: { ...base.thread!, threadId },
 });
 
-it("recognizes the voice relay's client label", () => {
+it("recognizes a session the voice relay issued", () => {
+  ChiefOfStaffClients.add("session:voice");
+  try {
+    expect(
+      chiefOfStaffCaller(
+        withClient({
+          sessionId: "session:voice",
+          label: CHIEF_OF_STAFF_MCP_LABEL,
+          access: "full-access",
+          memberId: member,
+        }),
+        new Map(),
+      ),
+    ).toEqual({ via: "voice", memberId: member });
+  } finally {
+    ChiefOfStaffClients.remove("session:voice");
+  }
+});
+
+it("recognizes an issued session with no member", () => {
+  ChiefOfStaffClients.add("session:voice");
+  try {
+    expect(
+      chiefOfStaffCaller(
+        withClient({
+          sessionId: "session:voice",
+          label: CHIEF_OF_STAFF_MCP_LABEL,
+          access: "full-access",
+        }),
+        new Map(),
+      ),
+    ).toEqual({ via: "voice" });
+  } finally {
+    ChiefOfStaffClients.remove("session:voice");
+  }
+});
+
+it("does not trust a lookalike label on an unissued session", () => {
   expect(
     chiefOfStaffCaller(
       withClient({
-        sessionId: "session:voice",
+        sessionId: "session:lookalike",
         label: CHIEF_OF_STAFF_MCP_LABEL,
         access: "full-access",
         memberId: member,
       }),
-      new Map(),
+      homeThreads,
     ),
-  ).toEqual({ via: "voice", memberId: member });
-});
-
-it("recognizes a client with the label but no member", () => {
-  expect(
-    chiefOfStaffCaller(
-      withClient({
-        sessionId: "session:voice",
-        label: CHIEF_OF_STAFF_MCP_LABEL,
-        access: "full-access",
-      }),
-      new Map(),
-    ),
-  ).toEqual({ via: "voice" });
+  ).toBeUndefined();
 });
 
 it("does not recognize another client label", () => {
@@ -88,15 +112,20 @@ it("does not recognize an ordinary thread", () => {
   ).toBeUndefined();
 });
 
-it("recognizes the voice label over a home thread", () => {
-  const scope: McpInvocationScope = {
-    ...withThread(homeThread),
-    client: {
-      sessionId: "session:voice",
-      label: CHIEF_OF_STAFF_MCP_LABEL,
-      access: "full-access",
-      memberId: member,
-    },
-  };
-  expect(chiefOfStaffCaller(scope, homeThreads)).toEqual({ via: "voice", memberId: member });
+it("recognizes an issued session over a home thread", () => {
+  ChiefOfStaffClients.add("session:voice");
+  try {
+    const scope: McpInvocationScope = {
+      ...withThread(homeThread),
+      client: {
+        sessionId: "session:voice",
+        label: CHIEF_OF_STAFF_MCP_LABEL,
+        access: "full-access",
+        memberId: member,
+      },
+    };
+    expect(chiefOfStaffCaller(scope, homeThreads)).toEqual({ via: "voice", memberId: member });
+  } finally {
+    ChiefOfStaffClients.remove("session:voice");
+  }
 });

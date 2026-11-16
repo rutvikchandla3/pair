@@ -52,6 +52,25 @@ it.effect("truncates serialized args to 1000 characters", () =>
   }).pipe(Effect.provide(auditLayer())),
 );
 
+it.effect("records a risky call's confirmation decision", () =>
+  Effect.gen(function* () {
+    const audit = yield* ChiefOfStaffAudit.ChiefOfStaffAudit;
+    yield* audit.record({
+      via: "home-thread",
+      memberId: "member-1",
+      threadId: "thread:home",
+      tool: "t3_project_delete",
+      args: { projectId: "project:1" },
+      outcome: "error",
+      errorCode: "capability_denied",
+      confirmation: "denied",
+      durationMs: 4,
+    });
+    const [entry] = yield* audit.recent();
+    assert.equal(entry!.confirmation, "denied");
+  }).pipe(Effect.provide(auditLayer())),
+);
+
 it.effect("returns the newest entries first and filters by tool", () =>
   Effect.gen(function* () {
     const audit = yield* ChiefOfStaffAudit.ChiefOfStaffAudit;

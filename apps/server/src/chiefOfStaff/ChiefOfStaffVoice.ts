@@ -33,7 +33,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { buildCodexInitializeParams } from "../provider/CodexProvider.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ChiefOfStaffHost, type VoiceAppServer } from "./ChiefOfStaffHost.ts";
-import { CHIEF_OF_STAFF_MCP_LABEL } from "./caller.ts";
+import { CHIEF_OF_STAFF_MCP_LABEL, ChiefOfStaffClients } from "./caller.ts";
 import { ChiefOfStaffHome } from "./ChiefOfStaffHome.ts";
 import {
   backingThreadParams,
@@ -316,12 +316,19 @@ const make = Effect.gen(function* () {
       // The brain is the member's persistent thread; voice only relays to it.
       const homeThread = yield* home.ensureHome(caller);
       const credential = yield* Effect.acquireRelease(
-        registry.issueClient({
-          label: CHIEF_OF_STAFF_MCP_LABEL,
-          access: toolAccess,
-          memberId: caller.memberId,
-        }),
-        (issued) => registry.revokeClient(issued.sessionId),
+        registry
+          .issueClient({
+            label: CHIEF_OF_STAFF_MCP_LABEL,
+            access: toolAccess,
+            memberId: caller.memberId,
+          })
+          .pipe(
+            Effect.tap((issued) => Effect.sync(() => ChiefOfStaffClients.add(issued.sessionId))),
+          ),
+        (issued) =>
+          Effect.sync(() => ChiefOfStaffClients.remove(issued.sessionId)).pipe(
+            Effect.andThen(registry.revokeClient(issued.sessionId)),
+          ),
       );
       const opened = yield* host.openAppServer({
         instanceId,

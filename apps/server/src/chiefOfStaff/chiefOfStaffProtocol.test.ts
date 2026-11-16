@@ -55,6 +55,7 @@ it("makes the voice relay to the home thread and speak its Summary", () => {
   assert.include(instructions, "Summary:");
   assert.include(instructions, "report back");
   assert.include(instructions, "confirmation");
+  assert.include(instructions, "t3_pending_request");
 });
 
 it("keeps an unrecognised realtime refusal's own words", () => {

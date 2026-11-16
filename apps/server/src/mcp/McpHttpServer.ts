@@ -14,6 +14,7 @@ import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
+  DEFAULT_CONFIRM_TOOLS,
   DeviceToolError,
   MemberId,
   OrchestratorMcpFailure,
@@ -27,8 +28,11 @@ import {
 import packageJson from "../../package.json" with { type: "json" };
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as ChiefOfStaffAudit from "../chiefOfStaff/ChiefOfStaffAudit.ts";
+import type { AuditConfirmation } from "../chiefOfStaff/ChiefOfStaffAudit.ts";
+import * as ChiefOfStaffConfirmation from "../chiefOfStaff/ChiefOfStaffConfirmation.ts";
 import { chiefOfStaffCaller } from "../chiefOfStaff/caller.ts";
 import * as ChiefOfStaffHomeThreads from "../chiefOfStaff/homeThreads.ts";
+import { isRiskyCall, summarizeCallArgs } from "../chiefOfStaff/policy.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
@@ -951,6 +955,16 @@ const auditErrorCode = (
   }
 };
 
+/** What the risky-tool gate decides for one call. */
+type GateDecision =
+  | { readonly kind: "not-gated" }
+  | { readonly kind: "allowed" }
+  | {
+      readonly kind: "denied";
+      readonly message: string;
+      readonly confirmation?: AuditConfirmation;
+    };
+
 /**
  * Records every tool call after it returns: analytics without IDs, prompts or free text,
  * and a Chief of staff audit entry. Both run detached from the response.
@@ -961,7 +975,12 @@ const withToolRecording =
     const server = yield* McpServer.McpServer;
     const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
     const audit = yield* Effect.serviceOption(ChiefOfStaffAudit.ChiefOfStaffAudit);
-    if (Option.isNone(analytics) && Option.isNone(audit)) return yield* registration;
+    const confirmation = yield* Effect.serviceOption(
+      ChiefOfStaffConfirmation.ChiefOfStaffConfirmation,
+    );
+    if (Option.isNone(analytics) && Option.isNone(audit) && Option.isNone(confirmation)) {
+      return yield* registration;
+    }
     const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
     const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
     const shellOf = (threadId: string) =>
@@ -1006,6 +1025,75 @@ const withToolRecording =
               }),
               Effect.orElseSucceed(() => false),
             );
+    // The risky-tool gate. Every other caller pays one `chiefOfStaff` field check and stops.
+    const gateDecision: (tool: string, args: unknown) => Effect.Effect<GateDecision> =
+      Effect.fnUntraced(function* (tool, args) {
+        const scope = Option.getOrUndefined(
+          yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+        );
+        const caller = scope?.chiefOfStaff;
+        if (caller === undefined) return { kind: "not-gated" } as const;
+        const settings = Option.getOrUndefined(
+          yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+        );
+        const configured =
+          settings === undefined
+            ? undefined
+            : (yield* settings.getSettings.pipe(Effect.orElseSucceed(() => undefined)))
+                ?.chiefOfStaff.confirmTools;
+        if (!isRiskyCall(tool, args, configured ?? DEFAULT_CONFIRM_TOOLS)) {
+          return { kind: "not-gated" } as const;
+        }
+        if (Option.isNone(confirmation)) {
+          return {
+            kind: "denied",
+            message: "The server cannot ask you to approve that action, so nothing ran.",
+          } as const;
+        }
+        const outcome = yield* confirmation.value
+          .confirm({
+            via: caller.via,
+            ...(caller.memberId === undefined ? {} : { memberId: caller.memberId }),
+            ...(scope?.thread === undefined ? {} : { threadId: scope.thread.threadId }),
+            tool,
+            summary: summarizeCallArgs(args),
+          })
+          .pipe(
+            Effect.map((value) => ({ ok: true as const, value })),
+            Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
+          );
+        if (!outcome.ok) return { kind: "denied", message: outcome.error.message } as const;
+        if (outcome.value === "allowed") return { kind: "allowed" } as const;
+        return {
+          kind: "denied",
+          confirmation: outcome.value,
+          message:
+            outcome.value === "denied"
+              ? "The user declined. Nothing ran."
+              : "No answer in time, so nothing ran.",
+        } as const;
+      });
+
+    const capabilityDeniedResult = (message: string) =>
+      new McpSchema.CallToolResult({
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              _tag: "OrchestratorMcpFailure",
+              code: "capability_denied",
+              message,
+            }),
+          },
+        ],
+        structuredContent: {
+          _tag: "OrchestratorMcpFailure",
+          code: "capability_denied",
+          message,
+        },
+        isError: true,
+      });
+
     const record =
       /* Request instrumentation already owns the span; keep this helper in that context. */
       Effect.fnUntraced(
@@ -1014,6 +1102,7 @@ const withToolRecording =
           args: unknown,
           result: McpSchema.CallToolResult | undefined,
           durationMs: number,
+          confirmationOutcome: AuditConfirmation | undefined,
         ) {
           if (Option.isSome(audit)) {
             const scope = Option.getOrUndefined(
@@ -1033,6 +1122,7 @@ const withToolRecording =
                 ...(status === "error"
                   ? { errorCode: auditErrorCode(result, outcome.errorCode) }
                   : {}),
+                ...(confirmationOutcome === undefined ? {} : { confirmation: confirmationOutcome }),
                 durationMs,
               });
             }
@@ -1099,6 +1189,12 @@ const withToolRecording =
           handle:
             /* Request instrumentation already owns the span; keep this helper in that context. */
             Effect.fnUntraced(function* (payload) {
+              const decision = yield* gateDecision(options.tool.name, payload);
+              if (decision.kind === "denied") {
+                const denial = capabilityDeniedResult(decision.message);
+                yield* record(options.tool.name, payload, denial, 0, decision.confirmation);
+                return denial;
+              }
               const startedAt = yield* Clock.currentTimeMillis;
               return yield* options.handle(payload).pipe(
                 Effect.onExit((exit) => {
@@ -1108,7 +1204,13 @@ const withToolRecording =
                   // Handoff tools look up threads to record; the response must not wait on them.
                   return Clock.currentTimeMillis.pipe(
                     Effect.flatMap((endedAt) =>
-                      record(options.tool.name, payload, result, endedAt - startedAt),
+                      record(
+                        options.tool.name,
+                        payload,
+                        result,
+                        endedAt - startedAt,
+                        decision.kind === "allowed" ? "allowed" : undefined,
+                      ),
                     ),
                     Effect.forkDetach,
                     Effect.asVoid,

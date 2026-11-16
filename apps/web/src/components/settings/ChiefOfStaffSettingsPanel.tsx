@@ -3,6 +3,7 @@ import {
   type AuthMcpClientAccess,
   ChiefOfStaffAvatarSize,
   ChiefOfStaffAvatarStyle,
+  DEFAULT_CONFIRM_TOOLS,
   supportsChiefOfStaffVoice,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -22,6 +23,7 @@ import {
 } from "../chiefOfStaff/ChiefOfStaffAvatar";
 import { useChiefOfStaffAvatarSettings } from "../chiefOfStaff/ChiefOfStaffButton";
 import { Input } from "../ui/input";
+import { Checkbox } from "../ui/checkbox";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { AdvancedSettings } from "./AdvancedSettings";
@@ -58,6 +60,18 @@ const SIZE_LABELS: Readonly<Record<ChiefOfStaffAvatarSize, string>> = {
   large: "Large",
 };
 
+/** Plain language for the tools the server asks about before Chief of staff runs them. */
+const CONFIRM_TOOL_LABELS: Readonly<Record<string, string>> = {
+  t3_project_delete: "Delete a project",
+  t3_environment_unlink: "Unlink another machine",
+  delete_scheduled_task: "Delete a scheduled task",
+  t3_thread_interrupt: "Interrupt a running thread",
+  t3_workflow_stop: "Stop a workflow",
+  task_cancel: "Cancel a delegated task",
+  t3_worktree_handoff: "Move a thread into a new worktree",
+  t3_thread_transfer: "Fork or merge a thread's context",
+};
+
 export function ChiefOfStaffSettingsPanel() {
   const { environment, scope } = useSettingsScope();
   const supported = environment?.serverConfig?.environment.capabilities.chiefOfStaffVoice === true;
@@ -84,6 +98,11 @@ export function ChiefOfStaffSettingsPanel() {
       {showDetails && environment !== null ? (
         <SettingsSection title="Chat thread">
           <HomeThreadRows environmentId={environment.environmentId} />
+        </SettingsSection>
+      ) : null}
+      {showDetails ? (
+        <SettingsSection title="Always ask before">
+          <ConfirmToolsRow />
         </SettingsSection>
       ) : null}
       {showDetails ? (
@@ -162,6 +181,44 @@ function HomeThreadRows({ environmentId }: { environmentId: EnvironmentId }) {
         }
       />
     </>
+  );
+}
+
+/** The tools Chief of staff must get approval for: the defaults, plus any the member added. */
+function ConfirmToolsRow() {
+  const settings = useScopedSettings((value) => value.chiefOfStaff);
+  const updateSettings = useUpdateScopedSettings();
+  const chosen = settings.confirmTools;
+  const extras = chosen.filter(
+    (tool) => !(DEFAULT_CONFIRM_TOOLS as readonly string[]).includes(tool),
+  );
+  const setTool = (tool: string, on: boolean) => {
+    const next = on
+      ? [...new Set([...chosen, tool])]
+      : chosen.filter((candidate) => candidate !== tool);
+    updateSettings({ chiefOfStaff: { confirmTools: next } });
+  };
+  return (
+    <SettingsRow
+      serverScoped
+      title="Risky tools"
+      settingKeys={["chiefOfStaff"]}
+      description="Chief of staff asks you to approve these before the server runs them."
+      control={
+        <fieldset className="grid gap-1.5">
+          <legend className="sr-only">Risky tools</legend>
+          {[...DEFAULT_CONFIRM_TOOLS, ...extras].map((tool) => (
+            <label key={tool} className="flex min-w-0 items-center gap-2 text-sm">
+              <Checkbox
+                checked={chosen.includes(tool)}
+                onCheckedChange={(checked) => setTool(tool, checked === true)}
+              />
+              <span className="truncate">{CONFIRM_TOOL_LABELS[tool] ?? tool}</span>
+            </label>
+          ))}
+        </fieldset>
+      }
+    />
   );
 }
 

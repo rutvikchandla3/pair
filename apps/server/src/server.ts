@@ -158,6 +158,7 @@ import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
 import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as ChiefOfStaffAudit from "./chiefOfStaff/ChiefOfStaffAudit.ts";
+import * as ChiefOfStaffConfirmation from "./chiefOfStaff/ChiefOfStaffConfirmation.ts";
 import * as ChiefOfStaffHome from "./chiefOfStaff/ChiefOfStaffHome.ts";
 import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
 import * as ChiefOfStaffMemory from "./chiefOfStaff/ChiefOfStaffMemory.ts";
@@ -1077,7 +1078,16 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(ChiefOfStaffHost.layer),
     ),
   ),
-  Layer.provide(ChiefOfStaffHome.layer.pipe(Layer.provide(ChiefOfStaffHost.layer))),
+  // Risky Chief of staff calls wait on an approval card in the member's home thread.
+  Layer.provide(
+    Layer.merge(
+      ChiefOfStaffHome.layer.pipe(Layer.provide(ChiefOfStaffHost.layer)),
+      ChiefOfStaffConfirmation.layer.pipe(
+        Layer.provide(ChiefOfStaffHome.layer),
+        Layer.provide(ChiefOfStaffHost.layer),
+      ),
+    ),
+  ),
   // Bounded memory blocks and their MEMORY.md mirror, for the home thread and cos_memory tools.
   Layer.provide(ChiefOfStaffMemory.layer),
   // Spaces for WebSocket clients and /mcp agents.
