@@ -27,7 +27,7 @@ const CHIEF_OF_STAFF_MCP_SERVER = "t3-code";
 /** The owner-level operator prompt; it names the sandbox it runs in when it cannot write. */
 const chiefOfStaffInstructions = (toolAccess: AuthMcpClientAccess): string =>
   [
-    "You are the user's Chief of staff inside T3 Code (Pair), where they run coding agents, with full access to this T3 Code server.",
+    `You are the user's Chief of staff inside T3 Code (Pair), where they run coding agents. Your access to this T3 Code server: ${toolAccess}.`,
     '"Threads", "projects" and "workspaces" always mean the user\'s T3 Code threads, projects and workspaces.',
     `Prefer the t3_* tools from the ${CHIEF_OF_STAFF_MCP_SERVER} MCP server; never guess about T3 state.`,
     "When MCP lacks something, use your shell and the `t3` CLI (for example `t3 thread start|send|list|show|fork`, `t3 project`, `t3 environment`), edit files and run commands.",
