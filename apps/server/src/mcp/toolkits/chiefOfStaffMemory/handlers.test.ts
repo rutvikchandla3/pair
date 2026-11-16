@@ -2,13 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, MemberId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import * as ChiefOfStaffMemory from "../../../chiefOfStaff/ChiefOfStaffMemory.ts";
-import { homeThreadsFile } from "../../../chiefOfStaff/homeThreads.ts";
 import { ServerConfig } from "../../../config.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -20,7 +17,10 @@ const environmentId = EnvironmentId.make("environment:cos-memory");
 const member = MemberId.make("member-a");
 const homeThreadId = ThreadId.make("thread:home-a");
 
-const threadScope = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
+const threadScope = (
+  threadId: ThreadId,
+  chiefOfStaff?: McpInvocationContext.McpInvocationScope["chiefOfStaff"],
+): McpInvocationContext.McpInvocationScope => ({
   environmentId,
   requestNamespace: "provider:cos-memory",
   thread: {
@@ -31,9 +31,13 @@ const threadScope = (threadId: ThreadId): McpInvocationContext.McpInvocationScop
   client: undefined,
   capabilities: new Set(["orchestration" as const]),
   issuedAt: 0,
+  ...(chiefOfStaff === undefined ? {} : { chiefOfStaff }),
 });
 
-const clientScope = (memberId: MemberId | undefined): McpInvocationContext.McpInvocationScope => ({
+const clientScope = (
+  memberId: MemberId | undefined,
+  chiefOfStaff?: McpInvocationContext.McpInvocationScope["chiefOfStaff"],
+): McpInvocationContext.McpInvocationScope => ({
   ...threadScope(homeThreadId),
   thread: undefined,
   client: {
@@ -42,6 +46,7 @@ const clientScope = (memberId: MemberId | undefined): McpInvocationContext.McpIn
     access: "full-access",
     memberId,
   },
+  ...(chiefOfStaff === undefined ? {} : { chiefOfStaff }),
 });
 
 const layerFor = (scope: McpInvocationContext.McpInvocationScope) => {
@@ -54,16 +59,6 @@ const layerFor = (scope: McpInvocationContext.McpInvocationScope) => {
     Layer.provideMerge(NodeServices.layer),
   );
 };
-
-const writeHomeThreads = (contents: string) =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = homeThreadsFile(config.stateDir, path);
-    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-    yield* fs.writeFileString(file, contents);
-  });
 
 const call = (name: "cos_memory_read" | "cos_memory_history", params: object) =>
   Effect.gen(function* () {
@@ -79,27 +74,26 @@ type ReadResult = {
 
 it.effect("serves a home thread its own memory", () =>
   Effect.gen(function* () {
-    yield* writeHomeThreads(JSON.stringify({ [`home:${member}`]: String(homeThreadId) }));
     const result = (yield* call("cos_memory_read", {})) as unknown as ReadResult;
     expect(result.memberId).toBe(member);
     expect(result.blocks.find((block) => block.label === "profile")).toMatchObject({
       size: 0,
       limit: 1500,
     });
-  }).pipe(Effect.provide(layerFor(threadScope(homeThreadId)))),
+  }).pipe(
+    Effect.provide(layerFor(threadScope(homeThreadId, { via: "home-thread", memberId: member }))),
+  ),
 );
 
 it.effect("serves a client whose member owns a home thread", () =>
   Effect.gen(function* () {
-    yield* writeHomeThreads(JSON.stringify({ [`home:${member}`]: String(homeThreadId) }));
     const result = yield* call("cos_memory_history", {});
     expect(result).toEqual({ entries: [] });
-  }).pipe(Effect.provide(layerFor(clientScope(member)))),
+  }).pipe(Effect.provide(layerFor(clientScope(member, { via: "voice", memberId: member })))),
 );
 
 it.effect("refuses a thread that is not a home thread", () =>
   Effect.gen(function* () {
-    yield* writeHomeThreads(JSON.stringify({ [`home:${member}`]: String(homeThreadId) }));
     const result = yield* call("cos_memory_read", {});
     expect(result).toMatchObject({ code: "capability_denied" });
   }).pipe(Effect.provide(layerFor(threadScope(ThreadId.make("thread:ordinary"))))),
@@ -107,7 +101,6 @@ it.effect("refuses a thread that is not a home thread", () =>
 
 it.effect("refuses a client whose member has no home thread", () =>
   Effect.gen(function* () {
-    yield* writeHomeThreads(JSON.stringify({ [`home:${member}`]: String(homeThreadId) }));
     const result = yield* call("cos_memory_read", {});
     expect(result).toMatchObject({ code: "capability_denied" });
   }).pipe(Effect.provide(layerFor(clientScope(MemberId.make("member-b"))))),

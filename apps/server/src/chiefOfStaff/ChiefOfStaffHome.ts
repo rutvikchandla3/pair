@@ -29,6 +29,8 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ChiefOfStaffHost } from "./ChiefOfStaffHost.ts";
+import * as ChiefOfStaffMemory from "./ChiefOfStaffMemory.ts";
+import { invalidateHomeThreads } from "./homeThreads.ts";
 import {
   type ChiefOfStaffCaller,
   effectiveToolAccess,
@@ -61,6 +63,7 @@ const failed = (message: string) => () =>
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const host = yield* ChiefOfStaffHost;
+  const memory = yield* ChiefOfStaffMemory.ChiefOfStaffMemory;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const settings = yield* ServerSettings.ServerSettingsService;
@@ -133,6 +136,8 @@ const make = Effect.gen(function* () {
     yield* writePersona(directory).pipe(
       Effect.mapError(failed("Could not create Chief of staff's folder.")),
     );
+    // Write MEMORY.md on turn one, so the home thread has it before its first reply.
+    yield* memory.render(caller.memberId).pipe(Effect.ignore);
     const stored = yield* host.loadThreadId(key);
     if (stored !== undefined) {
       const threadId = ThreadId.make(stored);
@@ -184,6 +189,9 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(failed("Could not create Chief of staff's chat thread.")));
     yield* host.saveThreadId(key, launched.threadId);
+    // Drop the cached home-thread map, so the audit hook and the tools see this
+    // brand-new home thread on its first call instead of waiting out the TTL.
+    invalidateHomeThreads();
     return { threadId: launched.threadId, projectId: project.project.id };
   });
 

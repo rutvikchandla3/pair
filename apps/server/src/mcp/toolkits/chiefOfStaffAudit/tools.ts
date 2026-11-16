@@ -1,6 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ChiefOfStaffAudit from "../../../chiefOfStaff/ChiefOfStaffAudit.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -22,6 +22,7 @@ const ChiefOfStaffAuditReadTool = Tool.make("cos_audit_read", {
   success: Schema.Struct({ entries: Schema.Array(ChiefOfStaffAudit.AuditEntrySchema) }),
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForChiefOfStaff);
 
 export const ChiefOfStaffAuditToolkit = Toolkit.make(ChiefOfStaffAuditReadTool);

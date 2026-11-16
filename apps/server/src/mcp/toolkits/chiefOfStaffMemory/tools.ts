@@ -1,11 +1,8 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ChiefOfStaffMemory from "../../../chiefOfStaff/ChiefOfStaffMemory.ts";
-import { ServerConfig } from "../../../config.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -16,9 +13,6 @@ const shared = {
     McpInvocationContext.McpInvocationContext,
     ChiefOfStaffMemory.ChiefOfStaffMemory,
     ThreadManagementService.ThreadManagementService,
-    ServerConfig,
-    FileSystem.FileSystem,
-    Path.Path,
   ],
 };
 
@@ -31,7 +25,7 @@ const MemoryReadTool = Tool.make("cos_memory_read", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForChiefOfStaff);
 
 const MemoryUpdateTool = Tool.make("cos_memory_update", {
   ...shared,
@@ -46,7 +40,7 @@ const MemoryUpdateTool = Tool.make("cos_memory_update", {
   success: ChiefOfStaffMemory.MemoryBlock,
 })
   .annotate(Tool.Destructive, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForChiefOfStaff);
 
 const MemoryHistoryTool = Tool.make("cos_memory_history", {
   ...shared,
@@ -60,7 +54,7 @@ const MemoryHistoryTool = Tool.make("cos_memory_history", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForChiefOfStaff);
 
 export const ChiefOfStaffMemoryToolkit = Toolkit.make(
   MemoryReadTool,

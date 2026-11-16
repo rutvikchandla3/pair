@@ -2,45 +2,49 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, MemberId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import { McpSchema, McpServer } from "effect/ai";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../../config.ts";
 import * as ChiefOfStaffAudit from "../../../chiefOfStaff/ChiefOfStaffAudit.ts";
-import { CHIEF_OF_STAFF_MCP_LABEL } from "../../../chiefOfStaff/caller.ts";
-import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ChiefOfStaffAuditHandlers from "./handlers.ts";
 import { ChiefOfStaffAuditToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("cos-toolkit-environment");
+const memberId = MemberId.make("member-1");
 const entry: ChiefOfStaffAudit.AuditEntry = {
   at: "2024-01-01T00:00:00.000Z",
   via: "voice",
-  memberId: MemberId.make("member-1"),
+  memberId,
   tool: "t3_environment_read",
   args: "{}",
   outcome: "ok",
   durationMs: 5,
 };
 
-const voiceScope = (label: string = CHIEF_OF_STAFF_MCP_LABEL) => ({
+const voiceScope = (
+  chiefOfStaff?: McpInvocationContext.McpInvocationScope["chiefOfStaff"],
+): McpInvocationContext.McpInvocationScope => ({
   environmentId,
   requestNamespace: "client:session",
   thread: undefined,
   client: {
     sessionId: "session",
-    label,
+    label: "Chief of staff",
     access: "full-access" as const,
-    memberId: MemberId.make("member-1"),
+    memberId,
   },
-  capabilities: new Set(["orchestration"] as const),
+  capabilities: new Set(["orchestration" as const]),
   issuedAt: 0,
+  ...(chiefOfStaff === undefined ? {} : { chiefOfStaff }),
 });
 
-const threadScope = (threadId: string): McpInvocationContext.McpInvocationScope => ({
+const threadScope = (
+  threadId: string,
+  chiefOfStaff?: McpInvocationContext.McpInvocationScope["chiefOfStaff"],
+): McpInvocationContext.McpInvocationScope => ({
   environmentId,
   requestNamespace: `provider:${threadId}`,
   thread: {
@@ -51,87 +55,56 @@ const threadScope = (threadId: string): McpInvocationContext.McpInvocationScope 
   client: undefined,
   capabilities: new Set(["orchestration"]),
   issuedAt: 0,
+  ...(chiefOfStaff === undefined ? {} : { chiefOfStaff }),
 });
 
-const mcpClient = McpSchema.McpServerClient.of({
-  clientId: 1,
-  protocolVersion: "2025-06-18",
-  clientCapabilities: {},
-  clientInfo: { name: "cos-toolkit-test", version: "1" },
-  initializePayload: {
-    protocolVersion: "2025-06-18",
-    capabilities: {},
-    clientInfo: { name: "cos-toolkit-test", version: "1" },
-  },
-  getClient: Effect.die("unused"),
-});
-
-const toolkitLayer = McpHttpServer.toolkitRegistration(
-  ChiefOfStaffAuditToolkit,
-  ChiefOfStaffAuditHandlers.layer,
-).pipe(
-  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-  Layer.provide(
-    Layer.succeed(
-      ChiefOfStaffAudit.ChiefOfStaffAudit,
-      ChiefOfStaffAudit.ChiefOfStaffAudit.of({
-        record: () => Effect.void,
-        recent: () => Effect.succeed([entry]),
-      }),
-    ),
-  ),
+const auditService = Layer.succeed(
+  ChiefOfStaffAudit.ChiefOfStaffAudit,
+  ChiefOfStaffAudit.ChiefOfStaffAudit.of({
+    record: () => Effect.void,
+    recent: () => Effect.succeed([entry]),
+  }),
 );
 
-const call = (scope: McpInvocationContext.McpInvocationScope) =>
-  McpServer.McpServer.pipe(
-    Effect.flatMap((server) =>
-      server.callTool({ name: "cos_audit_read", arguments: { limit: 5 } }),
-    ),
-    Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-    Effect.provideService(McpSchema.McpServerClient, mcpClient),
+const layerFor = (scope: McpInvocationContext.McpInvocationScope) => {
+  const config = ServerConfig.layerTest(process.cwd(), { prefix: "t3-cos-toolkit-" });
+  return McpToolAccess.HandlersLayer.layer(ChiefOfStaffAuditHandlers.layer).pipe(
+    Layer.provideMerge(auditService),
+    Layer.provideMerge(config),
+    Layer.provideMerge(Layer.succeed(McpInvocationContext.McpInvocationContext, scope)),
+    Layer.provideMerge(NodeServices.layer),
   );
-
-const declaredCode = (result: McpSchema.CallToolResult): string | undefined => {
-  if (result.isError !== true) return undefined;
-  const block = result.content[0];
-  if (block?.type !== "text") return undefined;
-  return (JSON.parse(block.text) as { readonly code?: string }).code;
 };
 
-const layerServices = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-cos-toolkit-",
-}).pipe(Layer.provideMerge(NodeServices.layer));
+const call = () =>
+  Effect.gen(function* () {
+    const toolkit = yield* ChiefOfStaffAuditToolkit;
+    const messages = yield* toolkit
+      .handle("cos_audit_read", { limit: 5 })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    return messages.at(-1)?.result;
+  });
 
 it.effect("lets a Chief of staff client read the audit log", () =>
   Effect.gen(function* () {
-    const result = yield* call(voiceScope());
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({ entries: [entry] });
-  }).pipe(Effect.provide(Layer.merge(toolkitLayer, layerServices))),
+    expect(yield* call()).toEqual({ entries: [entry] });
+  }).pipe(Effect.provide(layerFor(voiceScope({ via: "voice", memberId })))),
 );
 
 it.effect("lets a home thread read the audit log", () =>
   Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const path = yield* Path.Path;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const file = path.join(config.stateDir, "chief-of-staff", "threads.json");
-    yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
-    yield* fileSystem.writeFileString(file, JSON.stringify({ "home:member-1": "thread:home" }));
-    const result = yield* call(threadScope("thread:home"));
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({ entries: [entry] });
-  }).pipe(Effect.provide(Layer.merge(toolkitLayer, layerServices))),
+    expect(yield* call()).toEqual({ entries: [entry] });
+  }).pipe(Effect.provide(layerFor(threadScope("thread:home", { via: "home-thread", memberId })))),
 );
 
 it.effect("refuses an ordinary client", () =>
   Effect.gen(function* () {
-    expect(declaredCode(yield* call(voiceScope("Claude Code")))).toBe("capability_denied");
-  }).pipe(Effect.provide(Layer.merge(toolkitLayer, layerServices))),
+    expect(yield* call()).toMatchObject({ code: "capability_denied" });
+  }).pipe(Effect.provide(layerFor(voiceScope()))),
 );
 
 it.effect("refuses an ordinary thread", () =>
   Effect.gen(function* () {
-    expect(declaredCode(yield* call(threadScope("thread:ordinary")))).toBe("capability_denied");
-  }).pipe(Effect.provide(Layer.merge(toolkitLayer, layerServices))),
+    expect(yield* call()).toMatchObject({ code: "capability_denied" });
+  }).pipe(Effect.provide(layerFor(threadScope("thread:ordinary")))),
 );

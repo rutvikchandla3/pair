@@ -8,16 +8,13 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
 import * as ChiefOfStaffAudit from "../chiefOfStaff/ChiefOfStaffAudit.ts";
-import { CHIEF_OF_STAFF_MCP_LABEL } from "../chiefOfStaff/caller.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -25,16 +22,27 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 const environmentId = EnvironmentId.make("cos-audit-environment");
 const memberId = MemberId.make("member-1");
 
-const voiceScope = (label: string = CHIEF_OF_STAFF_MCP_LABEL) => ({
+const voiceScope = (
+  chiefOfStaff?: McpInvocationContext.McpInvocationScope["chiefOfStaff"],
+): McpInvocationContext.McpInvocationScope => ({
   environmentId,
   requestNamespace: "client:session",
   thread: undefined,
-  client: { sessionId: "session", label, access: "full-access" as const, memberId },
+  client: {
+    sessionId: "session",
+    label: "Chief of staff",
+    access: "full-access" as const,
+    memberId,
+  },
   capabilities: new Set(["orchestration"] as const),
   issuedAt: 0,
+  ...(chiefOfStaff === undefined ? {} : { chiefOfStaff }),
 });
 
-const threadScope = (threadId: string): McpInvocationContext.McpInvocationScope => ({
+const threadScope = (
+  threadId: string,
+  chiefOfStaff?: McpInvocationContext.McpInvocationScope["chiefOfStaff"],
+): McpInvocationContext.McpInvocationScope => ({
   environmentId,
   requestNamespace: `provider:${threadId}`,
   thread: {
@@ -45,6 +53,7 @@ const threadScope = (threadId: string): McpInvocationContext.McpInvocationScope 
   client: undefined,
   capabilities: new Set(["orchestration"]),
   issuedAt: 0,
+  ...(chiefOfStaff === undefined ? {} : { chiefOfStaff }),
 });
 
 const mcpClient = McpSchema.McpServerClient.of({
@@ -105,19 +114,10 @@ const layerServices = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-cos-hook-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-const writeThreads = Effect.gen(function* () {
-  const config = yield* ServerConfig.ServerConfig;
-  const path = yield* Path.Path;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const file = path.join(config.stateDir, "chief-of-staff", "threads.json");
-  yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
-  yield* fileSystem.writeFileString(file, JSON.stringify({ "home:member-1": "thread:home" }));
-});
-
 it.effect("records a voice client call as the member's voice session", () =>
   Effect.gen(function* () {
     const signals = yield* Queue.unbounded<ChiefOfStaffAudit.AuditRecordInput>();
-    yield* callWith(signals, "probe_ok", voiceScope());
+    yield* callWith(signals, "probe_ok", voiceScope({ via: "voice", memberId }));
     expect(yield* Queue.take(signals)).toMatchObject({
       via: "voice",
       memberId: "member-1",
@@ -130,7 +130,7 @@ it.effect("records a voice client call as the member's voice session", () =>
 it.effect("records a declared failure's outcome and code", () =>
   Effect.gen(function* () {
     const signals = yield* Queue.unbounded<ChiefOfStaffAudit.AuditRecordInput>();
-    yield* callWith(signals, "probe_fail", voiceScope());
+    yield* callWith(signals, "probe_fail", voiceScope({ via: "voice", memberId }));
     expect(yield* Queue.take(signals)).toMatchObject({
       via: "voice",
       tool: "probe_fail",
@@ -143,8 +143,11 @@ it.effect("records a declared failure's outcome and code", () =>
 it.effect("records a home-thread caller with its member and thread", () =>
   Effect.gen(function* () {
     const signals = yield* Queue.unbounded<ChiefOfStaffAudit.AuditRecordInput>();
-    yield* writeThreads;
-    yield* callWith(signals, "probe_ok", threadScope("thread:home"));
+    yield* callWith(
+      signals,
+      "probe_ok",
+      threadScope("thread:home", { via: "home-thread", memberId }),
+    );
     expect(yield* Queue.take(signals)).toMatchObject({
       via: "home-thread",
       memberId: "member-1",
@@ -158,7 +161,7 @@ it.effect("records a home-thread caller with its member and thread", () =>
 it.effect("records nothing for an ordinary client", () =>
   Effect.gen(function* () {
     const signals = yield* Queue.unbounded<ChiefOfStaffAudit.AuditRecordInput>();
-    yield* callWith(signals, "probe_ok", voiceScope("Claude Code"));
+    yield* callWith(signals, "probe_ok", voiceScope());
     yield* Effect.yieldNow;
     expect(yield* Queue.size(signals)).toBe(0);
   }).pipe(Effect.provide(layerServices)),
@@ -167,9 +170,6 @@ it.effect("records nothing for an ordinary client", () =>
 it.effect("records nothing for a thread that is not a home thread", () =>
   Effect.gen(function* () {
     const signals = yield* Queue.unbounded<ChiefOfStaffAudit.AuditRecordInput>();
-    yield* writeThreads;
-    yield* callWith(signals, "probe_ok", threadScope("thread:home"));
-    yield* Queue.take(signals);
     yield* callWith(signals, "probe_ok", threadScope("thread:ordinary"));
     yield* Effect.yieldNow;
     expect(yield* Queue.size(signals)).toBe(0);

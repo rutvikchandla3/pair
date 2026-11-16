@@ -15,6 +15,7 @@ import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effec
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   DeviceToolError,
+  MemberId,
   OrchestratorMcpFailure,
   PreviewAutomationError,
   ProviderInteractionMode,
@@ -263,6 +264,12 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     // A cloud-only server takes links without the beta: each is a member's agent link.
     if (limited.client?.linked === true && !labs && !cloudOnly) return linkedEnvironmentsOff;
     const linkedEnvironments = labs || (yield* hasAgentLinks);
+    // One read and one label check per request, so the cos_* tools and the audit hook
+    // never re-derive "is Chief of staff" and see the same answer.
+    const chiefOfStaff = chiefOfStaffCaller(
+      limited,
+      yield* ChiefOfStaffHomeThreads.readHomeThreads,
+    );
     const reachOf = (scope: typeof limited) => {
       const reach = access === undefined ? undefined : threadReachOf(access, scope);
       return reach === undefined ? {} : { reach };
@@ -272,6 +279,16 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         ...limited,
         linkedEnvironments,
         teamImages: cloudOnly,
+        ...(chiefOfStaff === undefined
+          ? {}
+          : {
+              chiefOfStaff: {
+                via: chiefOfStaff.via,
+                ...(chiefOfStaff.memberId === undefined
+                  ? {}
+                  : { memberId: MemberId.make(chiefOfStaff.memberId) }),
+              },
+            }),
         ...reachOf(limited),
       }),
       Effect.map(normalizeMcpHttpResponse),
@@ -1002,26 +1019,22 @@ const withToolRecording =
             const scope = Option.getOrUndefined(
               yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
             );
-            if (scope !== undefined) {
-              const homeThreads =
-                scope.thread === undefined
-                  ? ChiefOfStaffHomeThreads.EMPTY_HOME_THREADS
-                  : yield* ChiefOfStaffHomeThreads.readHomeThreads;
-              const caller = chiefOfStaffCaller(scope, homeThreads);
-              if (caller !== undefined) {
-                const outcome = toolOutcome(result);
-                const status = outcome.outcome === "ok" ? "ok" : "error";
-                yield* audit.value.record({
-                  ...caller,
-                  tool,
-                  args,
-                  outcome: status,
-                  ...(status === "error"
-                    ? { errorCode: auditErrorCode(result, outcome.errorCode) }
-                    : {}),
-                  durationMs,
-                });
-              }
+            const caller = scope?.chiefOfStaff;
+            if (caller !== undefined) {
+              const outcome = toolOutcome(result);
+              const status = outcome.outcome === "ok" ? "ok" : "error";
+              yield* audit.value.record({
+                ...(caller.memberId === undefined ? {} : { memberId: caller.memberId }),
+                via: caller.via,
+                ...(scope?.thread === undefined ? {} : { threadId: scope.thread.threadId }),
+                tool,
+                args,
+                outcome: status,
+                ...(status === "error"
+                  ? { errorCode: auditErrorCode(result, outcome.errorCode) }
+                  : {}),
+                durationMs,
+              });
             }
           }
           if (Option.isNone(analytics)) return;

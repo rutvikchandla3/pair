@@ -2,7 +2,6 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as ChiefOfStaffMemory from "../../../chiefOfStaff/ChiefOfStaffMemory.ts";
-import { loadHomeThreads } from "../../../chiefOfStaff/homeThreads.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { unavailable } from "../../threadAccess.ts";
@@ -14,15 +13,11 @@ const accessDenied = new OrchestratorMcpFailure({
     "These tools are only for Chief of staff: a caller must be one of its home threads, or an MCP client whose member has one.",
 });
 
-/** Whichever home thread this caller is: its own, or the one its member owns. */
+/** The scope already decided whether this is Chief of staff; the refusal is a backstop. */
 const resolveMemberId = Effect.fn("chiefOfStaffMemory.resolveMemberId")(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
-  const homeThreads = yield* loadHomeThreads;
-  const fromThread =
-    scope.thread === undefined ? undefined : homeThreads.memberIdForThread(scope.thread.threadId);
-  if (fromThread !== undefined) return fromThread;
-  const memberId = scope.client?.memberId;
-  if (memberId !== undefined && homeThreads.hasHomeThread(memberId)) return memberId;
+  const memberId = scope.chiefOfStaff?.memberId;
+  if (memberId !== undefined) return memberId;
   return yield* accessDenied;
 });
 

@@ -5,8 +5,9 @@ import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
-import { McpServer } from "effect/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
@@ -103,6 +104,17 @@ const toolHandlerServices = Layer.mergeAll(
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
+/**
+ * An ordinary caller's view: `EnabledWhen` as the protocol evaluates it. The cos_* tools
+ * are hidden for anyone but Chief of staff, so they are not in the advertised list.
+ */
+const advertisedToOrdinaryThread = (annotations: Context.Context<never>): boolean => {
+  const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+  return (
+    enabledWhen === undefined || enabledWhen({ protocolVersion: "2025-06-18", capabilities: {} })
+  );
+};
+
 const claudeSystemAppend = () => {
   const { systemPrompt } = makeClaudeQueryOptions({
     modelSelection: {
@@ -155,11 +167,13 @@ it.effect("agent context matches the committed budget", () =>
       // The model sees these fields. outputSchema and annotations are protocol metadata.
       mcpToolListJsonBytes: utf8Bytes(
         JSON.stringify(
-          mcp.tools.map(({ tool }) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-          })),
+          mcp.tools
+            .filter(({ annotations }) => advertisedToOrdinaryThread(annotations))
+            .map(({ tool }) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+            })),
         ),
       ),
     };

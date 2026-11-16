@@ -12,7 +12,7 @@ const HOME_KEY_PREFIX = "home:";
 
 /** Every `home:<memberId>` key in `threads.json`, mapped from thread id to member id. */
 export type HomeThreads = ReadonlyMap<string, string>;
-export const EMPTY_HOME_THREADS: HomeThreads = new Map();
+const EMPTY_HOME_THREADS: HomeThreads = new Map();
 
 /** The index API over the same map: id lookups for both callers and tools. */
 export interface HomeThreadIndex {
