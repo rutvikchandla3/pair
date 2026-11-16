@@ -9,6 +9,7 @@ import {
   type OrchestrationV2SpaceCommand,
   type OrchestrationV2SpaceTaskChange,
   type Space,
+  type SpaceIcon,
   SPACE_AGENT_DEFAULT_MODEL,
   SPACE_AGENT_INSTANCE_ID,
   SPACE_QUOTE_MAX_LENGTH,
@@ -250,7 +251,11 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
         (command.projectId !== space.projectId ||
           !sameIds(command.repositoryIds, space.repositoryIds));
       const renamed = command.name !== undefined && command.name !== space.name;
-      if ((renamed || repositoriesChanged) && !isOwner) return refuse("not-owner");
+      const iconChanged =
+        command.icon !== undefined && !sameIcon(command.icon ?? undefined, space.icon);
+      if ((renamed || repositoriesChanged || iconChanged) && !isOwner) {
+        return refuse("not-owner");
+      }
       const lines: Array<SpaceSystemLine> = [];
       const patch: { -readonly [K in keyof Space]?: Space[K] } = {};
       if (renamed && command.name !== undefined) {
@@ -274,9 +279,12 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
           projectId: command.projectId,
         });
       }
-      if (lines.length === 0) return NO_OP;
+      if (lines.length === 0 && !iconChanged) return NO_OP;
+      const { icon: _icon, ...withoutIcon } = changed(patch);
       return accept(
-        changed(patch),
+        iconChanged
+          ? { ...withoutIcon, ...(command.icon ? { icon: command.icon } : {}) }
+          : changed(patch),
         lines.map((value, index) => line(value, index)),
       );
     }
@@ -392,6 +400,9 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
     case "space.post": {
       if (!isMember) return refuse("not-member");
       if (space.archivedAt !== null) return refuse("archived");
+      if (command.text.length === 0 && (command.attachments?.length ?? 0) === 0) {
+        return refuse("not-allowed");
+      }
       const quoted = command.quoteEntryId === undefined ? undefined : input.quoted;
       if (
         command.quoteEntryId !== undefined &&
@@ -885,6 +896,9 @@ const withRemoved = (
       ? { ...member, removedAt: now }
       : member,
   );
+
+const sameIcon = (left: SpaceIcon | undefined, right: SpaceIcon | undefined) =>
+  left?.color === right?.color && left?.emoji === right?.emoji;
 
 const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
   left.length === right.length && left.every((id, index) => id === right[index]);

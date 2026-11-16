@@ -7,6 +7,7 @@ import {
   spaceFeedRows,
   spaceSystemLineText,
   spaceUndoneEntryIds,
+  spacePostPreview,
   splitSpacePostText,
 } from "@t3tools/client-runtime/spaces";
 import type { EnvironmentId, Space, SpaceRoomEntry } from "@t3tools/contracts";
@@ -18,7 +19,7 @@ import { MemberAvatar } from "../team/MemberAvatar";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { type SpacePairFeedContext, SpacePairFeedRow, SpacePairStatus } from "./SpacePairFeed";
-import { SpacePostImages } from "./SpacePostImages";
+import { SpacePostAttachments } from "./SpacePostAttachments";
 import { SpaceRecordLine, SpaceSystemLine, formatSpaceTime } from "./SpaceRecord";
 
 const isRecordRow = (row: SpaceFeedRow<SpacePairFeedItem>) =>
@@ -118,33 +119,38 @@ export function SpaceFeed(props: SpaceFeedProps) {
               <span className="shrink-0 font-medium">
                 {props.viewer.nameOf(entry.quote.authorId)}
               </span>
-              <span className="truncate">{entry.quote.text}</span>
+              <span className="truncate">{spacePostPreview(entry.quote)}</span>
             </div>
           )}
-          <p className="whitespace-pre-wrap break-words text-sm">
-            {segments.map((segment, index) =>
-              segment.type === "text" ? (
-                segment.text
-              ) : (
-                <span
-                  // oxlint-disable-next-line react/no-array-index-key -- segments have no identity
-                  key={index}
-                  className={cn(
-                    "rounded px-0.5 font-medium",
-                    segment.mention.type === "pair" ||
-                      (segment.mention.type === "member" &&
-                        segment.mention.memberId === props.viewer.memberId)
-                      ? "bg-input-foreground/12 text-input-foreground"
-                      : "text-input-foreground",
-                  )}
-                >
-                  {segment.text}
-                </span>
-              ),
-            )}
-          </p>
+          {segments.length === 0 ? null : (
+            <p className="whitespace-pre-wrap break-words text-sm">
+              {segments.map((segment, index) =>
+                segment.type === "text" ? (
+                  segment.text
+                ) : (
+                  <span
+                    // oxlint-disable-next-line react/no-array-index-key -- segments have no identity
+                    key={index}
+                    className={cn(
+                      "rounded px-0.5 font-medium",
+                      segment.mention.type === "pair" ||
+                        (segment.mention.type === "member" &&
+                          segment.mention.memberId === props.viewer.memberId)
+                        ? "bg-input-foreground/12 text-input-foreground"
+                        : "text-input-foreground",
+                    )}
+                  >
+                    {segment.text}
+                  </span>
+                ),
+              )}
+            </p>
+          )}
           {entry.attachments === undefined || entry.attachments.length === 0 ? null : (
-            <SpacePostImages environmentId={props.environmentId} images={entry.attachments} />
+            <SpacePostAttachments
+              environmentId={props.environmentId}
+              attachments={entry.attachments}
+            />
           )}
           {entry.pairRequested ? (
             <SpacePairStatus

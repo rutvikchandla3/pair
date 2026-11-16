@@ -1,6 +1,6 @@
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
-import { spaceWorkspaceLine } from "@t3tools/client-runtime/spaces";
+import { SPACE_COLOR_VALUES, spaceColor, spaceWorkspaceLine } from "@t3tools/client-runtime/spaces";
 import { activeTeamMembers } from "@t3tools/client-runtime/state/team";
 import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import { teamAdmins, teamClaudeKeyIsSet } from "@t3tools/client-runtime/team-claude-key";
@@ -9,11 +9,15 @@ import {
   type MemberId,
   type ModelSelection,
   type ProjectId,
+  SPACE_COLORS,
   SPACE_MAX_REPOSITORIES,
   type Space,
+  SpaceEmoji,
+  type SpaceIcon,
   type SpaceId,
   type SpaceThreadStart,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { type ReactNode, useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -21,6 +25,7 @@ import { MemberAvatar } from "../../components/MemberAvatar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
 import {
@@ -38,6 +43,7 @@ import {
 import { useTeamRoster, useTeamViewer } from "../../state/team";
 import { scheduledTaskDefaultModel } from "../settings/scheduledTaskDraft";
 import { openSettings } from "../settings/settings-navigation";
+import { SpaceMark } from "./SpaceMark";
 
 export function SpaceField(props: { readonly label: string; readonly children: ReactNode }) {
   return (
@@ -45,6 +51,81 @@ export function SpaceField(props: { readonly label: string; readonly children: R
       <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
       {props.children}
     </View>
+  );
+}
+
+const isSpaceEmoji = Schema.is(SpaceEmoji);
+
+/** The owner's pick of color and emoji; Reset goes back to the derived letter and color. */
+export function SpaceIconField(props: {
+  readonly space: Space;
+  readonly disabled: boolean;
+  readonly onSave: (icon: SpaceIcon | null) => void;
+}) {
+  const [emoji, setEmoji] = useState<string | null>(null);
+  const color = spaceColor(props.space);
+  const current = props.space.icon?.emoji;
+  const save = (next: { readonly color: SpaceIcon["color"]; readonly emoji: string | undefined }) =>
+    props.onSave(next.emoji === undefined ? { color: next.color } : next);
+  const saveEmoji = () => {
+    const next = emoji?.trim() ?? "";
+    setEmoji(null);
+    if (emoji === null || next === (current ?? "")) return;
+    if (next !== "" && !isSpaceEmoji(next)) {
+      Dialog.alert("Use one emoji", "A space's icon is a single emoji.");
+      return;
+    }
+    save({ color, emoji: next === "" ? undefined : next });
+  };
+  return (
+    <SpaceField label="Icon">
+      <View className="flex-row items-center gap-3">
+        <SpaceMark space={props.space} size="lg" />
+        <TextInput
+          accessibilityLabel="Emoji"
+          editable={!props.disabled}
+          value={emoji ?? current ?? ""}
+          placeholder="Emoji (optional)"
+          placeholderTextColorClassName="accent-foreground-muted"
+          onChangeText={setEmoji}
+          onBlur={saveEmoji}
+          className="min-h-12 min-w-0 flex-1 rounded-xl bg-subtle px-4 text-base text-foreground"
+        />
+        {props.space.icon === undefined ? null : (
+          <Button
+            label="Reset"
+            tone="text"
+            size="compact"
+            disabled={props.disabled}
+            onPress={() => props.onSave(null)}
+          />
+        )}
+      </View>
+      <View className="flex-row flex-wrap gap-2 pt-1">
+        {SPACE_COLORS.map((option) => (
+          <Pressable
+            key={option}
+            accessibilityRole="radio"
+            accessibilityLabel={option}
+            accessibilityState={{ selected: option === color, disabled: props.disabled }}
+            disabled={props.disabled}
+            onPress={() => {
+              if (option !== color || props.space.icon === undefined)
+                save({ color: option, emoji: current });
+            }}
+            className={cn(
+              "size-9 items-center justify-center rounded-full border-2 active:opacity-70",
+              option === color ? "border-foreground" : "border-transparent",
+            )}
+          >
+            <View
+              className="size-7 rounded-full"
+              style={{ backgroundColor: SPACE_COLOR_VALUES[option] }}
+            />
+          </Pressable>
+        ))}
+      </View>
+    </SpaceField>
   );
 }
 

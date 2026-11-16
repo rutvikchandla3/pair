@@ -300,7 +300,7 @@ Each v1 task becomes a task with its thread attached. Its status is set once, fr
 | Edit or remove a note                           | Yes                     | Yes                          | No                |
 | Add members, accept a join request              | Yes                     | No                           | Request to join   |
 | Remove members, transfer ownership              | Yes                     | No                           | No                |
-| Rename, change the repositories                 | Yes                     | No                           | No                |
+| Rename, change the icon or the repositories     | Yes                     | No                           | No                |
 | Archive, unarchive                              | Yes                     | No                           | No                |
 | Leave                                           | After a transfer        | Yes                          | —                 |
 

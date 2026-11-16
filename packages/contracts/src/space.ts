@@ -11,8 +11,9 @@ import {
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
+  TrimmedString,
 } from "./baseSchemas.ts";
-import { ChatImageAttachment } from "./chatAttachment.ts";
+import { ChatFileAttachment, ChatImageAttachment } from "./chatAttachment.ts";
 
 export const SpaceId = TrimmedNonEmptyString.check(Schema.isPattern(/^spc_[0-9a-f]{20}$/)).pipe(
   Schema.brand("SpaceId"),
@@ -23,12 +24,44 @@ const SPACE_NAME_MAX_LENGTH = 80;
 const SPACE_BRIEF_MAX_LENGTH = 20_000;
 const SPACE_POST_MAX_LENGTH = 20_000;
 
-export const SPACE_POST_MAX_IMAGES = 8;
-/** Images on a post; uploaded first, then claimed into the room thread when the post lands. */
-export const SpacePostAttachments = Schema.Array(ChatImageAttachment).check(
-  Schema.isMaxLength(SPACE_POST_MAX_IMAGES),
-);
+export const SPACE_POST_MAX_ATTACHMENTS = 8;
+/** Images and files on a post; uploaded first, then claimed into the room thread when it lands. */
+export const SpacePostAttachments = Schema.Array(
+  Schema.Union([ChatImageAttachment, ChatFileAttachment]),
+).check(Schema.isMaxLength(SPACE_POST_MAX_ATTACHMENTS));
 export type SpacePostAttachments = typeof SpacePostAttachments.Type;
+/** Empty only when the post carries attachments. */
+export const SpacePostText = TrimmedString.check(Schema.isMaxLength(SPACE_POST_MAX_LENGTH));
+
+export const SPACE_COLORS = [
+  "red",
+  "orange",
+  "amber",
+  "lime",
+  "green",
+  "teal",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "pink",
+  "slate",
+] as const;
+export const SpaceColor = Schema.Literals(SPACE_COLORS);
+export type SpaceColor = typeof SpaceColor.Type;
+/** One emoji: a pictograph with its modifiers and joins, or a flag. */
+export const SpaceEmoji = Schema.String.check(
+  Schema.isMaxLength(32),
+  Schema.isPattern(
+    /^(?:\p{Regional_Indicator}\p{Regional_Indicator}|\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*(?:\u200D\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*)*)$/u,
+  ),
+);
+/** What the owner picked; without one, clients derive a letter and color from the space. */
+export const SpaceIcon = Schema.Struct({
+  color: SpaceColor,
+  emoji: Schema.optionalKey(SpaceEmoji),
+});
+export type SpaceIcon = typeof SpaceIcon.Type;
 
 export const SpaceName = TrimmedNonEmptyString.check(Schema.isMaxLength(SPACE_NAME_MAX_LENGTH));
 export const SpaceBrief = Schema.String.check(Schema.isMaxLength(SPACE_BRIEF_MAX_LENGTH));
@@ -78,6 +111,7 @@ export const Space = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
   archivedBy: Schema.NullOr(MemberId),
+  icon: Schema.optionalKey(SpaceIcon),
 });
 export type Space = typeof Space.Type;
 
@@ -277,7 +311,7 @@ export const SpaceRoomEntry = Schema.Union([
     spaceId: SpaceId,
     authorId: MemberId,
     authorKind: SpacePostAuthorKind,
-    text: TrimmedNonEmptyString.check(Schema.isMaxLength(SPACE_POST_MAX_LENGTH)),
+    text: SpacePostText,
     mentions: Schema.Array(SpaceMention),
     attachments: Schema.optionalKey(SpacePostAttachments),
     /** An inline quote-reply; there are no side threads. */

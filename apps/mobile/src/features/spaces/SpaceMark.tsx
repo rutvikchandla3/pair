@@ -12,11 +12,13 @@ const SIZES = {
 } as const;
 
 export function SpaceMark(props: {
-  readonly space: Pick<Space, "id" | "name">;
+  readonly space: Pick<Space, "id" | "name" | "icon">;
   readonly size?: keyof typeof SIZES;
 }) {
   const size = SIZES[props.size ?? "md"];
   const mark = spaceMark(props.space);
+  // Emoji carry their own weight and color, so they sit a little larger than a letter.
+  const fontSize = mark.emoji ? Math.round(size.font * 1.15) : size.font;
   return (
     <View
       importantForAccessibility="no-hide-descendants"
@@ -29,11 +31,8 @@ export function SpaceMark(props: {
         backgroundColor: mark.color,
       }}
     >
-      <Text
-        className="font-t3-bold text-white"
-        style={{ fontSize: size.font, lineHeight: size.font + 2 }}
-      >
-        {mark.letter}
+      <Text className="font-t3-bold text-white" style={{ fontSize, lineHeight: fontSize + 2 }}>
+        {mark.glyph}
       </Text>
     </View>
   );
