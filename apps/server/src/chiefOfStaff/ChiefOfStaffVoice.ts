@@ -42,6 +42,7 @@ import {
   isForThread,
   mapNotification,
   realtimeFailure,
+  RELAY_THREAD_VERSION,
   realtimeStartParams,
 } from "./chiefOfStaffProtocol.ts";
 
@@ -339,7 +340,7 @@ const make = Effect.gen(function* () {
       yield* initialize(opened);
       const threadId = yield* openThread(
         opened,
-        `${caller.memberId}:${instanceId}`,
+        `${caller.memberId}:${instanceId}:${RELAY_THREAD_VERSION}`,
         backingThreadParams({
           cwd: yield* host.workspaceDir,
           model: config.model,

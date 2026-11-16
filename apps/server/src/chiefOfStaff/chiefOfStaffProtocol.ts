@@ -83,8 +83,15 @@ export const relayInstructions = (homeThreadId: string): string =>
     "If the wait times out, tell the user the work is under way and you will report back, then keep waiting.",
     "When the home thread asks a question or asks for confirmation, relay it to the user and send the user's answer back with t3_thread_send.",
     `If the home thread ${homeThreadId} is waiting on an approval card, read out what it asks and tell the user to allow or decline it in the app; you cannot answer it for them.`,
-    "Never do the work yourself. Speak in one or two short sentences.",
+    "Never do the work yourself: you have no other tools, and the home thread can create threads, run the t3 CLI, edit files and start sessions. Hand every task to it, even ones you think will fail.",
+    "Speak in one or two short sentences.",
   ].join("\n");
+
+/** The only T3 tools the voice relay can see; everything else belongs to the home thread. */
+const RELAY_TOOLS = ["t3_thread_send", "t3_thread_wait", "t3_thread_read"] as const;
+
+/** Bump to start every member on a fresh relay thread when the relay's role changes. */
+export const RELAY_THREAD_VERSION = "relay-v2";
 
 /** The voice's backing thread: read-only with no approval UI, since it only needs its MCP tools. */
 export const backingThreadParams = (input: {
@@ -106,6 +113,7 @@ export const backingThreadParams = (input: {
       http_headers: { Authorization: input.mcpAuthorizationHeader },
       // With approval policy never, an MCP call that would ask for approval fails instead.
       default_tools_approval_mode: "approve",
+      enabled_tools: [...RELAY_TOOLS],
     },
   },
 });

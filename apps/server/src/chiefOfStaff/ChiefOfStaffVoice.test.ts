@@ -229,6 +229,7 @@ it.effect(
         url: "http://127.0.0.1/mcp",
         http_headers: { Authorization: "Bearer client-1" },
         default_tools_approval_mode: "approve",
+        enabled_tools: ["t3_thread_send", "t3_thread_wait", "t3_thread_read"],
       });
       const realtime = fake.requests[3]?.params as Record<string, unknown>;
       assert.deepInclude(realtime, {
@@ -245,7 +246,7 @@ it.effect(
       assert.deepEqual(fake.issued, [
         { label: "Chief of staff", access: "read-only", memberId: member.memberId },
       ]);
-      assert.deepEqual(fake.saved, [[`${member.memberId}:codex`, NATIVE_THREAD]]);
+      assert.deepEqual(fake.saved, [[`${member.memberId}:codex:relay-v2`, NATIVE_THREAD]]);
 
       const { first, events } = yield* collect(fake.voice, result.sessionId);
       assert.deepEqual(first, { _tag: "state", state: "listening" });

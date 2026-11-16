@@ -117,6 +117,7 @@ it("makes the voice backing thread read-only with a low-effort fast model", () =
     url: "http://127.0.0.1/mcp",
     http_headers: { Authorization: "Bearer x" },
     default_tools_approval_mode: "approve",
+    enabled_tools: ["t3_thread_send", "t3_thread_wait", "t3_thread_read"],
   });
 
   const configured = backingThreadParams({ ...base, model: "gpt-5" });
