@@ -64,6 +64,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Textarea } from "../ui/textarea";
 import { SpaceAttachThreadDialog } from "./SpaceAttachThreadDialog";
 import { SpaceConfirmDialog } from "./SpaceConfirmDialog";
+import { SpaceIconPicker } from "./SpaceIconPicker";
 import { SpaceModelPicker, useSpaceModelSelection } from "./SpaceModelPicker";
 import { SpaceStartThreadDialog } from "./SpaceStartThreadDialog";
 import { SpaceTaskStatusGlyph } from "./SpaceStatusIcon";
@@ -722,6 +723,18 @@ function SpaceSettingsDialog(props: {
                       "Could not rename the space",
                     );
                 }}
+              />
+            </Field>
+            <Field label="Icon">
+              <SpaceIconPicker
+                space={space}
+                disabled={!controls.canManage || busy}
+                onChange={(icon) =>
+                  void apply(
+                    { type: "update", spaceId: space.id, icon },
+                    "Could not change the icon",
+                  )
+                }
               />
             </Field>
             <Field

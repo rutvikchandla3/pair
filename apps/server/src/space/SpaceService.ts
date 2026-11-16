@@ -390,6 +390,7 @@ const make = Effect.gen(function* () {
           type: "space.update",
           ...(input.name === undefined ? {} : { name: input.name }),
           ...(input.brief === undefined ? {} : { brief: input.brief }),
+          ...(input.icon === undefined ? {} : { icon: input.icon }),
           ...(workspace === undefined
             ? {}
             : { repositoryIds: input.repositoryIds, projectId: workspace.projectId }),

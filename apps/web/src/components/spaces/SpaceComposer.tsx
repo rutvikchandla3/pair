@@ -11,24 +11,25 @@ import {
   spaceMentionCandidates,
   spaceMentionQuery,
   spacePairOffHint,
+  spacePostPreview,
 } from "@t3tools/client-runtime/spaces";
 import { teamClaudeKeyIsSet } from "@t3tools/client-runtime/team-claude-key";
 import {
+  type ChatAttachment,
   type EnvironmentId,
   MessageId,
-  SPACE_POST_MAX_IMAGES,
+  SPACE_POST_MAX_ATTACHMENTS,
   SPACE_QUOTE_MAX_LENGTH,
   type Space,
+  type SpacePostAttachments,
   type SpaceRoomEntry,
 } from "@t3tools/contracts";
 import { ArrowUpIcon, SparklesIcon, XIcon } from "lucide-react";
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
-import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { cn, randomUUID } from "~/lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { awaitAttachmentUploads, getUploadedAttachments } from "../../lib/attachmentUploadQueue";
-import { isImageAttachment } from "../../types";
 import { useCanManageTeamClaudeKey, useTeamClaudeKeyStatus } from "../../state/spaceAgent";
 import { spaceEnvironment } from "../../state/spaces";
 import { useTeamMembers } from "../../state/team";
@@ -40,10 +41,20 @@ import { TeamClaudeKeyDialog } from "../team/TeamClaudeKeyCard";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { SpaceComposerImages, prepareSpaceImages, releaseSpaceImages } from "./SpaceComposerImages";
+import {
+  SpaceComposerAttachments,
+  type SpaceDraftAttachment,
+  prepareSpaceAttachments,
+  releaseSpaceAttachments,
+} from "./SpaceComposerAttachments";
 import { useSpaceComposerDraftStore } from "./spaceComposerDraftStore";
 
 type Post = Extract<SpaceRoomEntry, { type: "post" }>;
+
+const isSpacePostAttachment = (
+  attachment: ChatAttachment,
+): attachment is SpacePostAttachments[number] =>
+  attachment.type === "image" || attachment.type === "file";
 
 export function SpaceComposer(props: {
   readonly environmentId: EnvironmentId;
@@ -77,19 +88,17 @@ export function SpaceComposer(props: {
   const [highlight, setHighlight] = useState(0);
   const [asked, setAsked] = useState(false);
   const [addingKey, setAddingKey] = useState(false);
-  const [images, setImageState] = useState<ReadonlyArray<ComposerImageAttachment>>([]);
+  const [attachments, setAttachmentState] = useState<ReadonlyArray<SpaceDraftAttachment>>([]);
   const [dragOver, setDragOver] = useState(false);
-  const imagesRef = useRef<ReadonlyArray<ComposerImageAttachment>>([]);
-  const setImages = (
-    update: (
-      current: ReadonlyArray<ComposerImageAttachment>,
-    ) => ReadonlyArray<ComposerImageAttachment>,
+  const attachmentsRef = useRef<ReadonlyArray<SpaceDraftAttachment>>([]);
+  const setAttachments = (
+    update: (current: ReadonlyArray<SpaceDraftAttachment>) => ReadonlyArray<SpaceDraftAttachment>,
   ) => {
-    imagesRef.current = update(imagesRef.current);
-    setImageState(imagesRef.current);
+    attachmentsRef.current = update(attachmentsRef.current);
+    setAttachmentState(attachmentsRef.current);
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- frees uploads and blob previews a left-behind draft still holds
-  useEffect(() => () => releaseSpaceImages(imagesRef.current), [imagesRef]);
+  useEffect(() => () => releaseSpaceAttachments(attachmentsRef.current), [attachmentsRef]);
 
   // Without a Team Claude key, Pair is greyed in the menu and a typed @pair isn't a tag.
   const candidates =
@@ -104,21 +113,21 @@ export function SpaceComposer(props: {
   );
   const hint = spaceComposerHint(mentions, props.viewer) ?? pairOff?.text ?? null;
   const tagsPair = mentions.some((mention) => mention.type === "pair");
-  const canSend = text.trim().length > 0;
+  const canSend = text.trim().length > 0 || attachments.length > 0;
 
   const addFiles = async (files: ReadonlyArray<File>) => {
     if (files.length === 0) return;
-    const added = await prepareSpaceImages({
+    const added = await prepareSpaceAttachments({
       environmentId: props.environmentId,
       files,
-      room: SPACE_POST_MAX_IMAGES - imagesRef.current.length,
+      room: SPACE_POST_MAX_ATTACHMENTS - attachmentsRef.current.length,
     });
-    setImages((current) => [...current, ...added]);
+    setAttachments((current) => [...current, ...added]);
   };
 
-  const removeImage = (image: ComposerImageAttachment) => {
-    releaseSpaceImages([image]);
-    setImages((current) => current.filter((candidate) => candidate !== image));
+  const removeAttachment = (attachment: SpaceDraftAttachment) => {
+    releaseSpaceAttachments([attachment]);
+    setAttachments((current) => current.filter((candidate) => candidate !== attachment));
   };
 
   // As in the thread composer: pasted images attach, other files only when no text came along.
@@ -179,32 +188,35 @@ export function SpaceComposer(props: {
 
   const send = async () => {
     const body = text.trim();
-    if (body.length === 0) return;
+    const sentAttachments = attachments;
+    if (body.length === 0 && sentAttachments.length === 0) return;
     const quote = props.quote;
     const sentTokens = tokens;
-    const sentImages = images;
     setText("");
     setTokens([]);
-    setImages(() => []);
+    setAttachments(() => []);
     setQuery(null);
     props.onQuoteChange(null);
-    // Hand the draft back, mentions, quote and images too, unless a new one was started.
+    // Hand the draft back, mentions, quote and attachments too, unless a new one was started.
     const restore = () => {
-      if (textareaRef.current?.value !== "") return false;
+      if (textareaRef.current?.value !== "" || attachmentsRef.current.length > 0) return false;
       setText(body);
       setTokens(sentTokens);
-      setImages((current) => [...sentImages, ...current]);
+      setAttachments(() => sentAttachments);
       if (quote !== null) props.onQuoteChange(quote);
       return true;
     };
-    await awaitAttachmentUploads(sentImages.map((image) => image.id));
-    const attachments = getUploadedAttachments({
+    await awaitAttachmentUploads(sentAttachments.map((attachment) => attachment.id));
+    const uploaded = getUploadedAttachments({
       environmentId: props.environmentId,
-      images: sentImages,
-    });
-    if (attachments === null) {
-      if (!restore()) releaseSpaceImages(sentImages);
-      toastManager.add({ type: "error", title: "An image did not upload. Retry it, then send." });
+      images: sentAttachments,
+    })?.filter(isSpacePostAttachment);
+    if (uploaded === undefined) {
+      if (!restore()) releaseSpaceAttachments(sentAttachments);
+      toastManager.add({
+        type: "error",
+        title: "An attachment did not upload. Retry it, then send.",
+      });
       return;
     }
     const result = await post({
@@ -215,16 +227,16 @@ export function SpaceComposer(props: {
         text: body,
         mentions,
         ...(quote === null ? {} : { quoteEntryId: quote.id }),
-        ...(attachments.length === 0 ? {} : { attachments: attachments.filter(isImageAttachment) }),
+        ...(uploaded.length === 0 ? {} : { attachments: uploaded }),
       },
     });
     if (result._tag === "Failure") {
-      if (!restore()) releaseSpaceImages(sentImages);
+      if (!restore()) releaseSpaceAttachments(sentAttachments);
       toastCommandFailure("Could not post", result);
       return;
     }
     // The server keeps its own copy once the post lands.
-    releaseSpaceImages(sentImages);
+    releaseSpaceAttachments(sentAttachments);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -339,7 +351,7 @@ export function SpaceComposer(props: {
                       Replying to {props.viewer.nameOf(props.quote.authorId)}
                     </span>
                     <span className="line-clamp-1">
-                      {props.quote.text.slice(0, SPACE_QUOTE_MAX_LENGTH)}
+                      {spacePostPreview(props.quote).slice(0, SPACE_QUOTE_MAX_LENGTH)}
                     </span>
                   </div>
                   <Button
@@ -352,10 +364,10 @@ export function SpaceComposer(props: {
                   </Button>
                 </div>
               )}
-              <SpaceComposerImages
+              <SpaceComposerAttachments
                 environmentId={props.environmentId}
-                images={images}
-                onRemove={removeImage}
+                attachments={attachments}
+                onRemove={removeAttachment}
               />
               <textarea
                 ref={textareaRef}

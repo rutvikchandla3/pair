@@ -17,11 +17,13 @@ import {
   spaceNewDividerIndex,
   spaceSystemLineText,
   spaceThreadsByTask,
+  spacePostPreview,
   splitSpacePostText,
 } from "@t3tools/client-runtime/spaces";
 import { spacePairFeedItems, spacePairRoom } from "@t3tools/client-runtime/spaceAgent";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import {
+  type ChatImageAttachment,
   EnvironmentId,
   type Space,
   SpaceId,
@@ -67,7 +69,7 @@ import {
   useSpaceUndoNotice,
 } from "./space-notices";
 import { type SpacePairFeedContext, SpacePairFeedRow, SpacePairStatus } from "./SpacePairFeed";
-import { MessageAttachmentImage } from "../threads/ThreadFeed";
+import { MessageAttachmentFile, MessageAttachmentImage } from "../threads/ThreadFeed";
 import { SpaceMark } from "./SpaceMark";
 import { SpaceRecordLine } from "./SpaceRecordLine";
 
@@ -397,28 +399,30 @@ function SpaceRoom(props: {
               <Text className="text-xs font-t3-medium text-foreground-secondary">
                 {viewer.nameOf(entry.quote.authorId)}
               </Text>{" "}
-              {entry.quote.text}
+              {spacePostPreview({ text: entry.quote.text })}
             </Text>
           )}
-          <Text selectable className="text-base text-foreground">
-            {segments.map((segment, index) =>
-              segment.type === "text" ? (
-                segment.text
-              ) : (
-                <Text
-                  // oxlint-disable-next-line react/no-array-index-key -- segments have no identity
-                  key={index}
-                  className="text-base font-t3-medium text-primary-text"
-                >
-                  {segment.text}
-                </Text>
-              ),
-            )}
-          </Text>
+          {entry.text.length === 0 ? null : (
+            <Text selectable className="text-base text-foreground">
+              {segments.map((segment, index) =>
+                segment.type === "text" ? (
+                  segment.text
+                ) : (
+                  <Text
+                    // oxlint-disable-next-line react/no-array-index-key -- segments have no identity
+                    key={index}
+                    className="text-base font-t3-medium text-primary-text"
+                  >
+                    {segment.text}
+                  </Text>
+                ),
+              )}
+            </Text>
+          )}
           {entry.attachments === undefined || entry.attachments.length === 0 ? null : (
-            <SpacePostImages
+            <SpacePostAttachmentList
               environmentId={environmentId}
-              images={entry.attachments}
+              attachments={entry.attachments}
               onPressPreview={setPreviewFile}
             />
           )}
@@ -601,9 +605,38 @@ function SpaceRoom(props: {
   );
 }
 
+function SpacePostAttachmentList(props: {
+  readonly environmentId: EnvironmentId;
+  readonly attachments: SpacePostAttachments;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+}) {
+  const images = props.attachments.filter((attachment) => attachment.type === "image");
+  const files = props.attachments.filter((attachment) => attachment.type === "file");
+  return (
+    <>
+      {images.length === 0 ? null : (
+        <SpacePostImages
+          environmentId={props.environmentId}
+          images={images}
+          onPressPreview={props.onPressPreview}
+        />
+      )}
+      {files.map((file) => (
+        <MessageAttachmentFile
+          key={file.id}
+          environmentId={props.environmentId}
+          attachment={file}
+          onPressPreview={props.onPressPreview}
+          onPlaybackStart={() => undefined}
+        />
+      ))}
+    </>
+  );
+}
+
 function SpacePostImages(props: {
   readonly environmentId: EnvironmentId;
-  readonly images: SpacePostAttachments;
+  readonly images: ReadonlyArray<ChatImageAttachment>;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const lone = props.images.length === 1;

@@ -19,7 +19,9 @@ import {
   SpaceBrief,
   SpaceId,
   SpaceMention,
+  SpaceIcon,
   SpacePostAttachments,
+  SpacePostText,
   SpaceName,
   SpaceRepositoryIds,
   SpaceRoomEntry,
@@ -167,6 +169,8 @@ export const SpaceMutation = Schema.Union([
     brief: Schema.optionalKey(SpaceBrief),
     repositoryIds: Schema.optionalKey(SpaceRepositoryIds),
     workspaceName: Schema.optionalKey(TrimmedNonEmptyString),
+    /** Null goes back to the derived letter and color. */
+    icon: Schema.optionalKey(Schema.NullOr(SpaceIcon)),
   }),
   Schema.Struct({ type: Schema.Literal("archive"), ...SpaceRef }),
   Schema.Struct({ type: Schema.Literal("unarchive"), ...SpaceRef }),
@@ -203,11 +207,18 @@ export const SpacePostInput = Schema.Struct({
   ...SpaceRef,
   /** The client's id, so a retry is not posted twice. */
   messageId: MessageId,
-  text: TrimmedNonEmptyString,
+  text: SpacePostText,
   mentions: Schema.Array(SpaceMention),
   quoteEntryId: Schema.optionalKey(MessageId),
   attachments: Schema.optionalKey(SpacePostAttachments),
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      input.text.length > 0 ||
+      (input.attachments?.length ?? 0) > 0 ||
+      "A post needs text or an attachment.",
+  ),
+);
 export type SpacePostInput = typeof SpacePostInput.Type;
 
 export const SpacePostResult = Schema.Struct({ entry: SpaceRoomEntry });

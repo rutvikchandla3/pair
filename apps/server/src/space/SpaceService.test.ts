@@ -207,7 +207,7 @@ const toolkitAs = (memberId: MemberId, threadId?: ThreadId) =>
     const toolkit = yield* SpaceToolkit.pipe(
       Effect.provide(McpToolAccess.HandlersLayer.layer(SpaceHandlers.layer)),
     );
-    return (name: "t3_space_manage" | "t3_space_task_status", params: unknown) =>
+    return (name: "t3_space_manage" | "t3_space_post" | "t3_space_task_status", params: unknown) =>
       toolkit.handle(name, params as never).pipe(
         Stream.unwrap,
         Stream.runCollect,
@@ -327,7 +327,7 @@ it.layer(layer)("SpaceService", (it) => {
     }),
   );
 
-  it.effect("a post's images move into the room; a refused post leaves none behind", () =>
+  it.effect("a post's attachments move into the room; a refused post leaves none behind", () =>
     Effect.gen(function* () {
       const spaces = yield* SpaceService.SpaceService;
       const { attachmentsDir } = yield* ServerConfig.ServerConfig;
@@ -372,6 +372,22 @@ it.layer(layer)("SpaceService", (it) => {
       assert.isTrue(
         yield* fileSystem.exists(resolveAttachmentPath({ attachmentsDir, attachment: posted! })!),
       );
+
+      // An agent shares an upload with no text; it can't re-send one already in the room.
+      const agentPendingId = createPendingAttachmentId();
+      yield* fileSystem.writeFileString(`${attachmentsDir}/${agentPendingId}.png`, "png");
+      const call = yield* toolkitAs(kousik);
+      const shared = yield* call("t3_space_post", {
+        spaceId: space.id,
+        text: "",
+        attachments: [{ ...image, id: ChatAttachmentId.make(agentPendingId) }],
+      });
+      assert.property(shared, "entryId");
+      assert.deepInclude(
+        yield* call("t3_space_post", { spaceId: space.id, text: "", attachments: [posted!] }),
+        { code: "invalid_request" },
+      );
+      assert.lengthOf(yield* inRoom, 2);
     }),
   );
 

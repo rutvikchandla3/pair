@@ -718,7 +718,8 @@ it.layer(layer)("@pair tools and context", (it) => {
       const message = yield* call(scope, "space_thread_message", { threadId: outside, text: "Hi" });
       assert.strictEqual(message.reason, "not_in_space");
 
-      // The tagged post's images go to Pair as image blocks; others are only counted.
+      // The tagged post's images go to Pair as image blocks and its text files as text; a file
+      // it can't read is named, and other posts' attachments are only listed.
       const { attachmentsDir } = yield* ServerConfig.ServerConfig;
       const image = {
         type: "image" as const,
@@ -727,12 +728,32 @@ it.layer(layer)("@pair tools and context", (it) => {
         mimeType: "image/png",
         sizeBytes: 3,
       };
+      const notes = {
+        type: "file" as const,
+        id: ChatAttachmentId.make(createAttachmentId(roomThreadId)!),
+        name: "notes.md",
+        mimeType: "text/markdown",
+        sizeBytes: 12,
+      };
+      const blob = {
+        type: "file" as const,
+        id: ChatAttachmentId.make(createAttachmentId(roomThreadId)!),
+        name: "blob.bin",
+        mimeType: "application/octet-stream",
+        sizeBytes: 4,
+      };
       const fileSystem = yield* FileSystem.FileSystem;
       yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
-      yield* fileSystem.writeFileString(
-        resolveAttachmentPath({ attachmentsDir, attachment: image })!,
-        "png",
-      );
+      for (const [attachment, contents] of [
+        [image, "png"],
+        [notes, "# Repro steps"],
+        [blob, "\u0000\u0001"],
+      ] as const) {
+        yield* fileSystem.writeFileString(
+          resolveAttachmentPath({ attachmentsDir, attachment })!,
+          contents,
+        );
+      }
       const shot = MessageId.make(next("shot"));
       yield* dispatch({
         type: "space.post",
@@ -743,18 +764,21 @@ it.layer(layer)("@pair tools and context", (it) => {
         messageId: shot,
         text: "@pair what is this?",
         mentions: [{ type: "pair" }],
-        attachments: [image],
+        attachments: [image, notes, blob],
         authorKind: "user",
       });
-      const withImage = yield* Effect.flatMap(SpaceContext, (context) =>
+      const withAttachments = yield* Effect.flatMap(SpaceContext, (context) =>
         context.assemble(reply(shot)),
       );
-      const shotBlocks = withImage.messages[0]?.content as ReadonlyArray<SpaceContentBlock>;
-      assert.deepStrictEqual(shotBlocks.at(-1), {
+      const shotBlocks = withAttachments.messages[0]?.content as ReadonlyArray<SpaceContentBlock>;
+      const textOf = (index: number) => (shotBlocks.at(index) as { readonly text: string }).text;
+      assert.include(textOf(-4), "[1 image; files: notes.md, blob.bin]");
+      assert.deepStrictEqual(shotBlocks.at(-3), {
         type: "image",
         source: { type: "base64", media_type: "image/png", data: "cG5n" },
       });
-      assert.include((shotBlocks.at(-2) as { readonly text: string }).text, "[1 image]");
+      assert.include(textOf(-2), '<file name="notes.md" untrusted="true">\n# Repro steps');
+      assert.strictEqual(textOf(-1), "(file blob.bin can't be opened here)");
     }),
   );
 });

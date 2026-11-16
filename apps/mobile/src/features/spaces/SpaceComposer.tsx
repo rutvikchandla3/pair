@@ -9,12 +9,14 @@ import {
   spacePairOffHint,
   spaceMentionCandidates,
   spaceMentionQuery,
+  spacePostPreview,
 } from "@t3tools/client-runtime/spaces";
 import {
+  type ChatFileAttachment,
   type ChatImageAttachment,
   type EnvironmentId,
   MessageId,
-  SPACE_POST_MAX_IMAGES,
+  SPACE_POST_MAX_ATTACHMENTS,
   SPACE_QUOTE_MAX_LENGTH,
   type Space,
   type SpaceRoomEntry,
@@ -37,11 +39,13 @@ import {
 } from "../../lib/attachmentUpload";
 import { cn } from "../../lib/cn";
 import {
-  type DraftComposerImageAttachment,
+  type DraftComposerAttachment,
   convertPastedImagesToAttachments,
+  pickComposerFiles,
   pickComposerImages,
 } from "../../lib/composerImages";
 import { useNativePaste } from "../../lib/useNativePaste";
+import { useServerConfigs } from "../../state/entities";
 import { uuidv4 } from "../../lib/uuid";
 import {
   reportSpaceResult,
@@ -50,6 +54,7 @@ import {
   useTeamClaudeKeyStatus,
 } from "../../state/spaces";
 import { useTeamRoster } from "../../state/team";
+import { releaseUnusedComposerAttachmentFiles } from "../../state/use-composer-drafts";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { openSettings } from "../settings/settings-navigation";
 
@@ -82,7 +87,8 @@ export function SpaceComposer(props: {
   const [caret, setCaret] = useState(0);
   const [selection, setSelection] = useState<{ start: number; end: number } | undefined>();
   const [tokens, setTokens] = useState<ReadonlyArray<SpaceMentionToken>>([]);
-  const [images, setImages] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
+  const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerAttachment>>([]);
+  const capabilities = useServerConfigs().get(props.environmentId)?.environment.capabilities;
   const [sending, setSending] = useState(false);
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const query = spaceMentionQuery(text, Math.min(caret, text.length));
@@ -90,25 +96,47 @@ export function SpaceComposer(props: {
     query === null ? [] : spaceMentionCandidates(query.query, props.space, props.viewer);
   const mentions = resolveSpaceMentions(text, tokens);
   const hint = spaceComposerHint(mentions, props.viewer);
-  const canSend = text.trim().length > 0 && !sending;
+  const canSend = (text.trim().length > 0 || attachments.length > 0) && !sending;
+  const full = attachments.length >= SPACE_POST_MAX_ATTACHMENTS;
 
-  const addImages = (added: ReadonlyArray<DraftComposerImageAttachment>) => {
-    const room = SPACE_POST_MAX_IMAGES - images.length;
+  const addAttachments = (added: ReadonlyArray<DraftComposerAttachment>) => {
+    const room = Math.max(0, SPACE_POST_MAX_ATTACHMENTS - attachments.length);
     if (added.length > room) {
-      Dialog.alert("Too many images", `A post can carry up to ${SPACE_POST_MAX_IMAGES} images.`);
+      Dialog.alert(
+        "Too many attachments",
+        `A post can carry up to ${SPACE_POST_MAX_ATTACHMENTS} images and files.`,
+      );
+      void releaseUnusedComposerAttachmentFiles(added.slice(room));
     }
-    if (room > 0 && added.length > 0) setImages([...images, ...added.slice(0, room)]);
+    if (room > 0 && added.length > 0) setAttachments([...attachments, ...added.slice(0, room)]);
   };
 
   const pickImages = async () => {
-    const result = await pickComposerImages({ existingCount: images.length });
-    addImages(result.images);
+    const result = await pickComposerImages({ existingCount: attachments.length });
+    addAttachments(result.images);
     if (result.error !== null) Dialog.alert("Could not add images", result.error);
   };
 
+  const pickFiles = async () => {
+    const result = await pickComposerFiles({
+      existingCount: attachments.length,
+      ...(capabilities?.fileAttachments?.maxUploadBytes === undefined
+        ? {}
+        : { maxBytes: capabilities.fileAttachments.maxUploadBytes }),
+    });
+    addAttachments(result.files);
+    if (result.error !== null) Dialog.alert("Could not add files", result.error);
+  };
+
+  const removeAttachment = (id: string) => {
+    const removed = attachments.filter((attachment) => attachment.id === id);
+    setAttachments(attachments.filter((attachment) => attachment.id !== id));
+    void releaseUnusedComposerAttachmentFiles(removed);
+  };
+
   const onPaste = useNativePaste((uris) => {
-    void convertPastedImagesToAttachments({ uris, existingCount: images.length })
-      .then(addImages)
+    void convertPastedImagesToAttachments({ uris, existingCount: attachments.length })
+      .then(addAttachments)
       .catch(() => Dialog.alert("Could not paste", "The image could not be read."));
   });
 
@@ -125,30 +153,30 @@ export function SpaceComposer(props: {
 
   const send = async () => {
     const body = text.trim();
-    if (body.length === 0) return;
+    const sentAttachments = attachments;
+    if (body.length === 0 && sentAttachments.length === 0) return;
     const quote = props.quote;
     const sentTokens = tokens;
-    const sentImages = images;
-    let attachments: ReadonlyArray<ChatImageAttachment> = [];
+    let uploaded: ReadonlyArray<ChatImageAttachment | ChatFileAttachment> = [];
     let pending: ReadonlyArray<string> = [];
-    if (sentImages.length > 0) {
+    if (sentAttachments.length > 0) {
       setSending(true);
       const prepared = await prepareTurnAttachments({
         environmentId: props.environmentId,
-        attachments: sentImages,
+        attachments: sentAttachments,
         supportsImageUploads: true,
       }).catch((error: unknown) => {
         Dialog.alert(
-          "Could not upload images",
+          "Could not upload attachments",
           error instanceof Error && error.message.trim() !== "" ? error.message : "Try again.",
         );
         return null;
       });
       setSending(false);
       if (prepared === null || prepared.status !== "ready") return;
-      attachments = prepared.attachments.filter(
-        (attachment): attachment is ChatImageAttachment =>
-          attachment.type === "image" && !("dataUrl" in attachment),
+      uploaded = prepared.attachments.filter(
+        (attachment): attachment is ChatImageAttachment | ChatFileAttachment =>
+          !("dataUrl" in attachment),
       );
       pending = prepared.pendingAttachmentIds;
     }
@@ -156,7 +184,7 @@ export function SpaceComposer(props: {
     setText("");
     setCaret(0);
     setTokens([]);
-    setImages([]);
+    setAttachments([]);
     setDrafted(false);
     props.onQuoteChange(null);
     const result = await post({
@@ -167,20 +195,23 @@ export function SpaceComposer(props: {
         text: body,
         mentions,
         ...(quote === null ? {} : { quoteEntryId: quote.id }),
-        ...(attachments.length === 0 ? {} : { attachments }),
+        ...(uploaded.length === 0 ? {} : { attachments: uploaded }),
       },
     });
     // The post holds its own copies; the pending uploads are only the source.
     if (pending.length > 0)
       void releasePendingAttachmentUploads(props.environmentId, pending).catch(() => {});
-    // Hand the draft back, mentions, images and quote too, unless a new one was started.
-    if (!reportSpaceResult("Could not post", result) && textRef.current === "") {
+    // Hand the draft back, mentions, attachments and quote too, unless a new one was started.
+    const posted = reportSpaceResult("Could not post", result);
+    if (!posted && textRef.current === "") {
       textRef.current = body;
       setText(body);
       setCaret(body.length);
       setTokens(sentTokens);
-      setImages((current) => (current.length === 0 ? sentImages : current));
+      setAttachments((current) => (current.length === 0 ? sentAttachments : current));
       if (quote !== null) props.onQuoteChange(quote);
+    } else if (posted) {
+      void releaseUnusedComposerAttachmentFiles(sentAttachments);
     }
   };
 
@@ -239,7 +270,7 @@ export function SpaceComposer(props: {
               Replying to {props.viewer.nameOf(props.quote.authorId)}
             </Text>
             <Text numberOfLines={1} className="text-xs text-foreground-muted">
-              {props.quote.text.slice(0, SPACE_QUOTE_MAX_LENGTH)}
+              {spacePostPreview(props.quote).slice(0, SPACE_QUOTE_MAX_LENGTH)}
             </Text>
           </View>
           <IconButton
@@ -249,15 +280,15 @@ export function SpaceComposer(props: {
           />
         </View>
       )}
-      {images.length === 0 ? null : (
+      {attachments.length === 0 ? null : (
         <View className="pb-2">
           <ComposerAttachmentStrip
-            attachments={images}
+            attachments={attachments}
             imageSize={60}
             imageBorderRadius={14}
             removeButtonPlacement="gutter"
             onPressPreview={setPreviewFile}
-            onRemove={(id) => setImages(images.filter((image) => image.id !== id))}
+            onRemove={removeAttachment}
           />
         </View>
       )}
@@ -265,9 +296,17 @@ export function SpaceComposer(props: {
         <IconButton
           icon="photo"
           accessibilityLabel="Add images"
-          disabled={images.length >= SPACE_POST_MAX_IMAGES || sending}
+          disabled={full || sending}
           onPress={() => void pickImages()}
         />
+        {capabilities?.fileAttachments === undefined ? null : (
+          <IconButton
+            icon="doc.text"
+            accessibilityLabel="Attach files"
+            disabled={full || sending}
+            onPress={() => void pickFiles()}
+          />
+        )}
         <TextInputWrapper onPaste={onPaste} style={{ flex: 1, minWidth: 0 }}>
           <TextInput
             accessibilityLabel="Message the space"

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  ChatAttachmentId,
   CommandId,
   MemberId,
   MessageId,
@@ -83,6 +84,33 @@ const post: Change = {
 const table: ReadonlyArray<readonly [string, Change, string, string, string]> = [
   // action, change, owner, member, non-member
   ["post", post, "Accept", "Accept", "not-member"],
+  [
+    "post only an image",
+    {
+      ...post,
+      text: "",
+      attachments: [
+        {
+          type: "image",
+          id: ChatAttachmentId.make("room-image"),
+          name: "shot.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        },
+      ],
+    },
+    "Accept",
+    "Accept",
+    "not-member",
+  ],
+  ["post nothing", { ...post, text: "" }, "not-allowed", "not-allowed", "not-member"],
+  [
+    "change the icon",
+    { type: "space.update", icon: { color: "teal", emoji: "🚀" } },
+    "Accept",
+    "not-owner",
+    "not-member",
+  ],
   ["edit the Brief", { type: "space.update", brief: "New" }, "Accept", "Accept", "not-member"],
   ["rename", { type: "space.update", name: "Renamed" }, "Accept", "not-owner", "not-member"],
   [
@@ -145,6 +173,20 @@ describe("decideSpaceCommand", () => {
     expect(outcome(decide({ type: "space.update", brief: "x" }, owner, archived))).toBe("archived");
     expect(outcome(decide({ type: "space.unarchive" }, member, archived))).toBe("not-owner");
     expect(outcome(decide({ type: "space.unarchive" }, owner, archived))).toBe("Accept");
+  });
+
+  it("an icon change keeps the rest, posts no line, and null goes back to the derived one", () => {
+    const icon = { color: "teal", emoji: "🚀" } as const;
+    const set = decide({ type: "space.update", icon }, owner);
+    expect(set._tag === "Accept" ? [set.space?.icon, set.space?.name, set.entries] : null).toEqual([
+      icon,
+      space.name,
+      [],
+    ]);
+    const withIcon = { ...space, icon };
+    expect(outcome(decide({ type: "space.update", icon }, owner, withIcon))).toBe("NoOp");
+    const reset = decide({ type: "space.update", icon: null }, owner, withIcon);
+    expect(reset._tag === "Accept" && reset.space !== null && "icon" in reset.space).toBe(false);
   });
 
   it("only a person's post tags @pair, and mentions keep active members only", () => {

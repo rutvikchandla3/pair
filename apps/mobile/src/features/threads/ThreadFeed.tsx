@@ -656,7 +656,7 @@ function isMediaAttachment(attachment: ChatAttachment): boolean {
   );
 }
 
-function MessageAttachmentFile(props: {
+export function MessageAttachmentFile(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
   readonly onPressPreview: (source: FilePreviewSource) => void;

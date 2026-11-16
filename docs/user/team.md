@@ -293,7 +293,8 @@ A space is a shared room on Pair Cloud for a few teammates and Pair, tied to one
 one with **+** next to **Spaces** in the sidebar, or **New space** in the command palette
 (`mod+alt+s`). Type `@` in the room to mention a teammate or `@pair`; the hint under the composer
 says who will be notified and whose Claude account pays for Pair's reply. Paste, drop or attach
-up to 8 images with a message; when the message tags `@pair`, Pair sees them too.
+up to 8 images or files with a message, or send them on their own. When the message tags `@pair`,
+Pair sees its images and reads its text files and documents.
 
 Tasks in a space are threads with an owner. A task you assign to someone else waits until they
 press **Start**, and it runs on their account with the model they choose. **My tasks** at the top
@@ -302,7 +303,7 @@ Done and Canceled ones collapsed at the end, and a task waiting
 on you also shows in **Inbox**. Each space is one row in the sidebar; its number is how many
 Inbox items belong to it, and a grey dot means its room has unread messages. After five spaces,
 **N more** holds the rest and the archived ones. Only the owner can manage members, rename the space,
-change who pays, or archive it; an archived space is read-only until its owner unarchives it.
+pick its icon and color in **Space settings**, change who pays, or archive it; an archived space is read-only until its owner unarchives it.
 
 On mobile, **Inbox**, **My tasks**, **Shared with you** and **Spaces** sit at the top of Home. A space notification shows
 only who mentioned or added you, never the message, and opens the room.
