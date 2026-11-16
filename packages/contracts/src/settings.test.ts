@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
+import { DEFAULT_CONFIRM_TOOLS } from "./chiefOfStaff.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceConfig,
@@ -623,6 +624,7 @@ describe("Chief of staff settings", () => {
       homeModel: "",
       toolAccess: "read-only",
       realtimeBaseUrl: "",
+      confirmTools: [...DEFAULT_CONFIRM_TOOLS],
     });
   });
 
@@ -634,6 +636,11 @@ describe("Chief of staff settings", () => {
       realtimeBaseUrl: "https://chatgpt.com/backend-api/codex",
     });
     expect(() => decodeServerSettingsPatch({ chiefOfStaff: { toolAccess: "root" } })).toThrow();
+  });
+
+  it("keeps a member's confirmTools list", () => {
+    const patch = decodeServerSettingsPatch({ chiefOfStaff: { confirmTools: ["t3_thread_send"] } });
+    expect(patch.chiefOfStaff).toEqual({ confirmTools: ["t3_thread_send"] });
   });
 
   it("decodes an avatar look from a newer client to the default instead of failing", () => {

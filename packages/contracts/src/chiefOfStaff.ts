@@ -4,6 +4,22 @@ import * as Schema from "effect/Schema";
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ProjectId, ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 
+/**
+ * The tools a person must approve before the server runs them for Chief of staff. A tool
+ * that takes an archive or delete argument is risky on that argument alone (see
+ * `isRiskyCall`); this list is the ones risky every time.
+ */
+export const DEFAULT_CONFIRM_TOOLS = [
+  "t3_project_delete",
+  "t3_environment_unlink",
+  "delete_scheduled_task",
+  "t3_thread_interrupt",
+  "t3_workflow_stop",
+  "task_cancel",
+  "t3_worktree_handoff",
+  "t3_thread_transfer",
+] as const;
+
 /** Empty strings mean unset: the default Codex instance, its default voice and model, no base URL override. */
 export const ChiefOfStaffSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -19,6 +35,13 @@ export const ChiefOfStaffSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("read-only" as const)),
   ),
   realtimeBaseUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Tools the server asks a person to approve before Chief of staff may run them.
+   * Starts at `DEFAULT_CONFIRM_TOOLS`; a member may add or remove entries.
+   */
+  confirmTools: Schema.Array(TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([...DEFAULT_CONFIRM_TOOLS])),
+  ),
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type ChiefOfStaffSettings = typeof ChiefOfStaffSettings.Type;
 
@@ -32,6 +55,7 @@ export const ChiefOfStaffSettingsPatch = Schema.Struct({
   homeModel: Schema.optionalKey(TrimmedString),
   toolAccess: Schema.optionalKey(AuthMcpClientAccess),
   realtimeBaseUrl: Schema.optionalKey(TrimmedString),
+  confirmTools: Schema.optionalKey(Schema.Array(TrimmedString)),
 });
 
 export const ChiefOfStaffAvatarStyle = Schema.Literals(["pet", "orb", "bot", "dots", "wave"]);

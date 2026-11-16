@@ -18,6 +18,7 @@ const REDACTED = "[redacted]";
 
 export type AuditVia = "voice" | "home-thread";
 export type AuditOutcome = "ok" | "error";
+export type AuditConfirmation = "allowed" | "denied" | "timeout";
 
 export const AuditEntrySchema = Schema.Struct({
   at: Schema.String,
@@ -29,6 +30,8 @@ export const AuditEntrySchema = Schema.Struct({
   outcome: Schema.Literals(["ok", "error"]),
   errorCode: Schema.optionalKey(Schema.String),
   durationMs: Schema.Finite,
+  /** Set when a risky call waited for a person's approval. */
+  confirmation: Schema.optionalKey(Schema.Literals(["allowed", "denied", "timeout"])),
 });
 export type AuditEntry = typeof AuditEntrySchema.Type;
 
@@ -41,6 +44,7 @@ export interface AuditRecordInput {
   readonly args: unknown;
   readonly outcome: AuditOutcome;
   readonly errorCode?: string;
+  readonly confirmation?: AuditConfirmation;
   readonly durationMs: number;
 }
 
@@ -162,6 +166,7 @@ const make = Effect.gen(function* () {
         args: serializeArgs(input.args),
         outcome: input.outcome,
         ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
+        ...(input.confirmation === undefined ? {} : { confirmation: input.confirmation }),
         durationMs: input.durationMs,
       });
     },
