@@ -60,6 +60,7 @@ const setup = (options: FakeOptions = {}) =>
       ChiefOfStaffHost,
       ChiefOfStaffHost.of({
         workspaceDir: Effect.succeed("/state/chief-of-staff/workspace"),
+        t3Home: Effect.succeed("/state"),
         openAppServer: () =>
           Effect.acquireRelease(
             Ref.update(openApps, (count) => count + 1),
@@ -456,11 +457,21 @@ it.effect("lists v3 voices with the default only when it is offered", () =>
   }).pipe(Effect.scoped),
 );
 
-it("lends the MCP credential only access the caller holds", () => {
+it("lends the MCP credential the highest access the caller fully holds", () => {
+  const all = [
+    "orchestration:read",
+    "orchestration:operate",
+    "settings:write",
+    "source-control:write",
+  ] as const;
+  const operate = ["orchestration:read", "orchestration:operate"] as const;
   assert.equal(ChiefOfStaffVoice.effectiveToolAccess("read-only", []), "read-only");
   assert.equal(ChiefOfStaffVoice.effectiveToolAccess("auto", []), "read-only");
-  assert.equal(
-    ChiefOfStaffVoice.effectiveToolAccess("auto", ["orchestration:read", "orchestration:operate"]),
-    "auto",
-  );
+  assert.equal(ChiefOfStaffVoice.effectiveToolAccess("auto", ["orchestration:read"]), "read-only");
+  assert.equal(ChiefOfStaffVoice.effectiveToolAccess("auto", operate), "auto");
+  // Never above what the caller configured, even when it holds more.
+  assert.equal(ChiefOfStaffVoice.effectiveToolAccess("read-only", all), "read-only");
+  // A full-access setting downgrades to the widest level the caller's own scopes cover.
+  assert.equal(ChiefOfStaffVoice.effectiveToolAccess("full-access", operate), "auto");
+  assert.equal(ChiefOfStaffVoice.effectiveToolAccess("full-access", all), "full-access");
 });

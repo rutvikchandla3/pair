@@ -1,7 +1,9 @@
 import {
+  type AuthMcpClientAccess,
   ChiefOfStaffError,
   type ChiefOfStaffEvent,
   type ChiefOfStaffState,
+  DEFAULT_MODEL,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -21,52 +23,95 @@ interface RealtimeStartParams {
 }
 
 const CHIEF_OF_STAFF_MCP_SERVER = "t3-code";
-const CHIEF_OF_STAFF_DEFAULT_MODEL = "gpt-6-luna";
 
-const CHIEF_OF_STAFF_INSTRUCTIONS = [
-  "You are the user's Chief of staff inside T3 Code, the app where they run coding agents.",
-  '"Threads", "projects" and "workspaces" always mean the user\'s T3 Code threads, projects and workspaces.',
-  `Look them up and act on them with the t3_* tools from the ${CHIEF_OF_STAFF_MCP_SERVER} MCP server; never guess.`,
-  "After you start a lookup, wait for its result; never guess or say you cannot see something meanwhile.",
-  "Answer in one or two short spoken sentences.",
-  "Before you delete, interrupt or stop anything, say what you will do and wait for the user to confirm out loud.",
-].join("\n");
+/** The owner-level operator prompt; it names the sandbox it runs in when it cannot write. */
+const chiefOfStaffInstructions = (toolAccess: AuthMcpClientAccess): string =>
+  [
+    "You are the user's Chief of staff inside T3 Code (Pair), where they run coding agents, with full access to this T3 Code server.",
+    '"Threads", "projects" and "workspaces" always mean the user\'s T3 Code threads, projects and workspaces.',
+    `Prefer the t3_* tools from the ${CHIEF_OF_STAFF_MCP_SERVER} MCP server; never guess about T3 state.`,
+    "When MCP lacks something, use your shell and the `t3` CLI (for example `t3 thread start|send|list|show|fork`, `t3 project`, `t3 environment`), edit files and run commands.",
+    "Never claim you cannot do something without trying it first, and finish multi-step work instead of stopping early.",
+    "After you start a lookup, wait for its result; never say you cannot see something meanwhile.",
+    "Speak back in one or two short sentences, no matter how much work you did.",
+    "Before you delete, force-push, merge, or interrupt or stop someone's work, say exactly what you will do and wait for the user to confirm out loud.",
+    ...(toolAccess === "read-only"
+      ? [
+          "Your access is read-only right now: you cannot edit files, run writing commands or change T3 state. Say so instead of attempting it.",
+        ]
+      : []),
+  ].join("\n");
 
-/** The backing thread's settings: it reads and calls T3 tools, never edits files or asks approval. */
+export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+
+/**
+ * Access maps straight onto Codex's sandbox: voice has no approval UI, so nothing can ask.
+ * `workspace-write` turns on network access so the `t3` CLI can reach the running server.
+ */
+export const backingSandboxForAccess = (
+  toolAccess: AuthMcpClientAccess,
+): { readonly sandbox: CodexSandboxMode; readonly config: Readonly<Record<string, unknown>> } =>
+  toolAccess === "read-only"
+    ? { sandbox: "read-only", config: {} }
+    : toolAccess === "full-access"
+      ? { sandbox: "danger-full-access", config: {} }
+      : {
+          sandbox: "workspace-write",
+          config: { sandbox_workspace_write: { network_access: true } },
+        };
+
+/** The backing thread's settings. It never asks approval: voice cannot collect an answer. */
 export const backingThreadParams = (input: {
   readonly cwd: string;
   readonly model: string;
+  readonly toolAccess: AuthMcpClientAccess;
+  /** The server's base dir. Only used when the thread can write. */
+  readonly t3Home?: string;
   readonly mcpEndpoint: string;
   readonly mcpAuthorizationHeader: string;
-}) => ({
-  approvalPolicy: "never" as const,
-  sandbox: "read-only" as const,
-  cwd: input.cwd,
-  model: input.model || CHIEF_OF_STAFF_DEFAULT_MODEL,
-  developerInstructions: CHIEF_OF_STAFF_INSTRUCTIONS,
-  config: {
-    model_reasoning_effort: "low",
-    [`mcp_servers.${CHIEF_OF_STAFF_MCP_SERVER}`]: {
-      url: input.mcpEndpoint,
-      http_headers: { Authorization: input.mcpAuthorizationHeader },
-      // With approval policy never, an MCP call that would ask for approval fails instead.
-      default_tools_approval_mode: "approve",
+}) => {
+  const { sandbox, config } = backingSandboxForAccess(input.toolAccess);
+  return {
+    approvalPolicy: "never" as const,
+    sandbox,
+    cwd: input.cwd,
+    model: input.model || DEFAULT_MODEL,
+    developerInstructions: chiefOfStaffInstructions(input.toolAccess),
+    config: {
+      model_reasoning_effort: "high",
+      ...config,
+      // The shell policy can hide the process env, so pin the home `t3` must read here.
+      ...(input.toolAccess === "read-only" || input.t3Home === undefined
+        ? {}
+        : { "shell_environment_policy.set.T3CODE_HOME": input.t3Home }),
+      [`mcp_servers.${CHIEF_OF_STAFF_MCP_SERVER}`]: {
+        url: input.mcpEndpoint,
+        http_headers: { Authorization: input.mcpAuthorizationHeader },
+        // With approval policy never, an MCP call that would ask for approval fails instead.
+        default_tools_approval_mode: "approve",
+      },
     },
-  },
-});
+  };
+};
 
 export const realtimeStartParams = (input: {
   readonly threadId: string;
   readonly sdpOffer: string;
   readonly voice: string;
   readonly status: string;
+  readonly toolAccess: AuthMcpClientAccess;
 }): RealtimeStartParams => ({
   threadId: input.threadId,
   outputModality: "audio",
   version: "v3",
   transport: { type: "webrtc", sdp: input.sdpOffer },
   ...(input.voice ? { voice: input.voice } : {}),
-  initialItems: [{ role: "developer", text: `${CHIEF_OF_STAFF_INSTRUCTIONS}\n\n${input.status}` }],
+  initialItems: [
+    {
+      role: "developer",
+      text: `${chiefOfStaffInstructions(input.toolAccess)}\n\n${input.status}`,
+    },
+  ],
 });
 
 /** A realtime refusal, as the user can act on it. */

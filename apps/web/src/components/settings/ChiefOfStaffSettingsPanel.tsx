@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type AuthMcpClientAccess,
   ChiefOfStaffAvatarSize,
   ChiefOfStaffAvatarStyle,
   supportsChiefOfStaffVoice,
@@ -38,6 +39,18 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const DEFAULT_OPTION = "__default__";
+
+/**
+ * Voice has no approval UI, so the shared runtime-mode wording ("ask before…") does not apply:
+ * every level above read-only writes in its own workspace, and full access reaches the machine.
+ */
+const CHIEF_OF_STAFF_TOOL_ACCESS: Record<AuthMcpClientAccess, string> = {
+  "read-only": accessConfig["read-only"].description,
+  "approval-required": "Run commands and edit files in its own workspace.",
+  "auto-accept-edits": "Run commands and edit files in its own workspace.",
+  auto: "Run commands and edit files in its own workspace, with network access.",
+  "full-access": "Run commands and edit files anywhere on this machine, without prompts.",
+};
 
 const SIZE_LABELS: Readonly<Record<ChiefOfStaffAvatarSize, string>> = {
   small: "Small",
@@ -182,7 +195,7 @@ function VoiceRows({
             {...searchableSetting("chief-of-staff-tool-access")}
             title="Tool access"
             settingKeys={["chiefOfStaff"]}
-            description={`${accessConfig[settings.toolAccess].description} It never gets more access than you have.`}
+            description={`${CHIEF_OF_STAFF_TOOL_ACCESS[settings.toolAccess]} It never gets more access than you have.`}
             control={
               <AccessSelect
                 value={settings.toolAccess}

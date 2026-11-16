@@ -1,4 +1,5 @@
 import {
+  type AuthMcpClientAccess,
   ChiefOfStaffError,
   CodexSettings,
   isListedThreadLineage,
@@ -62,9 +63,12 @@ export class ChiefOfStaffHost extends Context.Service<
   {
     /** An empty directory the backing thread runs in. */
     readonly workspaceDir: Effect.Effect<string, ChiefOfStaffError>;
+    /** The server's base dir, so a writable shell's `t3` finds this server and not the default home. */
+    readonly t3Home: Effect.Effect<string>;
     readonly openAppServer: (input: {
       readonly instanceId: ProviderInstanceId;
       readonly realtimeBaseUrl: string;
+      readonly toolAccess: AuthMcpClientAccess;
     }) => Effect.Effect<VoiceAppServer, ChiefOfStaffError, Scope.Scope>;
     readonly loadThreadId: (key: string) => Effect.Effect<string | undefined>;
     readonly saveThreadId: (key: string, threadId: string) => Effect.Effect<void>;
@@ -117,6 +121,7 @@ const make = Effect.gen(function* () {
   const openAppServer = Effect.fn("ChiefOfStaffHost.openAppServer")(function* (input: {
     readonly instanceId: ProviderInstanceId;
     readonly realtimeBaseUrl: string;
+    readonly toolAccess: AuthMcpClientAccess;
   }) {
     const instance = yield* instances.getInstance(input.instanceId);
     if (instance === undefined || !instance.enabled) {
@@ -155,6 +160,8 @@ const make = Effect.gen(function* () {
     const env = {
       ...codexAppServerEnvironment(environment),
       ...(homeLayout.effectiveHomePath ? { CODEX_HOME: homeLayout.effectiveHomePath } : {}),
+      // A writable shell runs `t3`, which must find this server rather than the default home.
+      ...(input.toolAccess === "read-only" ? {} : { T3CODE_HOME: config.baseDir }),
     };
     // A JSON string is a TOML basic string, which `-c` parses.
     const overrides = input.realtimeBaseUrl
@@ -228,6 +235,7 @@ const make = Effect.gen(function* () {
         Effect.as(workspace),
         Effect.mapError(failed("Could not create Chief of staff's folder.")),
       ),
+    t3Home: Effect.succeed(config.baseDir),
     openAppServer,
     loadThreadId: Effect.fn("ChiefOfStaffHost.loadThreadId")(function* (key) {
       return (yield* readThreadIds)[key];

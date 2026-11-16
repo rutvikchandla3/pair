@@ -87,12 +87,26 @@ const VoicesResponse = Schema.Struct({
 });
 const decodeVoices = Schema.decodeUnknownEffect(VoicesResponse);
 
-/** A caller lends the MCP credential only access it holds itself; anything wider reads only. */
+/** Highest access first, so the first level a caller fully holds is the widest it can lend. */
+const ACCESS_LEVELS: ReadonlyArray<AuthMcpClientAccess> = [
+  "full-access",
+  "auto",
+  "auto-accept-edits",
+  "approval-required",
+  "read-only",
+];
+
+/**
+ * A caller lends the MCP credential the highest access whose scopes it all holds itself, never
+ * above the configured level.
+ */
 export const effectiveToolAccess = (
   configured: AuthMcpClientAccess,
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ): AuthMcpClientAccess =>
-  mcpClientScopes(configured).every((scope) => scopes.includes(scope)) ? configured : "read-only";
+  ACCESS_LEVELS.slice(ACCESS_LEVELS.indexOf(configured)).find((access) =>
+    mcpClientScopes(access).every((scope) => scopes.includes(scope)),
+  ) ?? "read-only";
 
 interface Session {
   readonly id: ChiefOfStaffSessionId;
@@ -319,10 +333,11 @@ const make = Effect.gen(function* () {
     });
 
     const open = Effect.gen(function* () {
+      const toolAccess = effectiveToolAccess(config.toolAccess, caller.scopes);
       const credential = yield* Effect.acquireRelease(
         registry.issueClient({
           label: MCP_LABEL,
-          access: effectiveToolAccess(config.toolAccess, caller.scopes),
+          access: toolAccess,
           memberId: caller.memberId,
         }),
         (issued) => registry.revokeClient(issued.sessionId),
@@ -330,6 +345,7 @@ const make = Effect.gen(function* () {
       const opened = yield* host.openAppServer({
         instanceId,
         realtimeBaseUrl: config.realtimeBaseUrl,
+        toolAccess,
       });
       app = opened;
       yield* initialize(opened);
@@ -339,6 +355,8 @@ const make = Effect.gen(function* () {
         backingThreadParams({
           cwd: yield* host.workspaceDir,
           model: config.model,
+          toolAccess,
+          t3Home: yield* host.t3Home,
           mcpEndpoint: credential.endpoint,
           mcpAuthorizationHeader: credential.authorizationHeader,
         }),
@@ -356,7 +374,13 @@ const make = Effect.gen(function* () {
       yield* opened
         .request(
           "thread/realtime/start",
-          realtimeStartParams({ threadId, sdpOffer: input.sdpOffer, voice: config.voice, status }),
+          realtimeStartParams({
+            threadId,
+            sdpOffer: input.sdpOffer,
+            voice: config.voice,
+            status,
+            toolAccess,
+          }),
         )
         .pipe(Effect.mapError((error) => realtimeFailure(error.message)));
       const answer = yield* Deferred.await(sdpAnswer).pipe(
@@ -442,6 +466,7 @@ const make = Effect.gen(function* () {
       const app = yield* host.openAppServer({
         instanceId: instanceIdOf(config.providerInstanceId),
         realtimeBaseUrl: config.realtimeBaseUrl,
+        toolAccess: "read-only",
       });
       yield* initialize(app);
       const { voices } = yield* app
