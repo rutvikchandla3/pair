@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ChatAttachmentId,
   CommandId,
   MemberId,
   MessageId,
@@ -15,13 +16,17 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
+import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -30,10 +35,16 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type * as Members from "../persistence/Members.ts";
 import { TeamState } from "../team/TeamState.ts";
-import { SpaceAgentTools, SpaceContext, type SpaceReplyScope } from "./SpaceAgentRuntime.ts";
+import {
+  SpaceAgentTools,
+  type SpaceContentBlock,
+  SpaceContext,
+  type SpaceReplyScope,
+} from "./SpaceAgentRuntime.ts";
 import * as SpaceAgentToolsLive from "./SpaceAgentTools.ts";
 import * as SpaceContextLive from "./SpaceContext.ts";
 import * as SpaceIntake from "./SpaceIntake.ts";
@@ -136,6 +147,7 @@ const layerSupport = Layer.mergeAll(
   SpaceIntake.layerDirect.pipe(Layer.provide(layerCore)),
   layerLaunch,
   Layer.mock(SpaceWorkspaces.SpaceWorkspaces)({}),
+  DocumentText.layer,
   Layer.mock(TeamState)({
     ownerId: rutvik,
     members: Ref.makeUnsafe<ReadonlyMap<MemberId, Members.MemberRecord>>(
@@ -158,7 +170,11 @@ const layerTools = SpaceAgentToolsLive.layer.pipe(
   Layer.provideMerge(layerCore),
   Layer.provideMerge(layerSupport),
 );
-const layer = SpaceContextLive.layer.pipe(Layer.provideMerge(layerTools));
+const layer = SpaceContextLive.layer.pipe(
+  Layer.provideMerge(layerTools),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-space-agent-" })),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 let counter = 0;
 const next = (label: string) => `${label}:${++counter}`;
@@ -639,7 +655,7 @@ it.layer(layer)("@pair tools and context", (it) => {
 
   it.effect("context: section order, cache breakpoints, and only the space's threads", () =>
     Effect.gen(function* () {
-      const { tasks, threads, post, reply, call } = yield* setup;
+      const { spaceId, roomThreadId, tasks, threads, post, reply, call } = yield* setup;
       const outside = ThreadId.make(`thread:outside-${counter}`);
       yield* dispatch({
         type: "thread.create",
@@ -701,6 +717,44 @@ it.layer(layer)("@pair tools and context", (it) => {
       assert.strictEqual(read.reason, "not_in_space");
       const message = yield* call(scope, "space_thread_message", { threadId: outside, text: "Hi" });
       assert.strictEqual(message.reason, "not_in_space");
+
+      // The tagged post's images go to Pair as image blocks; others are only counted.
+      const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+      const image = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(createAttachmentId(roomThreadId)!),
+        name: "bug.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      };
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        resolveAttachmentPath({ attachmentsDir, attachment: image })!,
+        "png",
+      );
+      const shot = MessageId.make(next("shot"));
+      yield* dispatch({
+        type: "space.post",
+        commandId: CommandId.make(next("post")),
+        threadId: roomThreadId,
+        spaceId,
+        actorId: rutvik,
+        messageId: shot,
+        text: "@pair what is this?",
+        mentions: [{ type: "pair" }],
+        attachments: [image],
+        authorKind: "user",
+      });
+      const withImage = yield* Effect.flatMap(SpaceContext, (context) =>
+        context.assemble(reply(shot)),
+      );
+      const shotBlocks = withImage.messages[0]?.content as ReadonlyArray<SpaceContentBlock>;
+      assert.deepStrictEqual(shotBlocks.at(-1), {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "cG5n" },
+      });
+      assert.include((shotBlocks.at(-2) as { readonly text: string }).text, "[1 image]");
     }),
   );
 });

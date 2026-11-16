@@ -292,7 +292,8 @@ in Cloud instead; see [Cloud threads](./cloud.md).
 A space is a shared room on Pair Cloud for a few teammates and Pair, tied to one project. Create
 one with **+** next to **Spaces** in the sidebar, or **New space** in the command palette
 (`mod+alt+s`). Type `@` in the room to mention a teammate or `@pair`; the hint under the composer
-says who will be notified and whose Claude account pays for Pair's reply.
+says who will be notified and whose Claude account pays for Pair's reply. Paste, drop or attach
+up to 8 images with a message; when the message tags `@pair`, Pair sees them too.
 
 Tasks in a space are threads with an owner. A task you assign to someone else waits until they
 press **Start**, and it runs on their account with the model they choose. **My tasks** at the top

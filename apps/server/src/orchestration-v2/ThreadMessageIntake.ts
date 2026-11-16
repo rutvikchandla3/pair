@@ -24,7 +24,7 @@ import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 // These failures precede commitCommand; generic dispatch errors can follow commits and remain ambiguous.
-function dispatchWasNotAccepted(
+export function dispatchWasNotAccepted(
   error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
 ) {
   switch (error._tag) {

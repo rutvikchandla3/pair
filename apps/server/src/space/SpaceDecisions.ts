@@ -410,6 +410,9 @@ export function decideSpaceCommand(input: SpaceCommandInput): SpaceDecision {
         authorKind: command.authorKind,
         text: command.text,
         mentions,
+        ...(command.attachments === undefined || command.attachments.length === 0
+          ? {}
+          : { attachments: command.attachments }),
         ...(quoted?.type === "post"
           ? {
               quote: {

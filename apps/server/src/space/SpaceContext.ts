@@ -1,4 +1,6 @@
 import {
+  type ChatImageAttachment,
+  isProviderSendTurnSupportedImageMimeType,
   isSpaceActiveMember,
   type MemberId,
   type OrchestrationV2ThreadShell,
@@ -14,11 +16,14 @@ import {
 import { type SpaceThreadActivity, spaceThreadActivity } from "@t3tools/shared/spaceThreadActivity";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import type * as Members from "../persistence/Members.ts";
 import { TeamState } from "../team/TeamState.ts";
@@ -243,6 +248,14 @@ interface TranscriptLine {
   readonly text: string;
 }
 
+/** The Messages API takes images up to 5 MB once base64-encoded. */
+const PAIR_IMAGE_MAX_BYTES = 3_750_000;
+
+const imagesNote = (images: ReadonlyArray<ChatImageAttachment> | undefined) =>
+  images === undefined || images.length === 0
+    ? ""
+    : ` [${images.length} image${images.length === 1 ? "" : "s"}]`;
+
 const postLine = (id: string, who: string, at: string, text: string) => {
   const head = `[${id} · ${who} · ${timeLabel(at)}] `;
   const marker = ` … (read ${id} for the rest)`;
@@ -344,6 +357,33 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStoreV2;
   const team = yield* TeamState;
   const tools = yield* SpaceAgentTools;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+
+  /** The tagged post's images, so Pair sees what was pasted; one it can't read is named instead. */
+  const imageBlocks = (images: ReadonlyArray<ChatImageAttachment>) =>
+    Effect.forEach(images, (image) => {
+      const path = resolveAttachmentPath({ attachmentsDir, attachment: image });
+      const skipped = block(`(image ${image.name} could not be shown)`);
+      if (
+        path === null ||
+        image.sizeBytes > PAIR_IMAGE_MAX_BYTES ||
+        !isProviderSendTurnSupportedImageMimeType(image.mimeType)
+      ) {
+        return Effect.succeed<SpaceContentBlock>(skipped);
+      }
+      return fileSystem.readFile(path).pipe(
+        Effect.map((bytes): SpaceContentBlock => ({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: image.mimeType.toLowerCase(),
+            data: Buffer.from(bytes).toString("base64"),
+          },
+        })),
+        Effect.orElseSucceed(() => skipped),
+      );
+    });
 
   const assemble = Effect.fn("SpaceContext.assemble")(
     function* (scope: SpaceReplyScope) {
@@ -419,9 +459,10 @@ const make = Effect.gen(function* () {
                     ? `${members.name(entry.authorId)}'s agent`
                     : members.name(entry.authorId),
                   entry.createdAt,
-                  entry.quote === undefined
+                  (entry.quote === undefined
                     ? entry.text
-                    : `(quoting ${entry.quote.entryId}) ${entry.text}`,
+                    : `(quoting ${entry.quote.entryId}) ${entry.text}`) +
+                    imagesNote(entry.attachments),
                 )
               : `[${entry.id} · room · ${timeLabel(entry.createdAt)}] ${systemLineText(entry, members)}`,
         })),
@@ -523,7 +564,9 @@ const make = Effect.gen(function* () {
               ),
               SPACE_CONTEXT_BUDGETS.trigger,
               ` … (cut; space_message_read ${trigger.id} has the rest)`,
-            )}\n</trigger>`;
+            )}${imagesNote(trigger.attachments)}\n</trigger>`;
+      const triggerImages =
+        trigger?.type === "post" ? yield* imageBlocks(trigger.attachments ?? []) : [];
 
       const already = (yield* projections.listSpaceActions({ roomMessageId: triggerId })).filter(
         (action) => action.state === "done" || action.state === "proposed",
@@ -548,6 +591,7 @@ const make = Effect.gen(function* () {
         block(openText),
         block(tasksText),
         block(triggerText),
+        ...triggerImages,
       ];
       return {
         system: [block(SPACE_AGENT_INSTRUCTIONS, "1h")],

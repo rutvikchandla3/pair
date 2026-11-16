@@ -24,11 +24,11 @@ import {
   MoreHorizontalIcon,
   PlusIcon,
   Share2Icon,
-  UsersRoundIcon,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { SpaceMark } from "../spaces/SpaceMark";
 import { openSpaceDialog } from "../../spaceDialogStore";
 import { useInboxNeedsYouTotal, useInboxSummary, useTeamEnvironmentIds } from "../../state/inbox";
 import {
@@ -317,7 +317,11 @@ function SpaceRow(props: {
           space.archivedAt !== null && "text-sidebar-muted-foreground",
         )}
       >
-        <UsersRoundIcon className={iconClass} />
+        <SpaceMark
+          space={space}
+          size="xs"
+          className={space.archivedAt !== null ? "opacity-60" : undefined}
+        />
         <span className="min-w-0 flex-1 truncate">{space.name}</span>
         {needsYou > 0 ? (
           <span

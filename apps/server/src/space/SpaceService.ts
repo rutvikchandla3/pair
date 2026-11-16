@@ -42,13 +42,18 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import * as ServerConfig from "../config.ts";
+import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { dispatchWasNotAccepted } from "../orchestration-v2/ThreadMessageIntake.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import { spaceReplyTrigger } from "./SpaceAgentDecisions.ts";
 import { SpaceIntake } from "./SpaceIntake.ts";
 import { SpaceWorkspaces } from "./SpaceWorkspaces.ts";
@@ -184,6 +189,9 @@ const make = Effect.gen(function* () {
   const digest = yield* Digest.Digest;
   const intake = yield* SpaceIntake;
   const workspaces = yield* SpaceWorkspaces;
+  const attachmentServices = yield* Effect.context<
+    ServerConfig.ServerConfig | FileSystem.FileSystem | DocumentText.DocumentText
+  >();
 
   /** Stable across retries of one command, which the room thread's receipt makes idempotent. */
   const hashOf = (commandId: CommandId) =>
@@ -402,19 +410,39 @@ const make = Effect.gen(function* () {
   const post: SpaceService["Service"]["post"] = Effect.fn("SpaceService.post")(
     function* (caller, input) {
       const space = yield* requireSpace(input.spaceId);
-      // Keyed by the client's message id, so a retried post is accepted once.
-      yield* dispatch({
-        type: "space.post",
-        commandId: CommandId.make(`space.post:${input.messageId}`),
+      // Images live with the room thread, so they go when it does.
+      const claimed = yield* AttachmentClaims.claimPendingAttachments({
         threadId: space.roomThreadId,
-        spaceId: space.id,
-        actorId: caller.memberId,
-        messageId: input.messageId,
-        text: input.text,
-        mentions: input.mentions,
-        ...(input.quoteEntryId === undefined ? {} : { quoteEntryId: input.quoteEntryId }),
-        authorKind: caller.authorKind,
-      });
+        attachments: input.attachments ?? [],
+      }).pipe(
+        Effect.provide(attachmentServices),
+        Effect.mapError((error) => failed(error.message)),
+      );
+      // Keyed by the client's message id, so a retried post is accepted once.
+      yield* orchestrator
+        .dispatch({
+          type: "space.post",
+          commandId: CommandId.make(`space.post:${input.messageId}`),
+          threadId: space.roomThreadId,
+          spaceId: space.id,
+          actorId: caller.memberId,
+          messageId: input.messageId,
+          text: input.text,
+          mentions: input.mentions,
+          ...(input.quoteEntryId === undefined ? {} : { quoteEntryId: input.quoteEntryId }),
+          ...(claimed.attachments.length === 0 ? {} : { attachments: claimed.attachments }),
+          authorKind: caller.authorKind,
+        })
+        .pipe(
+          Effect.tapError((error) =>
+            dispatchWasNotAccepted(error) || (isDispatchError(error) && isSpaceError(error.cause))
+              ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+                  Effect.provide(attachmentServices),
+                )
+              : Effect.void,
+          ),
+          Effect.mapError(toSpaceError),
+        );
       const entry = yield* read(projections.getSpaceRoomEntry(input.messageId));
       if (entry === null) return yield* failed(`Post ${input.messageId} was not recorded.`);
       return { entry };

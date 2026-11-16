@@ -16,23 +16,31 @@ import { teamClaudeKeyIsSet } from "@t3tools/client-runtime/team-claude-key";
 import {
   type EnvironmentId,
   MessageId,
+  SPACE_POST_MAX_IMAGES,
   SPACE_QUOTE_MAX_LENGTH,
   type Space,
   type SpaceRoomEntry,
 } from "@t3tools/contracts";
 import { ArrowUpIcon, SparklesIcon, XIcon } from "lucide-react";
-import { type KeyboardEvent, useRef, useState } from "react";
+import { type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
+import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { cn, randomUUID } from "~/lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { awaitAttachmentUploads, getUploadedAttachments } from "../../lib/attachmentUploadQueue";
+import { isImageAttachment } from "../../types";
 import { useCanManageTeamClaudeKey, useTeamClaudeKeyStatus } from "../../state/spaceAgent";
 import { spaceEnvironment } from "../../state/spaces";
 import { useTeamMembers } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ComposerAttachButton } from "../chat/ComposerAttachmentStrip";
+import { ComposerSurface } from "../chat/ComposerSurface";
 import { MemberAvatar } from "../team/MemberAvatar";
 import { TeamClaudeKeyDialog } from "../team/TeamClaudeKeyCard";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
+import { SpaceComposerImages, prepareSpaceImages, releaseSpaceImages } from "./SpaceComposerImages";
 import { useSpaceComposerDraftStore } from "./spaceComposerDraftStore";
 
 type Post = Extract<SpaceRoomEntry, { type: "post" }>;
@@ -69,6 +77,19 @@ export function SpaceComposer(props: {
   const [highlight, setHighlight] = useState(0);
   const [asked, setAsked] = useState(false);
   const [addingKey, setAddingKey] = useState(false);
+  const [images, setImageState] = useState<ReadonlyArray<ComposerImageAttachment>>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const imagesRef = useRef<ReadonlyArray<ComposerImageAttachment>>([]);
+  const setImages = (
+    update: (
+      current: ReadonlyArray<ComposerImageAttachment>,
+    ) => ReadonlyArray<ComposerImageAttachment>,
+  ) => {
+    imagesRef.current = update(imagesRef.current);
+    setImageState(imagesRef.current);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- frees uploads and blob previews a left-behind draft still holds
+  useEffect(() => () => releaseSpaceImages(imagesRef.current), [imagesRef]);
 
   // Without a Team Claude key, Pair is greyed in the menu and a typed @pair isn't a tag.
   const candidates =
@@ -84,6 +105,32 @@ export function SpaceComposer(props: {
   const hint = spaceComposerHint(mentions, props.viewer) ?? pairOff?.text ?? null;
   const tagsPair = mentions.some((mention) => mention.type === "pair");
   const canSend = text.trim().length > 0;
+
+  const addFiles = async (files: ReadonlyArray<File>) => {
+    if (files.length === 0) return;
+    const added = await prepareSpaceImages({
+      environmentId: props.environmentId,
+      files,
+      room: SPACE_POST_MAX_IMAGES - imagesRef.current.length,
+    });
+    setImages((current) => [...current, ...added]);
+  };
+
+  const removeImage = (image: ComposerImageAttachment) => {
+    releaseSpaceImages([image]);
+    setImages((current) => current.filter((candidate) => candidate !== image));
+  };
+
+  // As in the thread composer: pasted images attach, other files only when no text came along.
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = Array.from(event.clipboardData.files);
+    const hasImage = pasted.some((file) => file.type.startsWith("image/"));
+    if (pasted.length === 0 || (!hasImage && event.clipboardData.getData("text/plain") !== "")) {
+      return;
+    }
+    event.preventDefault();
+    void addFiles(pasted);
+  };
 
   const readQuery = (element: HTMLTextAreaElement) => {
     setQuery(spaceMentionQuery(element.value, element.selectionStart));
@@ -135,10 +182,31 @@ export function SpaceComposer(props: {
     if (body.length === 0) return;
     const quote = props.quote;
     const sentTokens = tokens;
+    const sentImages = images;
     setText("");
     setTokens([]);
+    setImages(() => []);
     setQuery(null);
     props.onQuoteChange(null);
+    // Hand the draft back, mentions, quote and images too, unless a new one was started.
+    const restore = () => {
+      if (textareaRef.current?.value !== "") return false;
+      setText(body);
+      setTokens(sentTokens);
+      setImages((current) => [...sentImages, ...current]);
+      if (quote !== null) props.onQuoteChange(quote);
+      return true;
+    };
+    await awaitAttachmentUploads(sentImages.map((image) => image.id));
+    const attachments = getUploadedAttachments({
+      environmentId: props.environmentId,
+      images: sentImages,
+    });
+    if (attachments === null) {
+      if (!restore()) releaseSpaceImages(sentImages);
+      toastManager.add({ type: "error", title: "An image did not upload. Retry it, then send." });
+      return;
+    }
     const result = await post({
       environmentId: props.environmentId,
       input: {
@@ -147,17 +215,16 @@ export function SpaceComposer(props: {
         text: body,
         mentions,
         ...(quote === null ? {} : { quoteEntryId: quote.id }),
+        ...(attachments.length === 0 ? {} : { attachments: attachments.filter(isImageAttachment) }),
       },
     });
     if (result._tag === "Failure") {
-      // Hand the draft back, mentions and quote too, unless a new one was started.
-      if (textareaRef.current?.value === "") {
-        setText(body);
-        setTokens(sentTokens);
-        if (quote !== null) props.onQuoteChange(quote);
-      }
+      if (!restore()) releaseSpaceImages(sentImages);
       toastCommandFailure("Could not post", result);
+      return;
     }
+    // The server keeps its own copy once the post lands.
+    releaseSpaceImages(sentImages);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -191,135 +258,183 @@ export function SpaceComposer(props: {
 
   return (
     <div className="chat-composer-lane shrink-0 pb-4">
-      <div className="chat-content-lane relative rounded-xl border border-input bg-background shadow-xs/5 focus-within:border-ring">
-        {candidates.length > 0 ? (
-          <div
-            role="listbox"
-            aria-label="Mention"
-            className="absolute bottom-full left-0 z-20 mb-1 w-64 overflow-hidden rounded-lg border border-border bg-popover p-1 shadow-lg"
-          >
-            {candidates.map((token, index) => {
-              const member =
-                token.mention.type === "member" ? members.get(token.mention.memberId) : undefined;
-              const off = !pairReady && token.mention.type === "pair";
-              return (
-                <button
-                  key={token.mention.type === "pair" ? "pair" : token.mention.memberId}
-                  type="button"
-                  role="option"
-                  aria-selected={index === highlight}
-                  aria-disabled={off}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
-                    index === highlight && "bg-accent",
-                    off && "opacity-60",
-                  )}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setHighlight(index)}
-                  onClick={() => choose(token)}
-                >
-                  {token.mention.type === "pair" ? (
-                    <SparklesIcon className="size-5 text-input-foreground" />
-                  ) : (
-                    <MemberAvatar
-                      size="sm"
-                      member={{
-                        name: token.label,
-                        color: member?.color ?? "var(--muted-foreground)",
-                      }}
-                    />
-                  )}
-                  <span className="truncate">{token.label}</span>
-                  {token.mention.type === "pair" ? (
-                    <span className="ml-auto truncate text-muted-foreground text-xs">
-                      {off ? SPACE_PAIR_OFF_REASON : "agent"}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-        {props.quote === null ? null : (
-          <div className="flex items-start gap-2 border-border border-b px-3 py-2 text-xs">
-            <div className="min-w-0 flex-1 border-border border-l-2 pl-2 text-muted-foreground">
-              <span className="font-medium text-foreground">
-                Replying to {props.viewer.nameOf(props.quote.authorId)}
-              </span>
-              <span className="line-clamp-1">
-                {props.quote.text.slice(0, SPACE_QUOTE_MAX_LENGTH)}
-              </span>
-            </div>
-            <Button
-              size="icon-micro"
-              variant="ghost-muted"
-              aria-label="Cancel reply"
-              onClick={() => props.onQuoteChange(null)}
-            >
-              <XIcon />
-            </Button>
-          </div>
-        )}
-        <textarea
-          ref={textareaRef}
-          value={text}
-          rows={1}
-          aria-label="Message the space"
-          placeholder={
-            narrow
-              ? "Message · @ to mention"
-              : "Message the space · @ to mention Pair or a teammate"
-          }
-          className="field-sizing-content block max-h-48 min-h-11 w-full resize-none bg-transparent px-3 py-3 text-sm outline-none placeholder:text-muted-foreground"
-          onChange={(event) => {
-            setText(event.target.value);
-            readQuery(event.target);
-          }}
-          onSelect={(event) => readQuery(event.currentTarget)}
-          onBlur={() => setQuery(null)}
-          onKeyDown={onKeyDown}
-        />
-        <div className="flex items-center gap-2 px-3 pb-2">
-          <Button
-            size="xs"
-            variant={tagsPair ? "secondary" : "ghost-muted"}
-            aria-pressed={tagsPair}
-            disabled={!pairReady || tagsPair}
-            onClick={insertPair}
-          >
-            <SparklesIcon />
-            @pair
-          </Button>
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate text-xs",
-              tagsPair ? "text-input-foreground" : "text-muted-foreground",
-            )}
-          >
-            {hint}
-          </span>
-          {pairOff?.action?.type === "add-key" ? (
-            <Button size="xs" variant="outline" onClick={() => setAddingKey(true)}>
-              Add key
-            </Button>
-          ) : null}
-          {pairOff?.action?.type === "ask" ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={asked}
-              onClick={() => {
-                if (pairOff.action?.type === "ask") askAdmin(pairOff.action.ask.draft);
+      <ComposerSurface.Shell>
+        <ComposerSurface.Host>
+          <ComposerSurface.Main>
+            <div
+              className={cn(
+                "relative rounded-2xl transition-[background-color] duration-200",
+                dragOver && "bg-accent/45 ring-1 ring-primary/70 ring-inset",
+              )}
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes("Files")) return;
+                event.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+                  setDragOver(false);
+              }}
+              onDrop={(event) => {
+                setDragOver(false);
+                if (event.dataTransfer.files.length === 0) return;
+                event.preventDefault();
+                void addFiles(Array.from(event.dataTransfer.files));
               }}
             >
-              {asked ? "Asked" : pairOff.action.ask.label}
-            </Button>
-          ) : null}
-          <Button size="icon-xs" aria-label="Send" disabled={!canSend} onClick={() => void send()}>
-            <ArrowUpIcon />
-          </Button>
-        </div>
-      </div>
+              {candidates.length > 0 ? (
+                <div
+                  role="listbox"
+                  aria-label="Mention"
+                  className="absolute bottom-full left-0 z-20 mb-1 w-64 overflow-hidden rounded-lg border border-border bg-popover p-1 shadow-lg"
+                >
+                  {candidates.map((token, index) => {
+                    const member =
+                      token.mention.type === "member"
+                        ? members.get(token.mention.memberId)
+                        : undefined;
+                    const off = !pairReady && token.mention.type === "pair";
+                    return (
+                      <button
+                        key={token.mention.type === "pair" ? "pair" : token.mention.memberId}
+                        type="button"
+                        role="option"
+                        aria-selected={index === highlight}
+                        aria-disabled={off}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+                          index === highlight && "bg-accent",
+                          off && "opacity-60",
+                        )}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => setHighlight(index)}
+                        onClick={() => choose(token)}
+                      >
+                        {token.mention.type === "pair" ? (
+                          <SparklesIcon className="size-5 text-input-foreground" />
+                        ) : (
+                          <MemberAvatar
+                            size="sm"
+                            member={{
+                              name: token.label,
+                              color: member?.color ?? "var(--muted-foreground)",
+                            }}
+                          />
+                        )}
+                        <span className="truncate">{token.label}</span>
+                        {token.mention.type === "pair" ? (
+                          <span className="ml-auto truncate text-muted-foreground text-xs">
+                            {off ? SPACE_PAIR_OFF_REASON : "agent"}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {props.quote === null ? null : (
+                <div className="flex items-start gap-2 border-border border-b px-4 py-2 text-xs">
+                  <div className="min-w-0 flex-1 border-border border-l-2 pl-2 text-muted-foreground">
+                    <span className="font-medium text-foreground">
+                      Replying to {props.viewer.nameOf(props.quote.authorId)}
+                    </span>
+                    <span className="line-clamp-1">
+                      {props.quote.text.slice(0, SPACE_QUOTE_MAX_LENGTH)}
+                    </span>
+                  </div>
+                  <Button
+                    size="icon-micro"
+                    variant="ghost-muted"
+                    aria-label="Cancel reply"
+                    onClick={() => props.onQuoteChange(null)}
+                  >
+                    <XIcon />
+                  </Button>
+                </div>
+              )}
+              <SpaceComposerImages
+                environmentId={props.environmentId}
+                images={images}
+                onRemove={removeImage}
+              />
+              <textarea
+                ref={textareaRef}
+                value={text}
+                rows={1}
+                aria-label="Message the space"
+                placeholder={
+                  narrow
+                    ? "Message · @ to mention"
+                    : "Message the space · @ to mention Pair or a teammate"
+                }
+                className="field-sizing-content block max-h-48 min-h-14 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-base outline-none placeholder:text-placeholder sm:text-sm"
+                onChange={(event) => {
+                  setText(event.target.value);
+                  readQuery(event.target);
+                }}
+                onPaste={onPaste}
+                onSelect={(event) => readQuery(event.currentTarget)}
+                onBlur={() => setQuery(null)}
+                onKeyDown={onKeyDown}
+              />
+              <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+                <ComposerAttachButton
+                  addComposerAttachments={async (files) => {
+                    await addFiles(files);
+                    return false;
+                  }}
+                  focusComposer={() => textareaRef.current?.focus()}
+                />
+                <Button
+                  size="xs"
+                  variant={tagsPair ? "secondary" : "ghost-muted"}
+                  aria-pressed={tagsPair}
+                  disabled={!pairReady || tagsPair}
+                  onClick={insertPair}
+                >
+                  <SparklesIcon />
+                  @pair
+                </Button>
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-xs",
+                    tagsPair ? "text-input-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {hint}
+                </span>
+                {pairOff?.action?.type === "add-key" ? (
+                  <Button size="xs" variant="outline" onClick={() => setAddingKey(true)}>
+                    Add key
+                  </Button>
+                ) : null}
+                {pairOff?.action?.type === "ask" ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={asked}
+                    onClick={() => {
+                      if (pairOff.action?.type === "ask") askAdmin(pairOff.action.ask.draft);
+                    }}
+                  >
+                    {asked ? "Asked" : pairOff.action.ask.label}
+                  </Button>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label="Send"
+                  disabled={!canSend}
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => void send()}
+                  className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-message-action text-message-action-foreground shadow-xs shadow-message-action/24 hover:bg-message-action-hover disabled:pointer-events-none disabled:bg-foreground/12 disabled:text-muted-foreground disabled:shadow-none sm:size-8"
+                >
+                  <ArrowUpIcon aria-hidden className="size-4" />
+                </button>
+              </div>
+            </div>
+          </ComposerSurface.Main>
+        </ComposerSurface.Host>
+      </ComposerSurface.Shell>
       {addingKey ? (
         <TeamClaudeKeyDialog
           environmentId={props.environmentId}
