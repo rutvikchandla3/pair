@@ -158,6 +158,7 @@ import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
 import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
+import * as ChiefOfStaffMemory from "./chiefOfStaff/ChiefOfStaffMemory.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceAgentAdapter from "./space/SpaceAgentAdapter.ts";
 import * as SpaceAgentAdapterSlot from "./space/SpaceAgentAdapterSlot.ts";
@@ -1068,6 +1069,8 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   // One voice session per member, shared by all of a member's connections.
   Layer.provide(ChiefOfStaffVoice.layer.pipe(Layer.provide(ChiefOfStaffHost.layer))),
+  // Bounded memory blocks and their MEMORY.md mirror, for the home thread and cos_memory tools.
+  Layer.provide(ChiefOfStaffMemory.layer),
   // Spaces for WebSocket clients and /mcp agents.
   Layer.provide(
     SpaceService.layer.pipe(

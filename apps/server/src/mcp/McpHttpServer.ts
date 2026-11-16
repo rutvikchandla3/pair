@@ -51,6 +51,8 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
+import * as ChiefOfStaffMemoryHandlers from "./toolkits/chiefOfStaffMemory/handlers.ts";
+import { ChiefOfStaffMemoryToolkit } from "./toolkits/chiefOfStaffMemory/tools.ts";
 import * as SandboxImageHandlers from "./toolkits/sandboxImage/handlers.ts";
 import { SandboxImageToolkit } from "./toolkits/sandboxImage/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
@@ -1164,6 +1166,11 @@ const layerEnvironmentToolkit = toolkitRegistration(
   EnvironmentHandlers.layer,
 ).pipe(Layer.provide(ThreadCommandExecutor.layer));
 
+const layerChiefOfStaffMemoryToolkit = toolkitRegistration(
+  ChiefOfStaffMemoryToolkit,
+  ChiefOfStaffMemoryHandlers.layer,
+);
+
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
 const layerSpaceToolkit = toolkitRegistration(SpaceToolkit, SpaceHandlers.layer);
@@ -1245,6 +1252,7 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
   layerSpaceToolkit,
   layerLineageToolkit,
+  layerChiefOfStaffMemoryToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);
