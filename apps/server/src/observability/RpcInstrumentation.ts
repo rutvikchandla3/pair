@@ -70,6 +70,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.chiefOfStaffStop]: "chiefOfStaff",
   [WS_METHODS.chiefOfStaffSubscribe]: "chiefOfStaff",
   [WS_METHODS.chiefOfStaffListVoices]: "chiefOfStaff",
+  [WS_METHODS.chiefOfStaffOpenHome]: "chiefOfStaff",
   [WS_METHODS.spacesList]: "spaces",
   [WS_METHODS.spacesGet]: "spaces",
   [WS_METHODS.spacesMutate]: "spaces",

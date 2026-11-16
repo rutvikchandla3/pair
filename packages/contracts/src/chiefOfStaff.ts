@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { AuthMcpClientAccess } from "./auth.ts";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { ProjectId, ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 
 /** Empty strings mean unset: the default Codex instance, its default voice and model, no base URL override. */
 export const ChiefOfStaffSettings = Schema.Struct({
@@ -10,6 +10,9 @@ export const ChiefOfStaffSettings = Schema.Struct({
   providerInstanceId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   voice: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** The member's home thread's provider; empty uses the server's default for new threads. */
+  homeProviderInstanceId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  homeModel: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   toolAccess: AuthMcpClientAccess.pipe(
     Schema.withDecodingDefault(Effect.succeed("read-only" as const)),
   ),
@@ -22,6 +25,8 @@ export const ChiefOfStaffSettingsPatch = Schema.Struct({
   providerInstanceId: Schema.optionalKey(TrimmedString),
   voice: Schema.optionalKey(TrimmedString),
   model: Schema.optionalKey(TrimmedString),
+  homeProviderInstanceId: Schema.optionalKey(TrimmedString),
+  homeModel: Schema.optionalKey(TrimmedString),
   toolAccess: Schema.optionalKey(AuthMcpClientAccess),
   realtimeBaseUrl: Schema.optionalKey(TrimmedString),
 });
@@ -74,6 +79,13 @@ export type ChiefOfStaffStartResult = typeof ChiefOfStaffStartResult.Type;
 
 export const ChiefOfStaffSessionInput = Schema.Struct({ sessionId: ChiefOfStaffSessionId });
 export type ChiefOfStaffSessionInput = typeof ChiefOfStaffSessionInput.Type;
+
+/** The member's persistent home thread and the project it lives in. */
+export const ChiefOfStaffHomeInfo = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+});
+export type ChiefOfStaffHomeInfo = typeof ChiefOfStaffHomeInfo.Type;
 
 export const ChiefOfStaffVoiceList = Schema.Struct({
   voices: Schema.Array(Schema.String),

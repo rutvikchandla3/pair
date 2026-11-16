@@ -1,4 +1,6 @@
-import { CheckIcon, MicIcon, MicOffIcon, SquareIcon, XIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
+import { CheckIcon, MessageSquareIcon, MicIcon, MicOffIcon, SquareIcon, XIcon } from "lucide-react";
 
 import {
   isChiefOfStaffLive,
@@ -11,9 +13,11 @@ import {
   stopChiefOfStaff,
   useChiefOfStaffStore,
 } from "../../chiefOfStaff/session";
+import { openChiefOfStaffChat } from "../../chiefOfStaff/openChat";
 import { useChiefOfStaffTarget } from "../../chiefOfStaff/useChiefOfStaffTarget";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { chiefOfStaffCommands } from "../../state/chiefOfStaff";
 import { useEnvironments } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -78,9 +82,11 @@ function ChiefOfStaffPanel() {
   const view = useChiefOfStaffStore();
   const target = useChiefOfStaffTarget();
   const avatar = useChiefOfStaffAvatarSettings();
+  const navigate = useNavigate();
   const { environments } = useEnvironments();
   const live = isChiefOfStaffLive(view.phase);
   const environmentId = live ? view.environmentId : target.environmentId;
+  const canOpenChat = useAtomValue(chiefOfStaffCommands.openHome.permissionAtom(environmentId));
   const environmentLabel =
     target.environmentLabel === null
       ? null
@@ -141,6 +147,16 @@ function ChiefOfStaffPanel() {
       )}
 
       <div className="flex justify-end gap-2">
+        {environmentId === null || !canOpenChat ? null : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void openChiefOfStaffChat(environmentId, navigate)}
+          >
+            <MessageSquareIcon />
+            Open chat
+          </Button>
+        )}
         {live ? (
           <>
             <Button

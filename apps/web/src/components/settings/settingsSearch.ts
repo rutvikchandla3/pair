@@ -547,6 +547,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["chief of staff voice tools permissions read only access mcp"],
   },
   {
+    id: "chief-of-staff-home-provider",
+    title: "Chat provider",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["chief of staff chat provider instance model home thread"],
+  },
+  {
+    id: "chief-of-staff-home-model",
+    title: "Chat model",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["chief of staff chat model home thread provider default"],
+  },
+  {
     id: "chief-of-staff-base-url",
     title: "Realtime base URL",
     to: "/settings/chief-of-staff",

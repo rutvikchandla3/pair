@@ -1,6 +1,4 @@
 import {
-  type AuthEnvironmentScope,
-  type AuthMcpClientAccess,
   type ChiefOfStaffCloseReason,
   ChiefOfStaffError,
   type ChiefOfStaffEvent,
@@ -12,7 +10,6 @@ import {
   type ChiefOfStaffVoiceList,
   defaultInstanceIdForDriver,
   type MemberId,
-  mcpClientScopes,
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -36,18 +33,20 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { buildCodexInitializeParams } from "../provider/CodexProvider.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ChiefOfStaffHost, type VoiceAppServer } from "./ChiefOfStaffHost.ts";
+import { ChiefOfStaffHome } from "./ChiefOfStaffHome.ts";
 import {
   backingThreadParams,
+  type ChiefOfStaffCaller,
+  effectiveToolAccess,
   isForThread,
   mapNotification,
   realtimeFailure,
   realtimeStartParams,
 } from "./chiefOfStaffProtocol.ts";
 
-export interface ChiefOfStaffCaller {
-  readonly memberId: MemberId;
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
-}
+// Kept exported here for callers that already import them from the voice service.
+export { effectiveToolAccess };
+export type { ChiefOfStaffCaller };
 
 export class ChiefOfStaffVoice extends Context.Service<
   ChiefOfStaffVoice,
@@ -87,27 +86,6 @@ const VoicesResponse = Schema.Struct({
 });
 const decodeVoices = Schema.decodeUnknownEffect(VoicesResponse);
 
-/** Highest access first, so the first level a caller fully holds is the widest it can lend. */
-const ACCESS_LEVELS: ReadonlyArray<AuthMcpClientAccess> = [
-  "full-access",
-  "auto",
-  "auto-accept-edits",
-  "approval-required",
-  "read-only",
-];
-
-/**
- * A caller lends the MCP credential the highest access whose scopes it all holds itself, never
- * above the configured level.
- */
-export const effectiveToolAccess = (
-  configured: AuthMcpClientAccess,
-  scopes: ReadonlyArray<AuthEnvironmentScope>,
-): AuthMcpClientAccess =>
-  ACCESS_LEVELS.slice(ACCESS_LEVELS.indexOf(configured)).find((access) =>
-    mcpClientScopes(access).every((scope) => scopes.includes(scope)),
-  ) ?? "read-only";
-
 interface Session {
   readonly id: ChiefOfStaffSessionId;
   readonly memberId: MemberId;
@@ -146,6 +124,7 @@ const initialize = (app: VoiceAppServer) =>
 
 const make = Effect.gen(function* () {
   const host = yield* ChiefOfStaffHost;
+  const home = yield* ChiefOfStaffHome;
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
   const random = yield* SecureRandom.SecureRandom;
@@ -334,6 +313,8 @@ const make = Effect.gen(function* () {
 
     const open = Effect.gen(function* () {
       const toolAccess = effectiveToolAccess(config.toolAccess, caller.scopes);
+      // The brain is the member's persistent thread; voice only relays to it.
+      const homeThread = yield* home.ensureHome(caller);
       const credential = yield* Effect.acquireRelease(
         registry.issueClient({
           label: MCP_LABEL,
@@ -355,8 +336,7 @@ const make = Effect.gen(function* () {
         backingThreadParams({
           cwd: yield* host.workspaceDir,
           model: config.model,
-          toolAccess,
-          t3Home: yield* host.t3Home,
+          homeThreadId: homeThread.threadId,
           mcpEndpoint: credential.endpoint,
           mcpAuthorizationHeader: credential.authorizationHeader,
         }),
@@ -379,7 +359,7 @@ const make = Effect.gen(function* () {
             sdpOffer: input.sdpOffer,
             voice: config.voice,
             status,
-            toolAccess,
+            homeThreadId: homeThread.threadId,
           }),
         )
         .pipe(Effect.mapError((error) => realtimeFailure(error.message)));

@@ -18,4 +18,9 @@ export const chiefOfStaffCommands = {
     tag: WS_METHODS.chiefOfStaffListVoices,
     concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
   }),
+  // Ensures the member's persistent chat thread exists and returns it.
+  openHome: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:chief-of-staff:open-home",
+    tag: WS_METHODS.chiefOfStaffOpenHome,
+  }),
 };

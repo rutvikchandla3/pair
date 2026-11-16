@@ -2,6 +2,7 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { isChiefOfStaffLive } from "../chiefOfStaff/chiefOfStaff.logic";
+import { openChiefOfStaffChat } from "../chiefOfStaff/openChat";
 import { startChiefOfStaff, stopChiefOfStaff, useChiefOfStaffStore } from "../chiefOfStaff/session";
 import { useChiefOfStaffTarget } from "../chiefOfStaff/useChiefOfStaffTarget";
 import { openSpaceDialog } from "../spaceDialogStore";
@@ -140,6 +141,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
+import { chiefOfStaffCommands } from "../state/chiefOfStaff";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
@@ -529,6 +531,9 @@ function OpenCommandPaletteDialog(props: {
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
   const chiefOfStaffTarget = useChiefOfStaffTarget();
+  const canOpenChiefOfStaffChat = useAtomValue(
+    chiefOfStaffCommands.openHome.permissionAtom(chiefOfStaffTarget.environmentId),
+  );
   const spaceTarget = useSpaceShortcutTarget();
   const teamMode = useTeamEnvironmentIds().length > 0;
   const spaceThread = useSpaceThreadActions(
@@ -1903,6 +1908,20 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         if (chiefOfStaffLive) stopChiefOfStaff();
         else if (startIn !== null) startChiefOfStaff(startIn);
+      },
+    });
+  }
+
+  if (chiefOfStaffTarget.environmentId !== null && canOpenChiefOfStaffChat) {
+    const chatEnvironmentId = chiefOfStaffTarget.environmentId;
+    actionItems.push({
+      kind: "action",
+      value: "action:chief-of-staff-chat",
+      searchTerms: ["chief of staff", "chat", "text", "assistant", "message"],
+      title: "Chat with Chief of staff",
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await openChiefOfStaffChat(chatEnvironmentId, navigate);
       },
     });
   }

@@ -81,6 +81,11 @@ export function ChiefOfStaffSettingsPanel() {
           />
         )}
       </SettingsSection>
+      {showDetails && environment !== null ? (
+        <SettingsSection title="Chat thread">
+          <HomeThreadRows environmentId={environment.environmentId} />
+        </SettingsSection>
+      ) : null}
       {showDetails ? (
         <SettingsSection title="Avatar on this device">
           <AvatarStyleRow />
@@ -89,6 +94,74 @@ export function ChiefOfStaffSettingsPanel() {
         </SettingsSection>
       ) : null}
     </SettingsPageContainer>
+  );
+}
+
+/** The persistent text thread Chief of staff keeps per member. */
+function HomeThreadRows({ environmentId }: { environmentId: EnvironmentId }) {
+  const settings = useScopedSettings((value) => value.chiefOfStaff);
+  const updateSettings = useUpdateScopedSettings();
+  const update = (patch: Partial<typeof settings>) => updateSettings({ chiefOfStaff: patch });
+  const providers = useEnvironmentProviders().get(environmentId) ?? [];
+  return (
+    <>
+      <SettingsRow
+        serverScoped
+        {...searchableSetting("chief-of-staff-home-provider")}
+        title="Chat provider"
+        settingKeys={["chiefOfStaff"]}
+        description="Runs the persistent thread you chat with by text. Empty uses the server's default for new threads."
+        control={
+          <Select
+            value={
+              settings.homeProviderInstanceId === ""
+                ? DEFAULT_OPTION
+                : settings.homeProviderInstanceId
+            }
+            onValueChange={(next) => {
+              if (next !== null)
+                update({ homeProviderInstanceId: next === DEFAULT_OPTION ? "" : next });
+            }}
+          >
+            <SelectTrigger size="sm" className="w-full sm:w-48" aria-label="Chat provider">
+              <SelectValue>
+                {(value: string) =>
+                  value === DEFAULT_OPTION
+                    ? "Server default"
+                    : (providers.find((provider) => provider.instanceId === value)?.displayName ??
+                      value)
+                }
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value={DEFAULT_OPTION}>
+                Server default
+              </SelectItem>
+              {providers.map((provider) => (
+                <SelectItem hideIndicator key={provider.instanceId} value={provider.instanceId}>
+                  {provider.displayName ?? provider.instanceId}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
+        serverScoped
+        {...searchableSetting("chief-of-staff-home-model")}
+        title="Chat model"
+        settingKeys={["chiefOfStaff"]}
+        description="The model that thread runs. Empty uses the provider's default."
+        control={
+          <TextSetting
+            value={settings.homeModel}
+            placeholder="Default"
+            onCommit={(homeModel) => update({ homeModel })}
+            aria-label="Chat model"
+          />
+        }
+      />
+    </>
   );
 }
 

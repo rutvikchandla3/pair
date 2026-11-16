@@ -1,11 +1,12 @@
 import { assert, it } from "@effect/vitest";
-import { DEFAULT_MODEL } from "@t3tools/contracts";
+import { DEFAULT_TEXT_GENERATION_MODEL } from "@t3tools/contracts";
 
 import {
-  backingSandboxForAccess,
   backingThreadParams,
   formatStatus,
+  homeInstructions,
   realtimeFailure,
+  relayInstructions,
   STATUS_THREAD_CAP,
 } from "./chiefOfStaffProtocol.ts";
 
@@ -29,59 +30,58 @@ it("lists the newest unsettled threads up to the cap and counts the rest", () =>
   assert.include(formatStatus([]), "- none");
 });
 
+it("describes the home thread as an owner-level operator that keeps a Summary line", () => {
+  const instructions = homeInstructions();
+  assert.include(instructions, "owner-level operator");
+  assert.include(instructions, "delegate_task");
+  assert.include(instructions, "create_threads");
+  assert.include(instructions, "`t3` CLI");
+  assert.include(instructions, "without trying it first");
+  assert.include(instructions, "force-push");
+  assert.include(
+    instructions,
+    "Your long-term memory is in MEMORY.md in this folder. Read it at the start of each turn when it exists, and keep it current with the `cos_memory_*` tools.",
+  );
+  assert.include(instructions, "prefixed `Summary:`");
+});
+
+it("makes the voice relay to the home thread and speak its Summary", () => {
+  const instructions = relayInstructions("thread:home-1");
+  assert.include(instructions, "only the voice");
+  assert.include(instructions, "t3_thread_send with threadId thread:home-1");
+  assert.include(instructions, "t3_thread_wait");
+  assert.include(instructions, "90000");
+  assert.include(instructions, "t3_thread_read");
+  assert.include(instructions, "Summary:");
+  assert.include(instructions, "report back");
+  assert.include(instructions, "confirmation");
+});
+
 it("keeps an unrecognised realtime refusal's own words", () => {
   const error = realtimeFailure("socket closed");
   assert.equal(error.reason, "start-failed");
   assert.include(error.message, "socket closed");
 });
 
-it("maps tool access onto Codex's sandbox and network access", () => {
-  assert.deepEqual(backingSandboxForAccess("read-only"), { sandbox: "read-only", config: {} });
-  assert.deepEqual(backingSandboxForAccess("full-access"), {
-    sandbox: "danger-full-access",
-    config: {},
-  });
-  // Voice has no approval UI, so every wider level writes, with network for the `t3` CLI.
-  for (const access of ["approval-required", "auto-accept-edits", "auto"] as const) {
-    assert.deepEqual(backingSandboxForAccess(access), {
-      sandbox: "workspace-write",
-      config: { sandbox_workspace_write: { network_access: true } },
-    });
-  }
-});
-
-it("defaults the backing thread to a strong model, keeps never, and follows access", () => {
+it("makes the voice backing thread read-only with a low-effort fast model", () => {
   const base = {
     cwd: "/workspace",
-    toolAccess: "auto" as const,
-    t3Home: "/state",
+    homeThreadId: "thread:home-1",
     mcpEndpoint: "http://127.0.0.1/mcp",
     mcpAuthorizationHeader: "Bearer x",
   };
   const params = backingThreadParams({ ...base, model: "" });
-  assert.equal(params.model, DEFAULT_MODEL);
+  assert.equal(params.model, DEFAULT_TEXT_GENERATION_MODEL);
   assert.equal(params.approvalPolicy, "never");
-  assert.equal(params.sandbox, "workspace-write");
-  assert.equal((params.config as Record<string, unknown>)["model_reasoning_effort"], "high");
-  assert.deepEqual((params.config as Record<string, unknown>)["sandbox_workspace_write"], {
-    network_access: true,
+  assert.equal(params.sandbox, "read-only");
+  assert.equal((params.config as Record<string, unknown>)["model_reasoning_effort"], "low");
+  assert.include(params.developerInstructions, "thread:home-1");
+  assert.deepEqual((params.config as Record<string, unknown>)["mcp_servers.t3-code"], {
+    url: "http://127.0.0.1/mcp",
+    http_headers: { Authorization: "Bearer x" },
+    default_tools_approval_mode: "approve",
   });
-  // The shell must run `t3` against this server, not Codex's default home.
-  assert.equal(
-    (params.config as Record<string, unknown>)["shell_environment_policy.set.T3CODE_HOME"],
-    "/state",
-  );
 
   const configured = backingThreadParams({ ...base, model: "gpt-5" });
   assert.equal(configured.model, "gpt-5");
-
-  const reading = backingThreadParams({ ...base, model: "", toolAccess: "read-only" });
-  assert.equal(reading.sandbox, "read-only");
-  assert.notProperty(reading.config as Record<string, unknown>, "sandbox_workspace_write");
-  assert.notProperty(
-    reading.config as Record<string, unknown>,
-    "shell_environment_policy.set.T3CODE_HOME",
-  );
-  assert.include(reading.developerInstructions, "read-only");
-  assert.notInclude(params.developerInstructions, "read-only");
 });

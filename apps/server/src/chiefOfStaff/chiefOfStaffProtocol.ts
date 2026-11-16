@@ -1,12 +1,41 @@
 import {
+  type AuthEnvironmentScope,
   type AuthMcpClientAccess,
   ChiefOfStaffError,
   type ChiefOfStaffEvent,
   type ChiefOfStaffState,
-  DEFAULT_MODEL,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  type MemberId,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+export interface ChiefOfStaffCaller {
+  readonly memberId: MemberId;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+}
+
+/** Highest access first, so the first level a caller fully holds is the widest it can lend. */
+const ACCESS_LEVELS: ReadonlyArray<AuthMcpClientAccess> = [
+  "full-access",
+  "auto",
+  "auto-accept-edits",
+  "approval-required",
+  "read-only",
+];
+
+/**
+ * A caller lends the MCP credential the highest access whose scopes it all holds itself, never
+ * above the configured level.
+ */
+export const effectiveToolAccess = (
+  configured: AuthMcpClientAccess,
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): AuthMcpClientAccess =>
+  ACCESS_LEVELS.slice(ACCESS_LEVELS.indexOf(configured)).find((access) =>
+    mcpClientScopes(access).every((scope) => scopes.includes(scope)),
+  ) ?? "read-only";
 
 /**
  * The realtime requests are missing from `effect-codex-app-server`'s generated metadata (Codex CLI
@@ -24,82 +53,66 @@ interface RealtimeStartParams {
 
 const CHIEF_OF_STAFF_MCP_SERVER = "t3-code";
 
-/** The owner-level operator prompt; it names the sandbox it runs in when it cannot write. */
-const chiefOfStaffInstructions = (toolAccess: AuthMcpClientAccess): string =>
+/**
+ * The home thread's persona, written to its `AGENTS.md`. It is an owner-level operator with a
+ * thread credential, so every t3_* tool works and it can hand real work to agents.
+ */
+export const homeInstructions = (): string =>
   [
-    `You are the user's Chief of staff inside T3 Code (Pair), where they run coding agents. Your access to this T3 Code server: ${toolAccess}.`,
+    "You are the user's Chief of staff inside T3 Code (Pair), an owner-level operator across their threads, projects and workspaces.",
     '"Threads", "projects" and "workspaces" always mean the user\'s T3 Code threads, projects and workspaces.',
-    `Prefer the t3_* tools from the ${CHIEF_OF_STAFF_MCP_SERVER} MCP server; never guess about T3 state.`,
-    "When MCP lacks something, use your shell and the `t3` CLI (for example `t3 thread start|send|list|show|fork`, `t3 project`, `t3 environment`), edit files and run commands.",
+    `Prefer the t3_* tools from the ${CHIEF_OF_STAFF_MCP_SERVER} MCP server; never guess about T3 state. Start real work with delegate_task or create_threads instead of doing it all inline.`,
+    "You may also use your shell, edit files, and run the `t3` CLI (for example `t3 thread start|send|list|show|fork`, `t3 project`, `t3 environment`).",
     "Never claim you cannot do something without trying it first, and finish multi-step work instead of stopping early.",
-    "After you start a lookup, wait for its result; never say you cannot see something meanwhile.",
-    "Speak back in one or two short sentences, no matter how much work you did.",
-    "Before you delete, force-push, merge, or interrupt or stop someone's work, say exactly what you will do and wait for the user to confirm out loud.",
-    ...(toolAccess === "read-only"
-      ? [
-          "Your access is read-only right now: you cannot edit files, run writing commands or change T3 state. Say so instead of attempting it.",
-        ]
-      : []),
+    "Before you delete, force-push, merge, or interrupt or stop someone's work, say exactly what you will do and confirm it in chat or out loud first.",
+    "Your long-term memory is in MEMORY.md in this folder. Read it at the start of each turn when it exists, and keep it current with the `cos_memory_*` tools.",
+    "End every reply with a one- or two-sentence spoken-style summary on its own last line, prefixed `Summary:`.",
   ].join("\n");
 
-export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
-
 /**
- * Access maps straight onto Codex's sandbox: voice has no approval UI, so nothing can ask.
- * `workspace-write` turns on network access so the `t3` CLI can reach the running server.
+ * The voice's backing thread only relays: it sends the user's words to the home thread with the
+ * t3-code MCP tools and speaks back the home thread's `Summary:` line.
  */
-export const backingSandboxForAccess = (
-  toolAccess: AuthMcpClientAccess,
-): { readonly sandbox: CodexSandboxMode; readonly config: Readonly<Record<string, unknown>> } =>
-  toolAccess === "read-only"
-    ? { sandbox: "read-only", config: {} }
-    : toolAccess === "full-access"
-      ? { sandbox: "danger-full-access", config: {} }
-      : {
-          sandbox: "workspace-write",
-          config: { sandbox_workspace_write: { network_access: true } },
-        };
+export const relayInstructions = (homeThreadId: string): string =>
+  [
+    "You are only the voice of the user's Chief of staff. The Chief of staff's real thread does the work; you relay it.",
+    `For anything beyond small talk, call t3_thread_send with threadId ${homeThreadId} and message set to exactly what the user asked.`,
+    "Then call t3_thread_wait for that thread with a timeout of 90000 ms. When it finishes, call t3_thread_read and speak its final `Summary:` line.",
+    "If the wait times out, tell the user the work is under way and you will report back, then keep waiting.",
+    "When the home thread asks a question or asks for confirmation, relay it to the user and send the user's answer back with t3_thread_send.",
+    "Never do the work yourself. Speak in one or two short sentences.",
+  ].join("\n");
 
-/** The backing thread's settings. It never asks approval: voice cannot collect an answer. */
+/** The voice's backing thread: read-only with no approval UI, since it only needs its MCP tools. */
 export const backingThreadParams = (input: {
   readonly cwd: string;
   readonly model: string;
-  readonly toolAccess: AuthMcpClientAccess;
-  /** The server's base dir. Only used when the thread can write. */
-  readonly t3Home?: string;
+  readonly homeThreadId: string;
   readonly mcpEndpoint: string;
   readonly mcpAuthorizationHeader: string;
-}) => {
-  const { sandbox, config } = backingSandboxForAccess(input.toolAccess);
-  return {
-    approvalPolicy: "never" as const,
-    sandbox,
-    cwd: input.cwd,
-    model: input.model || DEFAULT_MODEL,
-    developerInstructions: chiefOfStaffInstructions(input.toolAccess),
-    config: {
-      model_reasoning_effort: "high",
-      ...config,
-      // The shell policy can hide the process env, so pin the home `t3` must read here.
-      ...(input.toolAccess === "read-only" || input.t3Home === undefined
-        ? {}
-        : { "shell_environment_policy.set.T3CODE_HOME": input.t3Home }),
-      [`mcp_servers.${CHIEF_OF_STAFF_MCP_SERVER}`]: {
-        url: input.mcpEndpoint,
-        http_headers: { Authorization: input.mcpAuthorizationHeader },
-        // With approval policy never, an MCP call that would ask for approval fails instead.
-        default_tools_approval_mode: "approve",
-      },
+}) => ({
+  approvalPolicy: "never" as const,
+  sandbox: "read-only" as const,
+  cwd: input.cwd,
+  model: input.model || DEFAULT_TEXT_GENERATION_MODEL,
+  developerInstructions: relayInstructions(input.homeThreadId),
+  config: {
+    model_reasoning_effort: "low",
+    [`mcp_servers.${CHIEF_OF_STAFF_MCP_SERVER}`]: {
+      url: input.mcpEndpoint,
+      http_headers: { Authorization: input.mcpAuthorizationHeader },
+      // With approval policy never, an MCP call that would ask for approval fails instead.
+      default_tools_approval_mode: "approve",
     },
-  };
-};
+  },
+});
 
 export const realtimeStartParams = (input: {
   readonly threadId: string;
   readonly sdpOffer: string;
   readonly voice: string;
   readonly status: string;
-  readonly toolAccess: AuthMcpClientAccess;
+  readonly homeThreadId: string;
 }): RealtimeStartParams => ({
   threadId: input.threadId,
   outputModality: "audio",
@@ -109,7 +122,7 @@ export const realtimeStartParams = (input: {
   initialItems: [
     {
       role: "developer",
-      text: `${chiefOfStaffInstructions(input.toolAccess)}\n\n${input.status}`,
+      text: `${relayInstructions(input.homeThreadId)}\n\n${input.status}`,
     },
   ],
 });

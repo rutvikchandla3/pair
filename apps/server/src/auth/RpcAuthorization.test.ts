@@ -162,6 +162,9 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.chiefOfStaffListVoices)).toBe(
       AuthSettingsWriteScope,
     );
+    expect(requiredScopeForRpcMethod(WS_METHODS.chiefOfStaffOpenHome)).toBe(
+      AuthOrchestrationOperateScope,
+    );
     expect(MEMBER_SCOPES).not.toContain(AuthSettingsWriteScope);
   });
 

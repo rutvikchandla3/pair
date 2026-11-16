@@ -157,6 +157,7 @@ import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
 import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
 import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
+import * as ChiefOfStaffHome from "./chiefOfStaff/ChiefOfStaffHome.ts";
 import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceAgentAdapter from "./space/SpaceAgentAdapter.ts";
@@ -1066,8 +1067,14 @@ const layerMakeRoutes = Layer.mergeAll(
       CloudMoves.layer.pipe(Layer.provide(CloudMoveClient.layer)),
     ).pipe(Layer.provideMerge(PeerMcpClient.layer), Layer.provideMerge(PeerLinks.layer)),
   ),
-  // One voice session per member, shared by all of a member's connections.
-  Layer.provide(ChiefOfStaffVoice.layer.pipe(Layer.provide(ChiefOfStaffHost.layer))),
+  // Voice requires Home, so provide Home into Voice; merging them would leave Home unsatisfied.
+  Layer.provide(
+    ChiefOfStaffVoice.layer.pipe(
+      Layer.provide(ChiefOfStaffHome.layer),
+      Layer.provide(ChiefOfStaffHost.layer),
+    ),
+  ),
+  Layer.provide(ChiefOfStaffHome.layer.pipe(Layer.provide(ChiefOfStaffHost.layer))),
   // Spaces for WebSocket clients and /mcp agents.
   Layer.provide(
     SpaceService.layer.pipe(

@@ -5,6 +5,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
+import * as ChiefOfStaffHome from "./chiefOfStaff/ChiefOfStaffHome.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceService from "./space/SpaceService.ts";
 import * as BranchOffService from "./lineage/BranchOffService.ts";
@@ -1711,6 +1712,7 @@ export const layerWsRpc = (
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const cloudMoves = yield* CloudMoves.CloudMoves;
       const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
+      const chiefOfStaffHome = yield* ChiefOfStaffHome.ChiefOfStaffHome;
       const spaces = yield* SpaceService.SpaceService;
       const inbox = yield* InboxService.InboxService;
       const branchOffService = yield* BranchOffService.BranchOffService;
@@ -3144,6 +3146,7 @@ export const layerWsRpc = (
         [WS_METHODS.chiefOfStaffSubscribe]: (input) =>
           chiefOfStaff.subscribe(chiefOfStaffCaller, input),
         [WS_METHODS.chiefOfStaffListVoices]: () => chiefOfStaff.listVoices,
+        [WS_METHODS.chiefOfStaffOpenHome]: () => chiefOfStaffHome.ensureHome(chiefOfStaffCaller),
         [WS_METHODS.spacesList]: () => spaces.list(spaceCaller),
         [WS_METHODS.spacesGet]: (input) => spaces.get(spaceCaller, input),
         [WS_METHODS.spacesMutate]: (input) => spaces.mutate(spaceCaller, input),
@@ -4145,6 +4148,7 @@ export const layer = Layer.unwrap(
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const cloudMoves = yield* CloudMoves.CloudMoves;
     const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
+    const chiefOfStaffHome = yield* ChiefOfStaffHome.ChiefOfStaffHome;
     const spaces = yield* SpaceService.SpaceService;
     const inbox = yield* InboxService.InboxService;
     const branchOff = yield* BranchOffService.BranchOffService;
@@ -4259,7 +4263,12 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(CloudMoves.CloudMoves, cloudMoves)),
-              Layer.provide(Layer.succeed(ChiefOfStaffVoice.ChiefOfStaffVoice, chiefOfStaff)),
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(ChiefOfStaffVoice.ChiefOfStaffVoice, chiefOfStaff),
+                  Layer.succeed(ChiefOfStaffHome.ChiefOfStaffHome, chiefOfStaffHome),
+                ),
+              ),
               Layer.provide(
                 Layer.mergeAll(
                   Layer.succeed(SpaceService.SpaceService, spaces),

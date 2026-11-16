@@ -4,7 +4,9 @@ import {
   type ChiefOfStaffError,
   type ChiefOfStaffEvent,
   MemberId,
+  ProjectId,
   type ServerSettings as ServerSettingsShape,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -20,9 +22,12 @@ import * as TestClock from "effect/testing/TestClock";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ChiefOfStaffHost, VoiceAppServerError } from "./ChiefOfStaffHost.ts";
+import { ChiefOfStaffHome } from "./ChiefOfStaffHome.ts";
 import * as ChiefOfStaffVoice from "./ChiefOfStaffVoice.ts";
 
 const NATIVE_THREAD = "native-1";
+const HOME_THREAD = "home-thread-1";
+const HOME_PROJECT = "home-project-1";
 const member = { memberId: MemberId.make("member-a"), scopes: [] };
 
 interface FakeOptions {
@@ -145,11 +150,23 @@ const setup = (options: FakeOptions = {}) =>
         revokeAll: Effect.void,
       }),
     );
+    const home = Layer.succeed(
+      ChiefOfStaffHome,
+      ChiefOfStaffHome.of({
+        ensureHome: () =>
+          Effect.succeed({
+            threadId: ThreadId.make(HOME_THREAD),
+            projectId: ProjectId.make(HOME_PROJECT),
+          }),
+        homeThreadId: () => Effect.undefined,
+      }),
+    );
     const voice = yield* Layer.build(
       ChiefOfStaffVoice.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             host,
+            home,
             registry,
             ServerSettings.layerTest({
               chiefOfStaff: { enabled: true, voice: "marin", ...options.settings },
@@ -207,6 +224,7 @@ it.effect(
       assert.equal(thread["approvalPolicy"], "never");
       assert.equal(thread["sandbox"], "read-only");
       assert.equal(thread["cwd"], "/state/chief-of-staff/workspace");
+      assert.include(String(thread["developerInstructions"]), HOME_THREAD);
       assert.deepEqual((thread["config"] as Record<string, unknown>)["mcp_servers.t3-code"], {
         url: "http://127.0.0.1/mcp",
         http_headers: { Authorization: "Bearer client-1" },
@@ -222,6 +240,7 @@ it.effect(
       });
       const initial = realtime["initialItems"] as ReadonlyArray<{ role: string; text: string }>;
       assert.equal(initial[0]?.role, "developer");
+      assert.include(initial[0]?.text ?? "", HOME_THREAD);
       assert.include(initial[0]?.text ?? "", "status v1");
       assert.deepEqual(fake.issued, [
         { label: "Chief of staff", access: "read-only", memberId: member.memberId },

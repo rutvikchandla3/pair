@@ -74,6 +74,7 @@ import {
 import {
   ChiefOfStaffError,
   ChiefOfStaffEvent,
+  ChiefOfStaffHomeInfo,
   ChiefOfStaffSessionInput,
   ChiefOfStaffStartInput,
   ChiefOfStaffStartResult,
@@ -659,6 +660,7 @@ export const WS_METHODS = {
   chiefOfStaffStop: "chiefOfStaff.stop",
   chiefOfStaffSubscribe: "chiefOfStaff.subscribe",
   chiefOfStaffListVoices: "chiefOfStaff.listVoices",
+  chiefOfStaffOpenHome: "chiefOfStaff.openHome",
   spacesList: "spaces.list",
   spacesGet: "spaces.get",
   spacesTaskGet: "spaces.taskGet",
@@ -1063,6 +1065,12 @@ const WsChiefOfStaffSubscribeRpc = Rpc.make(WS_METHODS.chiefOfStaffSubscribe, {
 
 const WsChiefOfStaffListVoicesRpc = Rpc.make(WS_METHODS.chiefOfStaffListVoices, {
   success: ChiefOfStaffVoiceList,
+  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
+});
+
+/** Ensures the member's persistent Chief of staff chat thread exists and returns it. */
+const WsChiefOfStaffOpenHomeRpc = Rpc.make(WS_METHODS.chiefOfStaffOpenHome, {
+  success: ChiefOfStaffHomeInfo,
   error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
 });
 
@@ -2824,6 +2832,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsChiefOfStaffStopRpc,
   WsChiefOfStaffSubscribeRpc,
   WsChiefOfStaffListVoicesRpc,
+  WsChiefOfStaffOpenHomeRpc,
   WsSpacesListRpc,
   WsSpacesGetRpc,
   WsSpacesMutateRpc,
