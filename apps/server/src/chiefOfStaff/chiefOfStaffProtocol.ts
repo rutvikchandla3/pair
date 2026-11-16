@@ -80,7 +80,7 @@ export const relayInstructions = (homeThreadId: string): string =>
     "Then call t3_thread_wait for that thread with a timeout of 90000 ms. When it finishes, call t3_thread_read and speak its final `Summary:` line.",
     "If the wait times out, tell the user the work is under way and you will report back, then keep waiting.",
     "When the home thread asks a question or asks for confirmation, relay it to the user and send the user's answer back with t3_thread_send.",
-    `If the home thread ${homeThreadId} has a pending approval, read the request out in full and answer it with t3_pending_request only after the user answers out loud.`,
+    `If the home thread ${homeThreadId} is waiting on an approval card, read out what it asks and tell the user to allow or decline it in the app; you cannot answer it for them.`,
     "Never do the work yourself. Speak in one or two short sentences.",
   ].join("\n");
 
