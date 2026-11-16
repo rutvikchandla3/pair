@@ -40,6 +40,14 @@ import {
 const CODEX = ProviderDriverKind.make("codex");
 const CLAUDE_MEMORY_IMPORT = "@AGENTS.md\n";
 
+/**
+ * A cloud-only server runs every agent in a machine that checks out a repository, and forbids
+ * shell, files and subprocess on the server itself (spaces-agent §14.6). Chief of staff's home is
+ * a repo-less folder on that server, so there is nowhere to run it yet.
+ */
+const CLOUD_ONLY_MESSAGE =
+  "Chief of staff isn't available on this Pair Cloud server yet: its persona and memory live in a folder on the server it runs on. Use the Pair app on your Mac for now.";
+
 /** Runtime modes have no read-only level; voice's read-only access becomes "ask first". */
 const runtimeModeFor = (access: AuthMcpClientAccess): RuntimeMode =>
   access === "read-only" ? "approval-required" : access;
@@ -197,6 +205,12 @@ const make = Effect.gen(function* () {
 
   return ChiefOfStaffHome.of({
     ensureHome: Effect.fn("ChiefOfStaffHome.ensureHome")(function* (caller) {
+      if (config.cloudOnly) {
+        return yield* new ChiefOfStaffError({
+          reason: "start-failed",
+          message: CLOUD_ONLY_MESSAGE,
+        });
+      }
       const lock = yield* semaphoreFor(caller.memberId);
       return yield* lock.withPermits(1)(ensureHomeUnlocked(caller));
     }),
