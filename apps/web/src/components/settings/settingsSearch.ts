@@ -561,6 +561,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["chief of staff chat model home thread provider default"],
   },
   {
+    id: "chief-of-staff-proactive",
+    title: "Proactive",
+    to: "/settings/chief-of-staff",
+    scope: "environment",
+    searchTerms: ["chief of staff proactive react finished failed approval needs you digest"],
+  },
+  {
     id: "chief-of-staff-base-url",
     title: "Realtime base URL",
     to: "/settings/chief-of-staff",

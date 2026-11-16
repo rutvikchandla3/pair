@@ -615,9 +615,12 @@ describe("Chief of staff settings", () => {
   it("starts off, read-only and unset on servers that never saved the settings", () => {
     expect(decodeServerSettings({}).chiefOfStaff).toEqual({
       enabled: false,
+      proactive: false,
       providerInstanceId: "",
       voice: "",
       model: "",
+      homeProviderInstanceId: "",
+      homeModel: "",
       toolAccess: "read-only",
       realtimeBaseUrl: "",
     });

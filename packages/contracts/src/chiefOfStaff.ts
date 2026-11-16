@@ -7,6 +7,8 @@ import { ProjectId, ThreadId, TrimmedNonEmptyString, TrimmedString } from "./bas
 /** Empty strings mean unset: the default Codex instance, its default voice and model, no base URL override. */
 export const ChiefOfStaffSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** When on, the home thread is woken with a digest as the user's threads finish, fail or need them. */
+  proactive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   providerInstanceId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   voice: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -22,6 +24,7 @@ export type ChiefOfStaffSettings = typeof ChiefOfStaffSettings.Type;
 
 export const ChiefOfStaffSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
+  proactive: Schema.optionalKey(Schema.Boolean),
   providerInstanceId: Schema.optionalKey(TrimmedString),
   voice: Schema.optionalKey(TrimmedString),
   model: Schema.optionalKey(TrimmedString),

@@ -8,6 +8,7 @@ import {
   realtimeFailure,
   relayInstructions,
   STATUS_THREAD_CAP,
+  triggerDigest,
 } from "./chiefOfStaffProtocol.ts";
 
 it("lists the newest unsettled threads up to the cap and counts the rest", () => {
@@ -43,6 +44,41 @@ it("describes the home thread as an owner-level operator that keeps a Summary li
     "Your long-term memory is in MEMORY.md in this folder. Read it at the start of each turn when it exists, and keep it current with the `cos_memory_*` tools.",
   );
   assert.include(instructions, "prefixed `Summary:`");
+  assert.include(instructions, "[Chief of staff event digest");
+  assert.include(instructions, "handle them quietly");
+  assert.include(instructions, "`schedule_task` for recurring briefs");
+});
+
+it("renders one line per transition and names what a cap dropped", () => {
+  const digest = triggerDigest(
+    [
+      { threadId: "thread-1", title: "Build it", project: "Pair", kind: "finished" },
+      { threadId: "thread-2", title: "Fix it", project: undefined, kind: "failed" },
+      { threadId: "thread-3", title: "Check it", project: "web", kind: "interrupted" },
+      { threadId: "thread-4", title: "Review", project: "web", kind: "approval" },
+      { threadId: "thread-5", title: "Answer", project: "web", kind: "answer" },
+    ],
+    2,
+  );
+  assert.include(digest, "[Chief of staff event digest: automatic]");
+  assert.include(digest, '- "Build it" (project "Pair"): finished (thread thread-1)');
+  assert.include(digest, '- "Fix it": failed (thread thread-2)');
+  assert.include(digest, '- "Check it" (project "web"): was interrupted (thread thread-3)');
+  assert.include(digest, '- "Review" (project "web"): needs approval (thread thread-4)');
+  assert.include(
+    digest,
+    '- "Answer" (project "web"): is waiting for the user\'s answer (thread thread-5)',
+  );
+  assert.include(digest, "2 earlier events were dropped by the rate limit");
+  assert.include(digest, "`Summary: nothing needs you.`");
+});
+
+it("omits the dropped line and singularises one", () => {
+  const event = [
+    { threadId: "thread-1", title: "Build it", project: "Pair", kind: "finished" as const },
+  ];
+  assert.notInclude(triggerDigest(event, 0), "dropped by the rate limit");
+  assert.include(triggerDigest(event, 1), "1 earlier event was dropped by the rate limit");
 });
 
 it("makes the voice relay to the home thread and speak its Summary", () => {

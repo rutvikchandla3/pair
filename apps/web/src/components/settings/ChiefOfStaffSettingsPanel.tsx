@@ -161,6 +161,21 @@ function HomeThreadRows({ environmentId }: { environmentId: EnvironmentId }) {
           />
         }
       />
+      <SettingsRow
+        serverScoped
+        {...searchableSetting("chief-of-staff-proactive")}
+        title="Proactive"
+        settingKeys={["chiefOfStaff"]}
+        description="Let Chief of staff react when your threads finish, fail or need you."
+        control={
+          <ScopedSwitch
+            settingKeys={["chiefOfStaff"]}
+            checked={settings.proactive}
+            onCheckedChange={(checked) => update({ proactive: Boolean(checked) })}
+            aria-label="Proactive"
+          />
+        }
+      />
     </>
   );
 }

@@ -161,6 +161,7 @@ import * as ChiefOfStaffAudit from "./chiefOfStaff/ChiefOfStaffAudit.ts";
 import * as ChiefOfStaffHome from "./chiefOfStaff/ChiefOfStaffHome.ts";
 import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
 import * as ChiefOfStaffMemory from "./chiefOfStaff/ChiefOfStaffMemory.ts";
+import * as ChiefOfStaffTriggers from "./chiefOfStaff/ChiefOfStaffTriggers.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceAgentAdapter from "./space/SpaceAgentAdapter.ts";
 import * as SpaceAgentAdapterSlot from "./space/SpaceAgentAdapterSlot.ts";
@@ -1035,6 +1036,13 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  // Wakes each member's home thread as their threads finish, fail or need them.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const triggers = yield* ChiefOfStaffTriggers.ChiefOfStaffTriggers;
+      yield* triggers.start();
+    }),
+  ).pipe(Layer.provide(ChiefOfStaffTriggers.layer.pipe(Layer.provide(ChiefOfStaffHost.layer)))),
   // @pair, the in-process room agent, joins the provider adapter registry.
   SpaceAgentAdapter.layerRegister.pipe(
     Layer.provide(

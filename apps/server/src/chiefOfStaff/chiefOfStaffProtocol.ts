@@ -66,6 +66,8 @@ export const homeInstructions = (): string =>
     "Never claim you cannot do something without trying it first, and finish multi-step work instead of stopping early.",
     "Before you delete, force-push, merge, or interrupt or stop someone's work, say exactly what you will do and confirm it in chat or out loud first.",
     "Your long-term memory is in MEMORY.md in this folder. Read it at the start of each turn when it exists, and keep it current with the `cos_memory_*` tools.",
+    "Messages headed `[Chief of staff event digest` are automatic: handle them quietly per your standing orders in MEMORY.md.",
+    "Use `schedule_task` for recurring briefs, reminders and follow-ups the user asks for.",
     "End every reply with a one- or two-sentence spoken-style summary on its own last line, prefixed `Summary:`.",
   ].join("\n");
 
@@ -179,6 +181,45 @@ export const formatStatus = (threads: ReadonlyArray<StatusThread>): string => {
     ...(lines.length === 0 ? ["- none"] : lines),
     ...(hidden > 0 ? [`- and ${hidden} older threads not listed`] : []),
     "Answer thread status questions from this list directly; use the tools for anything else.",
+  ].join("\n");
+};
+
+/** What woke the home thread about a thread. */
+export type TriggerKind = "finished" | "failed" | "interrupted" | "approval" | "answer";
+
+export interface TriggerDigestEvent {
+  readonly threadId: string;
+  readonly title: string;
+  readonly project: string | undefined;
+  readonly kind: TriggerKind;
+}
+
+const TRIGGER_WORD: Record<TriggerKind, string> = {
+  finished: "finished",
+  failed: "failed",
+  interrupted: "was interrupted",
+  approval: "needs approval",
+  answer: "is waiting for the user's answer",
+};
+
+/** The automatic wake-up message sent to a home thread; `dropped` counts events a cap discarded. */
+export const triggerDigest = (
+  events: ReadonlyArray<TriggerDigestEvent>,
+  dropped: number,
+): string => {
+  const lines = events.map((event) => {
+    const project =
+      event.project === undefined ? "" : ` (project ${JSON.stringify(event.project)})`;
+    return `- ${JSON.stringify(event.title)}${project}: ${TRIGGER_WORD[event.kind]} (thread ${event.threadId})`;
+  });
+  return [
+    "[Chief of staff event digest: automatic]",
+    ...lines,
+    ...(dropped > 0
+      ? [`- ${dropped} earlier event${dropped === 1 ? " was" : "s were"} dropped by the rate limit`]
+      : []),
+    "",
+    "Act on these per your standing orders in MEMORY.md. If nothing needs doing, reply only `Summary: nothing needs you.`",
   ].join("\n");
 };
 
