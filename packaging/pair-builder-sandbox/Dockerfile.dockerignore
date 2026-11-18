@@ -1,0 +1,31 @@
+# Build context: the repository root (see README.md). Only sources the server bundle needs, plus
+# every workspace manifest so pnpm can verify the lockfile.
+**/node_modules
+**/dist
+**/dist-*
+**/.vite-plus
+**/.turbo
+**/*.tsbuildinfo
+.git
+.t3
+.repos
+.plans
+.alchemy
+release*
+# Local env files can hold developer credentials; the image needs none of them.
+**/.env
+**/.env.*
+# Clients and their assets: the Builder host serves the web UI, so only their manifests are needed.
+apps/mobile/**
+!apps/mobile/package.json
+apps/marketing/**
+!apps/marketing/package.json
+apps/desktop/**
+!apps/desktop/package.json
+apps/web/**
+!apps/web/package.json
+docs
+assets
+native
+evals/**
+!evals/package.json
