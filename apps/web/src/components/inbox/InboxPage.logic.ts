@@ -4,7 +4,8 @@ import type { InboxItem, SpaceId, SpaceTaskId, ThreadId } from "@t3tools/contrac
 export type InboxItemTarget =
   | { readonly kind: "thread"; readonly threadId: ThreadId }
   | { readonly kind: "task"; readonly spaceId: SpaceId; readonly taskId: SpaceTaskId }
-  | { readonly kind: "room"; readonly spaceId: SpaceId };
+  | { readonly kind: "room"; readonly spaceId: SpaceId }
+  | { readonly kind: "bot"; readonly botId: string; readonly jobId?: string };
 
 export function inboxItemTarget(item: InboxItem): InboxItemTarget | null {
   switch (item.reason) {
@@ -17,6 +18,16 @@ export function inboxItemTarget(item: InboxItem): InboxItemTarget | null {
     case "pair-reply":
     case "added-to-space":
       return item.spaceId === undefined ? null : { kind: "room", spaceId: item.spaceId };
+    case "bot-ask":
+      return item.botId === undefined ? null : { kind: "bot", botId: item.botId };
+    case "bot-job-done":
+      return item.botId === undefined
+        ? null
+        : {
+            kind: "bot",
+            botId: item.botId,
+            ...(item.jobId === undefined ? {} : { jobId: item.jobId }),
+          };
     default:
       return item.threadId === undefined ? null : { kind: "thread", threadId: item.threadId };
   }
@@ -34,6 +45,8 @@ export function inboxSnoozeKind(item: InboxItem): "task" | "thread" | null {
     case "mention":
     case "pair-reply":
     case "added-to-space":
+    case "bot-ask":
+    case "bot-job-done":
       return null;
     default:
       return item.threadId === undefined ? null : "thread";

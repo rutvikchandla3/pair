@@ -23,6 +23,8 @@ import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { BotAvatar } from "../bots/BotAvatar";
+import { BotInboxAskActions } from "../bots/BotInboxAskActions";
 import {
   inboxEnvironment,
   useInboxPages,
@@ -211,6 +213,7 @@ function InboxBody(props: { readonly environmentId: EnvironmentId; readonly filt
     <div className="flex min-h-0 flex-1">
       <div className="flex w-[26rem] min-w-0 shrink-0 flex-col border-r border-border">
         <InboxList
+          environmentId={environmentId}
           items={view.items}
           selectedId={selected?.id ?? null}
           needsYouCount={summary?.needsYou ?? null}
@@ -363,6 +366,15 @@ function navigateTo(
         to: "/spaces/$environmentId/$spaceId",
         params: { environmentId, spaceId: target.spaceId },
       });
+    case "bot":
+      return navigate({
+        to: "/bots/$environmentId/$botId",
+        params: { environmentId, botId: target.botId },
+        search: {
+          tab: "briefing",
+          ...(target.jobId === undefined ? {} : { job: target.jobId }),
+        },
+      });
   }
 }
 
@@ -387,6 +399,7 @@ const rowId = (item: InboxItem) => `inbox-item-${item.id}`;
  * `e` marks a For you item done and `h` snoozes.
  */
 export function InboxList(props: {
+  readonly environmentId: EnvironmentId;
   readonly items: ReadonlyArray<InboxItem>;
   readonly selectedId: string | null;
   /** The summary's count, which covers pages not loaded yet. */
@@ -450,6 +463,7 @@ export function InboxList(props: {
         {items.map((item) => (
           <InboxRow
             key={item.id}
+            environmentId={props.environmentId}
             item={item}
             viewer={props.viewer}
             selected={item.id === selected?.id}
@@ -482,6 +496,7 @@ export function InboxList(props: {
 }
 
 function InboxRow(props: {
+  readonly environmentId: EnvironmentId;
   readonly item: InboxItem;
   readonly viewer: SpaceViewer;
   readonly selected: boolean;
@@ -491,6 +506,7 @@ function InboxRow(props: {
   const { item } = props;
   const copy = inboxRowCopy(item, props.viewer);
   const Icon = REASON_ICONS[item.reason];
+  const isBot = item.reason === "bot-ask" || item.reason === "bot-job-done";
   return (
     <div
       id={rowId(item)}
@@ -503,7 +519,16 @@ function InboxRow(props: {
       onClick={props.onSelect}
       onDoubleClick={props.onOpen}
     >
-      <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      {isBot ? (
+        <span className="mt-0.5 shrink-0">
+          <BotAvatar
+            bot={{ name: item.botName ?? "Bot", color: item.botColor ?? "#4f46e5" }}
+            size="sm"
+          />
+        </span>
+      ) : (
+        <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-sm">{copy.title}</span>
@@ -514,6 +539,13 @@ function InboxRow(props: {
         {copy.detail === "" ? null : (
           <p className="truncate text-muted-foreground text-xs">{copy.detail}</p>
         )}
+        {item.reason === "bot-ask" && item.botId !== undefined && item.askId !== undefined ? (
+          <BotInboxAskActions
+            environmentId={props.environmentId}
+            botId={item.botId}
+            askId={item.askId}
+          />
+        ) : null}
       </div>
     </div>
   );

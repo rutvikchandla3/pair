@@ -44,6 +44,7 @@ import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepA
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { TeamImageBuildToasts } from "../components/sandbox/TeamImageBuildToasts";
+import { BotNotifications } from "../components/bots/BotNotifications";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -235,6 +236,7 @@ function RootRouteBranch() {
         <MoveToOwnMachineDialogHost />
         <ProjectCloneToastCoordinator />
         <TeamImageBuildToasts />
+        <BotNotifications />
         <AddProjectToMachineDialogHost />
         <NewWorkspaceDialogHost />
         <SpaceDialogHost />

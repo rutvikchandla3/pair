@@ -1,5 +1,12 @@
 import type { SpaceViewer } from "@t3tools/client-runtime/spaces";
-import { type InboxItem, MemberId, SpaceId, SpaceTaskId, ThreadId } from "@t3tools/contracts";
+import {
+  type InboxItem,
+  EnvironmentId,
+  MemberId,
+  SpaceId,
+  SpaceTaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -57,6 +64,7 @@ function Harness(props: {
   const [selectedId, setSelectedId] = useState<string>("approval:thread-1:request-1");
   return (
     <InboxList
+      environmentId={EnvironmentId.make("env_00000000000000000001")}
       items={ITEMS}
       selectedId={selectedId}
       needsYouCount={2}

@@ -23,6 +23,7 @@ import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { derivePendingUserInputProgress } from "../../pendingUserInput";
+import { BotInboxAskActions } from "../bots/BotInboxAskActions";
 import { openSpaceThreadDialog } from "../spaces/spaceThreadDialogStore";
 import { useCanOperateSpaces } from "../../state/spaces";
 import {
@@ -61,7 +62,9 @@ export function InboxPreview(props: {
           item.reason === "pair-reply" ||
           item.reason === "added-to-space"
         ? "Open room"
-        : "Open thread";
+        : item.reason === "bot-ask" || item.reason === "bot-job-done"
+          ? "Open bot"
+          : "Open thread";
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="flex min-w-0 items-center gap-2">
@@ -96,6 +99,13 @@ export function InboxPreview(props: {
         <>
           <p className="font-medium text-sm">{copy.title}</p>
           {item.excerpt === undefined ? null : <Excerpt text={item.excerpt} />}
+          {item.reason === "bot-ask" && item.botId !== undefined && item.askId !== undefined ? (
+            <BotInboxAskActions
+              environmentId={props.environmentId}
+              botId={item.botId}
+              askId={item.askId}
+            />
+          ) : null}
         </>
       )}
     </div>

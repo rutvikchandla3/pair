@@ -1,4 +1,11 @@
-import { type InboxItem, SpaceId, SpaceTaskId, ThreadId } from "@t3tools/contracts";
+import {
+  BotId,
+  BotJobId,
+  type InboxItem,
+  SpaceId,
+  SpaceTaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { inboxItemTarget, inboxSnoozeKind, moveInboxSelection } from "./InboxPage.logic";
@@ -40,10 +47,20 @@ describe("inbox item actions", () => {
       null,
     ],
     ["a thread item whose thread is gone", { reason: "question" }, null, null],
+    ["a bot ask", { reason: "bot-ask", botId: BotId.make("bot-1") }, "bot", null],
+    ["a finished bot job", { reason: "bot-job-done", botId: BotId.make("bot-1") }, "bot", null],
   ] as const)("%s: Enter opens its %s, h snoozes its %s", (_name, overrides, target, snooze) => {
     const entry = item(overrides);
     expect(inboxItemTarget(entry)?.kind ?? null).toBe(target);
     expect(inboxSnoozeKind(entry)).toBe(snooze);
+  });
+
+  it("carries the job when a bot job finishes", () => {
+    expect(
+      inboxItemTarget(
+        item({ reason: "bot-job-done", botId: BotId.make("bot-1"), jobId: BotJobId.make("job-1") }),
+      ),
+    ).toEqual({ kind: "bot", botId: "bot-1", jobId: "job-1" });
   });
 
   it("j and k hold at the ends and start from the top without a selection", () => {

@@ -34,6 +34,7 @@ import {
 
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
+import { readBotThreadIds } from "../state/bots";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { teamEnvironment } from "../state/team";
@@ -312,7 +313,10 @@ export function startThreadNotifications(
     );
     const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
+    // Bot home threads and sessions never notify; their Asks and finished jobs do.
+    const botThreadIds = readBotThreadIds(environmentId);
     for (const rawThread of threads) {
+      if (botThreadIds.has(rawThread.id)) continue;
       if (
         isShownUnderParent(
           { environmentId, threadId: rawThread.id },

@@ -7,6 +7,7 @@ import { useBranchOffPaletteItems } from "./branchOff/BranchOffShortcuts";
 import { useForkAllowed } from "./branchOff/useBranchOff";
 import { useLineagePaletteItems } from "./lineage/LineageShortcuts";
 import { useTeamEnvironmentIds } from "../state/inbox";
+import { useBotsSnapshot } from "../state/bots";
 import { SPACE_TASK_STATUSES } from "@t3tools/client-runtime/spaces";
 import { useSetSpaceTaskStatus } from "./spaces/SpaceStatusMenu";
 import { SpaceTaskStatusGlyph } from "./spaces/SpaceStatusIcon";
@@ -101,8 +102,10 @@ import {
   ListPlusIcon,
   InboxIcon,
   ListTodoIcon,
+  PlusIcon,
   Share2Icon,
 } from "lucide-react";
+import { BotAvatar } from "./bots/BotAvatar";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
   useDeferredValue,
@@ -525,6 +528,7 @@ function OpenCommandPaletteDialog(props: {
   const paletteRouteTarget = useThreadRouteTarget();
   const spaceTarget = useSpaceShortcutTarget();
   const teamMode = useTeamEnvironmentIds().length > 0;
+  const botsSnapshot = useBotsSnapshot(primaryEnvironmentId);
   const spaceThread = useSpaceThreadActions(
     activeThread?.environmentId ?? null,
     activeThread?.id ?? null,
@@ -1879,6 +1883,35 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (primaryEnvironmentId !== null && botsSnapshot !== null) {
+    for (const bot of botsSnapshot.bots) {
+      actionItems.push({
+        kind: "action",
+        value: `action:bot-open:${bot.id}`,
+        searchTerms: [bot.name.toLowerCase(), "bot", "bots"],
+        title: `Open ${bot.name}`,
+        icon: <BotAvatar bot={bot} size="sm" />,
+        run: async () => {
+          await navigate({
+            to: "/bots/$environmentId/$botId",
+            params: { environmentId: primaryEnvironmentId, botId: bot.id },
+            search: { tab: "briefing" },
+          });
+        },
+      });
+    }
+    actionItems.push({
+      kind: "action",
+      value: "action:bot-new",
+      searchTerms: ["new bot", "create bot", "bot"],
+      title: "New bot",
+      icon: <PlusIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/bots", search: { new: 1 } });
+      },
+    });
+  }
 
   if (teamMode) {
     actionItems.push(

@@ -164,6 +164,7 @@ import {
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
+import { useBotThreadIds } from "../state/bots";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
@@ -283,6 +284,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarSpaces } from "./sidebar/SidebarSpaces";
+import { SidebarBots } from "./sidebar/SidebarBots";
 import { sidebarBranchOwnersBySource, sidebarThreadLead } from "./sidebar/SidebarSpaces.logic";
 import { useSpaceEnvironmentIds, useSpaceTaskNames } from "../state/spaces";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
@@ -391,6 +393,8 @@ interface SidebarThreadPartitionInput {
   /** Team-mode environments only: single-member environments partition as before. */
   readonly teamViewers: ReadonlyMap<EnvironmentId, TeamViewer>;
   readonly ownerFilters: Readonly<Record<string, string>>;
+  /** Bot home threads and sessions, which live on their bot's page. */
+  readonly hiddenThreadIds: ReadonlySet<string>;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
   // tracker's expiry version are inputs: a new key repartitions.
@@ -499,6 +503,8 @@ function useSidebarThreads(input: {
     Schema.Boolean,
   );
   const teamViewers = useTeamViewers([...serverConfigs.keys()]);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const hiddenThreadIds = useBotThreadIds(primaryEnvironmentId);
   const ownerFilters = useUiStateStore((store) => store.sidebarOwnerFilterByEnvironmentId);
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
@@ -524,6 +530,7 @@ function useSidebarThreads(input: {
     sortActiveBySend: folderGroups !== null,
     teamViewers,
     ownerFilters,
+    hiddenThreadIds,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
@@ -662,14 +669,13 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     sortActiveBySend,
     teamViewers,
     ownerFilters,
+    hiddenThreadIds,
   } = input;
   const preciseNow = new Date().toISOString();
-  // Rooms are listed under Spaces, not their project.
-  const visible = filterSidebarV2VisibleThreads(
-    threads,
-    scopedProjectKeys,
-    delegatedUnderParent,
-  ).filter((thread) => thread.source.space?.kind !== "room");
+  // Rooms are listed under Spaces, not their project; bot threads live on their bot's page.
+  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent)
+    .filter((thread) => thread.source.space?.kind !== "room")
+    .filter((thread) => !hiddenThreadIds.has(thread.id));
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -3514,6 +3520,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               </p>
             )
           ) : null}
+          {!isSearchingThreads ? <SidebarBots /> : null}
           {!isSearchingThreads ? <SidebarSpaces /> : null}
           {!isSearchingThreads ? (
             <TooltipProvider
