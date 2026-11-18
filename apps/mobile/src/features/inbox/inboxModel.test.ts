@@ -1,4 +1,6 @@
 import {
+  BotAskId,
+  BotJobId,
   type InboxItem,
   MemberId,
   type SharedWithYouItem,
@@ -20,6 +22,8 @@ const at = "2026-11-01T10:00:00.000Z";
 const threadId = ThreadId.make("thread:a");
 const spaceId = SpaceId.make("spc_00000000000000000001");
 const taskId = SpaceTaskId.make("stk_00000000000000000001");
+const askId = BotAskId.make("ask:1");
+const jobId = BotJobId.make("job:1");
 
 const item = (overrides: Partial<InboxItem>): InboxItem => ({
   id: "item",
@@ -92,6 +96,21 @@ describe("Inbox item actions", () => {
       true,
     ],
     ["an item naming nothing opens nothing", item({ reason: "approval" }), null, null, false],
+    [
+      "a bot ask opens the Ask sheet and has nothing to snooze",
+      item({ reason: "bot-ask", askId, jobId }),
+      { type: "bot-ask", askId },
+      null,
+      false,
+    ],
+    [
+      "a finished or stopped job opens job detail",
+      item({ group: "for-you", reason: "bot-job-done", jobId }),
+      { type: "bot-job", jobId },
+      null,
+      true,
+    ],
+    ["a bot item naming nothing opens nothing", item({ reason: "bot-ask" }), null, null, false],
   ])("%s", (_label, input, target, snooze, done) => {
     expect(inboxItemTarget(input)).toEqual(target);
     expect(inboxItemSnooze(input)).toEqual(snooze);

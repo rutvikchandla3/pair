@@ -105,7 +105,7 @@ function WorkspaceRootContent() {
   );
   const tab = state.tabs[settingsOpen ? "settings" : state.selectedTab];
   const bottomClearance =
-    layout.variant === "medium" && state.selectedTab === "usage"
+    layout.variant === "medium" && (state.selectedTab === "usage" || state.selectedTab === "bots")
       ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
       : Platform.OS === "ios" && isDuoDevice(deviceType)
         ? // The column's safe area already holds the Duo's search toolbar and keyboard.

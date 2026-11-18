@@ -26,6 +26,7 @@ import { reportSpaceResult, useSpaceViewer } from "../../state/spaces";
 import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadListActions } from "../home/useThreadListActions";
+import { BotAvatar } from "../bots/BotAvatar";
 import { resolveThreadListV2SnoozePresets } from "../threads/threadListV2";
 import {
   dismissSpaceUndoNotice,
@@ -117,6 +118,13 @@ export function InboxScreen(props: StaticScreenProps<Params>) {
         navigation.dispatch(
           StackActions.push("SpaceRoom", { environmentId, spaceId: target.spaceId }),
         );
+        return;
+      case "bot-ask":
+        navigation.dispatch(StackActions.push("BotAsk", { environmentId, askId: target.askId }));
+        return;
+      case "bot-job":
+        navigation.dispatch(StackActions.push("BotJob", { environmentId, jobId: target.jobId }));
+        return;
     }
   };
   const openThread = (item: InboxItem) => {
@@ -260,6 +268,21 @@ export function InboxScreen(props: StaticScreenProps<Params>) {
   );
 }
 
+/** The bot's avatar when the item carries one; the reason's glyph otherwise. */
+function InboxRowIcon(props: { readonly item: InboxItem }) {
+  const { item } = props;
+  if (item.botName !== undefined && item.botColor !== undefined) {
+    return <BotAvatar bot={{ name: item.botName, color: item.botColor }} size={16} />;
+  }
+  return (
+    <SymbolView
+      name={INBOX_REASON_SYMBOL[item.reason]}
+      size={16}
+      tintColorClassName={REASON_TINT[item.reason] ?? "accent-icon-muted"}
+    />
+  );
+}
+
 /** A task item snoozed until later: when it wakes, and Unsnooze. */
 function SnoozedRow(props: {
   readonly item: InboxItem;
@@ -285,11 +308,7 @@ function SnoozedRow(props: {
         className="min-w-0 flex-1 flex-row gap-3 active:opacity-70"
       >
         <View className="pt-0.5">
-          <SymbolView
-            name={INBOX_REASON_SYMBOL[item.reason]}
-            size={16}
-            tintColorClassName="accent-icon-muted"
-          />
+          <InboxRowIcon item={item} />
         </View>
         <View className="min-w-0 flex-1 gap-0.5">
           <Text numberOfLines={2} className="text-base font-t3-medium text-foreground">
@@ -364,11 +383,7 @@ function InboxRow(props: {
       className="min-h-14 flex-row gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
     >
       <View className="pt-0.5">
-        <SymbolView
-          name={INBOX_REASON_SYMBOL[item.reason]}
-          size={16}
-          tintColorClassName={REASON_TINT[item.reason] ?? "accent-icon-muted"}
-        />
+        <InboxRowIcon item={item} />
       </View>
       <View className="min-w-0 flex-1 gap-0.5">
         <Text numberOfLines={2} className="text-base font-t3-medium text-foreground">

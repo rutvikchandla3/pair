@@ -1,4 +1,6 @@
 import type {
+  BotAskId,
+  BotJobId,
   InboxGroup,
   InboxItem,
   InboxItemReason,
@@ -36,7 +38,11 @@ export type InboxItemTarget =
   | { readonly type: "request"; readonly threadId: ThreadId }
   | { readonly type: "thread"; readonly threadId: ThreadId }
   | { readonly type: "task"; readonly spaceId: SpaceId; readonly taskId: SpaceTaskId }
-  | { readonly type: "room"; readonly spaceId: SpaceId };
+  | { readonly type: "room"; readonly spaceId: SpaceId }
+  /** A bot's Ask, answered in the Ask sheet. */
+  | { readonly type: "bot-ask"; readonly askId: BotAskId }
+  /** A bot's finished or stopped job, opened read-only. */
+  | { readonly type: "bot-job"; readonly jobId: BotJobId };
 
 /** Where tapping a row goes; null when the item names nothing this client can open. */
 export function inboxItemTarget(item: InboxItem): InboxItemTarget | null {
@@ -61,8 +67,9 @@ export function inboxItemTarget(item: InboxItem): InboxItemTarget | null {
           ? null
           : { type: "thread", threadId: item.threadId };
     case "bot-ask":
+      return item.askId === undefined ? null : { type: "bot-ask", askId: item.askId };
     case "bot-job-done":
-      return null;
+      return item.jobId === undefined ? null : { type: "bot-job", jobId: item.jobId };
   }
 }
 
