@@ -247,7 +247,7 @@ export function BotPage(props: {
       </div>
 
       <BotSettingsDialog
-        key={`${bot.id}:${settingsOpen}`}
+        key={`settings:${bot.id}:${settingsOpen}`}
         environmentId={props.environmentId}
         bot={bot}
         open={settingsOpen}
@@ -255,7 +255,7 @@ export function BotPage(props: {
       />
 
       <BotRenameDialog
-        key={`${bot.id}:${renameOpen}`}
+        key={`rename:${bot.id}:${renameOpen}`}
         environmentId={props.environmentId}
         bot={bot}
         open={renameOpen}

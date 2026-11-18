@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -28,6 +29,21 @@ import { sessionTaskFooter } from "./botPersona.ts";
 const notFound = (message: string) => new BotsError({ reason: "not-found", message });
 const invalidRequest = (message: string) => new BotsError({ reason: "invalid-request", message });
 const unavailable = (message: string) => new BotsError({ reason: "unavailable", message });
+
+const isProviderDisabled = Schema.is(
+  ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
+);
+
+/** What the bot is told when a session can't start, so it can tell the user what to change. */
+const launchFailure = (error: unknown, projectTitle: string, role: BotSessionRole): string => {
+  if (!isProviderDisabled(error)) {
+    return "Could not start the session.";
+  }
+  if (error.reason !== undefined) {
+    return `Could not start the session: the ${error.instanceId} provider belongs to someone else (${error.reason}).`;
+  }
+  return `Could not start the session: the ${error.instanceId} provider is turned off for ${projectTitle}. Tell the user to turn it on in Settings, or to pick another ${role} model under Models… in your menu.`;
+};
 
 export interface BotSessionStartInput {
   readonly jobId: BotJobId;
@@ -172,7 +188,10 @@ const make = Effect.gen(function* () {
           creationSource: "server",
           ownerId: bot.ownerId,
         })
-        .pipe(Effect.mapError(() => unavailable("Could not start the session.")));
+        .pipe(
+          Effect.tapError((error) => Effect.logWarning("bot session launch failed", { error })),
+          Effect.mapError((error) => unavailable(launchFailure(error, project.title, input.role))),
+        );
       const session: BotSession = {
         threadId: launched.threadId,
         botId,

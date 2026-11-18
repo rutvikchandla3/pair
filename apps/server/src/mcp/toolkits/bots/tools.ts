@@ -207,7 +207,7 @@ const SessionRespondTool = Tool.make("bot_session_respond", {
 const AskTool = Tool.make("bot_ask", {
   ...shared,
   description:
-    "Ask the user a question you cannot decide from the playbook, tied to a job. Give up to three suggested answers and the one you would pick.",
+    "Ask the user a question you cannot decide from the playbook. Pass the job's `jobId` whenever the question is about a job, even before it has a session: Pair names the question after that work. Give up to three suggested answers and the one you would pick.",
   parameters: Schema.Struct({
     jobId: Schema.optional(BotJob.fields.id),
     question: Schema.String,
