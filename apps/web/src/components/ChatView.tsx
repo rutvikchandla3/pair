@@ -187,6 +187,7 @@ import {
 import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStore";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
+import type { BotChatOptions } from "./chat/botChat";
 
 import {
   previewMiniPlayerSourceKey,
@@ -436,6 +437,8 @@ type ChatViewProps =
       forceExpandedMobileComposer?: boolean;
       /** A side chat in its parent's right panel; the parent keeps the keyboard and workspace UI. */
       embedded?: SideChatParentPanel;
+      /** Set when this is a bot's home thread on its bot page. */
+      bot?: BotChatOptions;
       routeKind: "server";
       draftId?: never;
     }
@@ -446,6 +449,7 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
       embedded?: never;
+      bot?: never;
       routeKind: "draft";
       draftId: DraftId;
     };
