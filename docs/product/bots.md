@@ -1,199 +1,190 @@
 # Bots
 
-Status: design v3, 2026-11-18. Replaces Chief of staff, which is removed.
-Screens: [bots-prototype](./bots-prototype/README.md).
+Status: design v4 (chat-first), 2026-11-18. Replaces v3's Briefing design and Chief of staff.
+Screens: [bots-chat-prototype](./bots-chat-prototype/README.md).
 
-A **bot** is a named agent you keep. You give it a high-level **job** ("Make the sidebar drag
-flicker go away", "Upgrade Effect to 3.12"). It starts coding **sessions** to do it, answers their
-questions the way you would, and asks you only when it can't. Its **Briefing** says where every job
-stands, so you never open a session to find out.
+> "It is a single chat where someone can continuously write stuff and the bot handles everything
+> async." The user, rejecting v3's Briefing / Chat / Playbook tabs.
+
+A **bot** is a named agent you keep. It is **one chat**. You write to it the way you'd write to a
+person who runs your work: "fix the sidebar flicker", "also rate-limit the threads API", "what's
+left?", "stop that one". It starts coding **sessions** in your projects, keeps them moving, answers
+their questions the way you would, and writes to you in the same chat when something is done or
+needs you. You never open a session to find out what's going on, and you never fill in a form to
+give it work.
 
 It is single-user. It is not a Space, a provider, or a voice assistant.
 
-## Why Chief of staff didn't work, and what changes
+## Rules
 
-| Chief of staff                                         | Bots                                                                       |
-| ------------------------------------------------------ | -------------------------------------------------------------------------- |
-| Voice first. You had to ask it what was going on.      | A **Briefing** that is always current. You read it; you don't ask.         |
-| A generic chat thread with no notion of work.          | **Jobs** with a status, a headline, sessions and a report.                 |
-| `delegate_task` only reached its own folder's project. | The server launches sessions in **any project**, each in its own worktree. |
-| Saw questions only; nothing showed what it decided.    | Every answer it gives for you is a **Decision** you can see and correct.   |
-| Memory was a file the agent wrote.                     | **Playbook**: your instructions, what it learned (with sources), limits.   |
-| Every turn of the home thread notified you.            | Only **Asks** and finished jobs notify you.                                |
-
-## Concepts
-
-- **Bot.** A name, a colour (assigned), a one-line charter, and three models: **Brain** (thinks;
-  default Claude · Opus 5.5 · High), **Worker** (implementation sessions; default Pi · DeepSeek
-  V4.1 Flash) and **Reviewer** (review sessions; default Claude · Opus 5.5 · High). v1 designs for
-  one bot; the data allows several, and **+** in the sidebar makes another.
-- **Home thread.** Each bot is one ordinary T3 thread in a hidden project rooted at
-  `<stateDir>/bots/<botId>/`. Everything the bot does happens in turns of that thread. Its persona is
-  `AGENTS.md`, regenerated from the playbook on every change.
-- **Job.** One piece of work you gave the bot: J-n, a title, your request, a stored status, a
-  headline the bot keeps current, its sessions, its decisions, and a report when done. Stored status:
-  `working → done | stopped`. **Needs you** is derived from an open Ask.
-- **Session.** A thread the bot started for a job: a normal top-level thread you own (commits are
-  yours), in the job's project, in a new worktree, on the Worker or Reviewer model. Its state is
-  derived from the thread: Working, Waiting on Atlas, Done, Failed, Stopped, Paused until (usage
-  limit), You took over. A working session with no new output for 30 minutes also says so.
-- **Ask.** A question the bot raises to you, tied to a job: the question, why (two lines), up to
-  three suggested answers, and the one it would pick. Answers: a suggestion (one click), your own
-  words, or **Let Atlas decide** (recorded as a Decision citing "You let Atlas decide", so you can
-  correct it). Own-words answers have a **Remember this** checkbox, off by default; after a one-click
-  answer the answered card offers a **Remember this** button. Either way the bot saves a learned note
-  and the exact note text shows on the answered Ask with **Edit** and **Remove note**. **Change
-  answer** stays available; it sends the new answer to the bot, which acts on it.
-- **Decision.** A question a session raised that the bot answered for you. One line each: the
-  question, the answer, and the playbook line or note it cited. **Correct** opens a field; the
-  correction goes to the bot, which re-steers the session if it's still running and offers to edit
-  the cited note.
-- **Playbook.** Your taste: **Instructions** (prose you write), **Learned** (notes with their
-  source and how many decisions cited them), and **Check with me before** (merging a PR, pushing to
-  a default branch, deleting code outside the job, migrations or deploys, adding a dependency,
-  spending money). The bot raises an Ask instead of deciding these, and every session gets them as
-  instructions. Sessions run with full access in their own worktree, so the Playbook says so: these
-  are instructions, not locks.
+1. **The chat is the product.** The bot page is the bot's home thread rendered by T3's own
+   `ChatView`: T3's timeline, T3's composer, T3's model chip, T3's queue-while-running behaviour. No
+   custom composer, no job form, no tabs.
+2. **Work goes in by typing.** The bot turns your message into jobs itself.
+3. **Everything comes back into the chat.** Pair's wake-ups label T3's turn folds; the bot's reply
+   follows. Questions, finished work and problems all arrive as messages.
+4. **The bot's sessions are one click away**, as T3 thread links in its messages and nested under
+   the bot in the sidebar.
+5. **Memory is visible.** What it learned is listed in a Memory panel, and talking to it edits the
+   same list.
 
 ## What the user sees
 
 ### Sidebar
 
-**Bots** sits above Threads: one row per bot with its avatar and name. On the right, the Inbox-style
-count of things that need you, else a static working glyph while any of its sessions run. Paused
-bots show a pause glyph. A bot's home thread and sessions don't appear under Threads; they live on
-its page, and ⌘K still finds them.
+**Bots** sits above Threads. Each bot row: avatar, name, and on the right a count of the bot's open
+questions for you, else a working glyph while the bot or any of its sessions is working, else
+nothing. Paused bots say
+"Paused".
+
+Under the bot row, its sessions are nested, one row each with a state glyph. The needs-you glyph
+appears only on a session the bot has asked you about (`bot_ask`); a session waiting on the bot
+shows as working. Sessions that need you, working or failed come first, then sessions finished in
+the last 24 hours, newest first. Older ones collapse into "N earlier", which expands in place. A session row opens the real thread.
+Bot sessions don't also appear under Threads.
 
 ### Bot page
 
-Header: avatar, name, charter, a muted summary ("5 jobs · 3 sessions working · 2 need you", always
-equal to the rows below), tabs **Briefing · Chat · Playbook**, and ⋯ (**Pause**, **Settings**,
-**Delete bot…**).
+**Header**: avatar, name, a live status line, **Memory**, and ⋯ (**Pause**, **Models…**,
+**Rename…**, **Delete bot…**). The status line names sessions, never job ids: "1 session working ·
+nothing needs you", "Rate limit threads API needs you", "2 questions for you". When something needs
+you it is a button that scrolls the chat to the oldest open question.
 
-**Briefing**, the page you read instead of opening sessions:
+**Body**: the home thread's `ChatView`, unchanged, composer included, with the placeholder "Message
+Atlas". The model chip shows the bot's brain.
 
-1. **Needs you n.** Compact Ask cards (question and job on one line, why clamped to two lines,
-   answers on one row). Also session requests the bot hasn't answered for 10 minutes, or at once
-   while it's paused or its brain is offline: "Upgrade server has waited 11m · **Answer yourself**".
-2. **Atlas decided 4 things since you last looked · Review.** One quiet line (counted since your
-   last visit, `markSeen`); it expands to the decision rows. On mobile it opens the list read-only.
-3. **In progress n.** One row per job: status glyph (an empty ring until the bot's first update),
-   J-n, title, a dot when the headline changed since you last looked, the headline, a progress
-   label, PR chips, "2m". The progress label is "2 of 3 sessions done", unless a session is in
-   trouble: then it names the worst one in the warning colour ("Upgrade web quiet 34m", "Review
-   paused until 14:00", "You took over", "Implement failed"). No models here. Click opens job
-   detail.
-4. **Done this week n**, collapsed, then **All jobs**.
+What the chat holds:
 
-The composer starts a job: "Give Atlas a job…", a project chip (default "Atlas picks"), **Start
-job** (⌘↵). The job appears at once with the headline "Waiting for Atlas" until the bot's first
-update.
+- **Your messages**: work, follow-ups, questions, preferences. Several requests in one message
+  become several jobs. While the bot is mid-turn, T3's composer queues your message the way it does
+  in any thread, and your message goes ahead of any queued wake-ups.
+- **Wake-ups as fold labels.** A wake-up is not its own row. It becomes the label of that turn's T3
+  fold, the row that otherwise says "Worked for 6s ›": "Rate limit threads API is waiting · 10:44 ›",
+  "Sidebar drag flicker finished · 10:52 ›". Expanding a fold shows the wake-up text and the tool
+  calls, as T3 does today.
+- **Quiet turns merge.** Back-to-back wake turns merge into one fold, "Atlas handled 4 updates ·
+  10:02–10:40 ›", only when in each of them the bot wrote no message and called none of `bot_ask`,
+  `bot_job_update` (done, failed or stopped), `bot_learn` or `bot_forget`. Those always stay their
+  own turn with a visible reply.
+- **Nothing done in your name hides.** A memory answer (`bot_session_respond` with a citation) needs
+  no message, but the fold label says it: "Sidebar drag flicker asked a question · answered from
+  memory · 10:38 ›", or in a merged fold "Atlas handled 4 updates · answered 1 from memory ·
+  10:02–10:40 ›". Expanding it shows the question, the answer, and the memory it quoted.
+- **The bot's replies**, in plain prose:
+  - Starting work: "On it, both in **pair**: [Sidebar drag flicker] and [Rate limit threads API]."
+    The bracketed names are `t3-thread://` links, which T3 renders as live thread chips with the
+    session's state.
+  - Needing you: "**Rate limit threads API needs you:** per member or per API token? … I'd pick per
+    member." One question per message, named by session. You answer in the composer, in your own
+    words.
+  - Saving memory: "Saved to memory: 'Rate limits are per member unless I say otherwise.'" "Forget
+    that" removes it.
+  - Finishing: "**Sidebar drag flicker is done.**" what changed in a sentence or two, the evidence (tests and their
+    results, PR links), and what's yours to do (merging).
+  - Catching up: when you write after a gap of an hour or more, the reply opens with a short
+    catch-up (what finished, what needs you, what's still running, how many questions it answered
+    from memory) before answering you. It is the same single reply, not a separate message.
+  - Taking over: "You've taken [Rate limit threads API]; I've stopped steering it. Say 'hand it
+    back' to return it." Once, when you first type in that session.
+  - Routine wake-ups get no message. No "working on it".
 
-**Job detail** (side panel): header with glyph, J-n, title, status pill and headline, ⋯ (**Stop
-job…**, confirming "Stop J-13 and its 2 running sessions?"; **Reopen** on done or stopped jobs).
-Then your request; **Sessions** ("on Pi · DeepSeek V4.1 Flash" said once), each with state, latest
-line, PR with files and +/−, and **Open**; **Decided for you n**; a short timeline; and **Message
-Atlas about this job**, which opens Chat with the job referenced.
+**Memory** (right panel, toggled from the header): **Instructions** (prose you write; the bot reads
+it every turn), **Learned** (notes with their source, **Edit**, **Forget**), **Check with me
+before** (merging a PR, pushing to a default branch, deleting code outside the job, migrations or
+deploys, adding a dependency, spending money). Sessions run with full access in their own worktree,
+so these are instructions, not locks, and the panel says so.
 
-**Report**, on a done job: what changed, evidence (tests run, captures), PRs, **Decided for you
-n** (the bot's own decisions only), **You decided n** (your answers), open questions (hidden when
-none), and **Next**, which can carry a **Start job** button with a
-suggested request.
+### A new bot
 
-**Chat** is the home thread's chat view. Talk to it ("what's blocking?", "from now on add a
-changeset"). Answering an Ask here resolves the Ask. Wake-ups show as quiet system rows.
+**+** in the Bots header creates a bot named Atlas (or the next free name), with the default limits
+and models, and opens its empty chat: "What should Atlas take on?" above T3's composer. Your first
+message is its first job. Rename from ⋯.
 
-**Playbook**: Instructions (prose editor), Learned, Check with me before. Everything autosaves
-("Saved"); the bot sees it on its next turn.
+### Sessions
 
-**Settings** (⋯): name, charter, Brain, Worker, Reviewer.
-
-### Taking over and handing back
-
-If you type into a bot session, the bot stops steering it: the session row says **You took over ·
-Hand back**, and its questions come to you. Hand back gives it to the bot again with a note of what
-changed.
-
-### Pause and delete
-
-**Pause**: the bot takes no turns. Its sessions keep running; their questions come to your Inbox,
-and Start job is disabled with "Atlas is paused · Resume". **Resume** wakes it once with what
-happened meanwhile. **Delete bot…** confirms ("All 11 of its sessions move into Threads (3 are
-still running and keep going)"), stops its home thread, and moves its sessions into Threads; jobs
-and notes are deleted.
+A session is a normal top-level thread you own, in the job's project and its own worktree, on the
+Worker model (implementation) or Reviewer model (review), rendered by the unchanged thread screen.
+Its composer placeholder reads "Message this session (Atlas steps back)". There is no Take over
+button: sending a message there takes it over, and the bot posts once in its chat. Answering the
+session's pending approval or question inside the thread does not take it over.
 
 ### Inbox and notifications
 
-- Asks and escalated session requests appear in Inbox under **Needs you** with the bot's avatar,
-  answerable in place on web, desktop and mobile.
-- Notifications: a new Ask ("Atlas asks: per member or per token?"), an escalated request naming
-  who waits ("Upgrade server is waiting on you (Atlas is paused)"), and a job finishing or stopping
-  ("Atlas finished J-12 · #123"). Asks raised within a minute arrive as one notification. Bot turns
+- Inbox gets the bot's questions ("Per member or per API token? · Atlas · Rate limit threads API")
+  and finished jobs ("Sidebar drag flicker is done · Atlas · PR #612"). Both open the bot's chat
+  scrolled to that message.
+- Notifications: a question for you, a finished or stopped job, and a session request nobody has
+  answered for 10 minutes (or at once while the bot is paused). Everything else is quiet: bot turns
   and bot sessions never notify you.
 
-### First run
+### Pause and delete
 
-The empty Bots page is an inline card: name (prefilled "Atlas"), what it's for, and a starting
-playbook: **Default** (decides code details, checks with you before everything in the limits list)
-or **Blank**. **Create Atlas** opens its Briefing with three example jobs you can click to start.
+**Pause**: the bot takes no turns; its sessions keep running and their questions come to your
+Inbox. The composer stays usable; messages wait for **Resume**, which wakes the bot once with what
+happened meanwhile. **Delete bot…** confirms, stops the home thread, and moves its sessions into
+Threads.
 
 ### Mobile
 
-Inbox answers Asks. Bots tab → a bot's Briefing (Needs you, In progress, Done) with the job composer,
-read-only job detail and report (where the finish notification lands), and Chat. Ask screens have a
-send button for typed answers. Playbook and Settings stay on desktop and web in v1.
+The Bots tab lists bots with their sessions nested. Tapping a bot opens its chat in the normal
+mobile thread screen and composer, with the status line under the name in the header (tapping it
+jumps to the open question); tapping a session opens that thread. No Memory button: Memory is on
+desktop and web in v1.
 
 ## How it behaves
 
-1. **You start a job.** `bots.createJob` stores J-n and queues `New job J-n: <request>` into the
-   home thread (with the project, if you picked one).
-2. **The bot plans** with `bot_brief` (playbook, notes, limits, jobs, sessions, open asks), writes
-   its headline with `bot_job_update`, and starts sessions with `bot_start_session`.
-3. **Sessions run.** The server launches each through `ThreadLaunchService`: the job's project, a
-   new worktree, the Worker or Reviewer model, full access, owner = you, and a task text that
-   carries the relevant instructions and limits and asks for a closing report (what changed,
-   evidence, open questions).
-4. **The server wakes the bot** when a session finishes, fails, is interrupted, hits a usage limit,
-   raises a question or approval, or has had no new output for 30 minutes (once per quiet stretch),
-   and when you answer an Ask, change an answer, ask it to remember an answer, correct a
-   decision, hand a session back, reopen a job, or resume. Wakes within 3 seconds are batched into
-   one message; a wake whose request was answered meanwhile is dropped.
-5. **The bot unblocks** with `bot_session_respond` when the playbook or a note covers the question
-   and no limit applies, recording a Decision with its citation. Otherwise it raises an Ask with
-   `bot_ask`. It follows up with `bot_session_message`. It may watch PRs its sessions open.
-6. **You answer.** The server records the answer and queues it into the home thread. With
-   **Remember this**, the bot saves a note with `bot_learn`, and the note's text shows on the Ask.
-   If you answer in Chat, the bot resolves the Ask with `bot_ask_resolve`.
-7. **The job finishes.** `bot_job_update` with `status: done` and a report. One notification.
+**One message per turn.** T3 folds hide every assistant message in a turn except the last, so the
+bot writes at most one message per turn, at the end, after its tool calls (a persona rule). Quiet
+turns write none. `BotWatcher` puts at most one wake that needs a decision from you into a batch;
+the next one waits for the following turn, which starts right after. So a turn carries at most one
+question, and that question is the visible message.
 
-A session that hits a usage limit shows **Paused until 14:00 · Retry now**; the bot is woken and may
-move the work to another model. If the brain's provider is unavailable, the Briefing says "Atlas
-can't think right now" with **Open Providers**, and session requests escalate at once.
+1. **You write.** The message lands in the home thread like any message.
+2. **The bot plans** with `bot_brief` (memory, limits, projects, open jobs and their sessions' live
+   state, open questions). It calls `bot_brief` every turn, so its state comes from the server, not
+   from chat history, and survives context compaction. For new work it calls `bot_job_create` (title, request, project) and
+   `bot_start_session` for each independent piece, then replies with the session links.
+3. **Sessions run.** The server launches each through `ThreadLaunchService`: the project, a new
+   worktree, the Worker or Reviewer model, full access, owner = you, and a task text carrying the
+   relevant instructions, limits and the closing-report format.
+4. **The server wakes the bot** when a session finishes, fails, hits a usage limit, raises a
+   question or approval, or goes quiet for 30 minutes, and on resume and hand-back. Wakes within 3
+   seconds are batched into one message, with at most one wake that needs a decision from you per
+   batch (see "One message per turn").
+5. **The bot unblocks** with `bot_session_respond` when memory covers the question and no limit
+   applies (recorded as a decision with its citation, and shown in the fold label, "answered from
+   memory"). Otherwise it asks you in chat and records the question with `bot_ask`, which drives
+   the needs-you count, Inbox and the notification. `bot_ask` stores the home thread's current turn id; the header
+   button, Inbox items and notifications scroll the chat to that turn's last message. Your reply
+   resolves it (`bot_ask_resolve`).
+6. **It finishes the job** with `bot_job_update` (`status: done`, report) and posts the report in
+   chat. One notification.
 
 ## Architecture
 
-- **Server: `apps/server/src/bots/`.** `BotService` (bots, jobs, asks, decisions, notes, the
-  Briefing snapshot and its change stream), `BotHome` (hidden project and home thread, `AGENTS.md`),
-  `BotSessions` (launch, link to the job, take over / hand back), `BotWatcher` (follows linked
-  sessions, batches wakes, escalates stale requests to Inbox).
-- **Storage:** one migration with `bots`, `bot_jobs`, `bot_sessions`, `bot_events` (timeline,
-  decisions), `bot_asks`, `bot_notes`.
-- **Wire:** `bots.*` RPCs in `packages/contracts`, guarded like other member mutations: subscribe,
-  create, update, pause, resume, delete, createJob, stopJob, reopenJob, answerAsk, correctDecision,
-  handBackSession, updateNote, deleteNote, markSeen. Session live state is derived on the client
-  from thread shells it already has.
-- **MCP tools** (`mcp/toolkits/bots/`), only for a bot's home thread: `bot_brief`,
-  `bot_job_update`, `bot_start_session`, `bot_session_message`, `bot_session_respond`, `bot_ask`,
-  `bot_ask_resolve`, `bot_learn`. Session tools refuse sessions that aren't the bot's or that you
-  took over.
-- **Quiet threads:** notifications and Inbox skip bot home threads and bot sessions, except for the
-  escalations above.
-- **Cloud-only servers:** bots are refused with a clear message until the home thread can run on a
-  machine.
+Unchanged from v3 except where noted.
+
+- **Server: `apps/server/src/bots/`.** `BotService` (bots, jobs, asks, decisions, notes, snapshot
+  and change stream), `BotHome` (hidden project, home thread, `AGENTS.md` persona), `BotSessions`
+  (launch, link to job, take over / hand back), `BotWatcher` (follows sessions, batches wakes,
+  escalates stale requests).
+- **MCP tools** for the home thread only: `bot_brief`, **`bot_job_create` (new)**,
+  `bot_job_update`, `bot_start_session` (now also returns the session's `t3-thread://` link),
+  `bot_session_message`, `bot_session_respond`, `bot_ask`, `bot_ask_resolve`, `bot_learn`, and
+  **`bot_forget` (new)**.
+- **Persona** rewritten for chat-first: the chat is the only screen; turn requests into jobs; link
+  sessions; ask in chat; short replies; nothing on routine wakes.
+- **Guard**: in a home-thread turn that called `bot_ask`, `deriveTurnFolds` never hides the
+  assistant message containing the question, even if the model wrote it before more tool calls.
+- **Web**: the bot route renders header + `ChatView` + Memory panel. Removed: Briefing, job panel,
+  report, Ask cards, decision rows, job composer, first-run card, tabs. Sidebar nests sessions under
+  the bot. In the home thread, `deriveTurnFolds` labels wake turns from the wake text, merges quiet
+  runs, and counts memory answers. Thread link chips gain the linked thread's live state glyph.
+- **Wake text** names sessions only, never job numbers (`BotWatcher` today writes `J-<n>`).
+- **Inbox** items for bot questions and finished jobs deep-link to the bot's chat.
+- **Mobile**: bot opens its home thread in the standard thread screen; Bots tab nests sessions.
 
 ## Not in v1
 
-Several bots designed as a team, bot-to-bot handoffs, schedules and standing duties ("keep CI
-green"), voice, harness-enforced limits (later: the watcher flags a PR merged or a default branch moved without
-an Ask, and a pre-push hook in bot worktrees refuses the default branch), per-role models beyond
-Brain/Worker/Reviewer, Playbook and Settings on mobile.
+Several bots working as a team, schedules and standing duties ("keep CI green"), voice,
+harness-enforced limits, Memory on mobile.
