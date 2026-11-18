@@ -1,5 +1,6 @@
 import {
   type AuthMcpClientAccess,
+  type BotId,
   type EnvironmentId,
   type MemberId,
   McpCapabilityUnavailableError,
@@ -141,6 +142,11 @@ export interface McpInvocationScope {
   readonly linkedEnvironments?: boolean;
   /** False on a server without team images (not Pair Cloud). `/mcp` sets it per request. */
   readonly teamImages?: boolean;
+  /**
+   * Set when this call is a bot's own: the thread is one of this server's bot home threads.
+   * `/mcp` computes it once per request; the bot_* tools read it instead of re-deriving it.
+   */
+  readonly bot?: { readonly botId: BotId };
   /** Which threads this caller may name, on a cloud-only server. `/mcp` sets it per request. */
   readonly reach?: McpThreadReach;
 }
@@ -196,6 +202,16 @@ export const hiddenWithoutTeamImages = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.teamImages !== false;
+};
+
+/**
+ * `McpSchema.EnabledWhen` for the bot tools: hidden from every other caller. The scope carries
+ * the decision, so this is one lookup rather than a re-derivation.
+ */
+export const onlyForBots = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.bot !== undefined;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

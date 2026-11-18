@@ -14,6 +14,7 @@ import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
+  BotId,
   DeviceToolError,
   OrchestratorMcpFailure,
   PreviewAutomationError,
@@ -24,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { BotThreads } from "../bots/botThreads.ts";
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -48,6 +50,8 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import { threadReachOf } from "./threadAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { BotsToolkit } from "./toolkits/bots/tools.ts";
+import * as BotsHandlers from "./toolkits/bots/handlers.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
@@ -256,6 +260,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     // A cloud-only server takes links without the beta: each is a member's agent link.
     if (limited.client?.linked === true && !labs && !cloudOnly) return linkedEnvironmentsOff;
     const linkedEnvironments = labs || (yield* hasAgentLinks);
+    const homeBotId = BotThreads.homeBotId(limited.thread?.threadId ?? "");
     const reachOf = (scope: typeof limited) => {
       const reach = access === undefined ? undefined : threadReachOf(access, scope);
       return reach === undefined ? {} : { reach };
@@ -265,6 +270,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         ...limited,
         linkedEnvironments,
         teamImages: cloudOnly,
+        ...(homeBotId === undefined ? {} : { bot: { botId: BotId.make(homeBotId) } }),
         ...reachOf(limited),
       }),
       Effect.map(normalizeMcpHttpResponse),
@@ -1177,6 +1183,8 @@ const layerSpaceToolkit = toolkitRegistration(SpaceToolkit, SpaceHandlers.layer)
 
 const layerLineageToolkit = toolkitRegistration(LineageToolkit, LineageHandlers.layer);
 
+const layerBotsToolkit = toolkitRegistration(BotsToolkit, BotsHandlers.layer);
+
 const layerSandboxImageToolkit = toolkitRegistration(
   SandboxImageToolkit,
   SandboxImageHandlers.layer,
@@ -1252,6 +1260,7 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
   layerSpaceToolkit,
   layerLineageToolkit,
+  layerBotsToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

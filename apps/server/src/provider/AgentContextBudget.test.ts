@@ -11,6 +11,8 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import { BotSessions } from "../bots/BotSessions.ts";
+import { BotService } from "../bots/BotService.ts";
 import { ServerConfig } from "../config.ts";
 import { CloudMoves } from "../cloudMove/CloudMoves.ts";
 import { SandboxFork } from "../sandbox/lifecycle/SandboxFork.ts";
@@ -58,6 +60,8 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AssetSigner)({}),
+  Layer.mock(BotSessions)({}),
+  Layer.mock(BotService)({}),
   Layer.mock(CloudMoves)({}),
   Layer.mock(SandboxFork)({}),
   Layer.mock(DeviceService)({}),

@@ -166,6 +166,8 @@ import * as SpaceService from "./space/SpaceService.ts";
 import * as InboxService from "./inbox/InboxService.ts";
 import * as BotService from "./bots/BotService.ts";
 import * as BotStore from "./bots/BotStore.ts";
+import * as BotHome from "./bots/BotHome.ts";
+import * as BotSessions from "./bots/BotSessions.ts";
 import * as BranchOffServiceLive from "./lineage/BranchOffServiceLive.ts";
 import * as BranchLineageReactor from "./lineage/BranchLineageReactor.ts";
 import * as BranchLineageService from "./lineage/BranchLineageService.ts";
@@ -1096,7 +1098,18 @@ const layerMakeRoutes = Layer.mergeAll(
   // Each member's Inbox and Shared with you, for WebSocket clients.
   Layer.provide(InboxService.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   // Bots: storage and the wake queue, for WebSocket clients and the bot home thread.
-  Layer.provide(layerBotService),
+  // One `layerBotService` reference: the wake loop and BotSessions share it.
+  Layer.provide(
+    Layer.mergeAll(
+      BotSessions.layer,
+      Layer.effectDiscard(
+        Effect.gen(function* () {
+          const home = yield* BotHome.BotHome;
+          yield* home.start();
+        }),
+      ).pipe(Layer.provide(BotHome.layer)),
+    ).pipe(Layer.provideMerge(layerBotService)),
+  ),
   // Branch off, its summary, Start from main and Move to my own machine; LineageRepos carries
   // commits between machines for every lineage action.
   Layer.provide(
