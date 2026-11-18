@@ -46,10 +46,12 @@ import {
   jobDecisions,
   jobProgress,
   jobTimeline,
+  plainPreview,
   sessionState,
   sessionStateLabel,
   type ShellLookup,
 } from "./bots.logic";
+import { JobStatusGlyph } from "./BotJobGlyph";
 
 function latestAssistantLine(projection: EnvironmentThread | null): string | null {
   if (projection === null) return null;
@@ -69,8 +71,7 @@ function SessionLastLine(props: {
   const projection = useThreadProjection(scopeThreadRef(props.environmentId, props.threadId));
   const line = latestAssistantLine(projection);
   if (line === null) return null;
-  const collapsed = line.replace(/\s+/gu, " ").slice(0, 160);
-  return <div className="truncate text-muted-foreground text-xs">{collapsed}</div>;
+  return <div className="truncate text-muted-foreground text-xs">{plainPreview(line)}</div>;
 }
 
 function StatusPill(props: { readonly status: "working" | "needs-you" | "done" | "stopped" }) {
@@ -228,7 +229,7 @@ export function BotJobPanel(props: {
     <div className="flex h-full min-h-0 flex-col border-l border-border bg-background">
       <div className="shrink-0 border-b border-border p-3">
         <div className="flex items-center gap-2">
-          <LoaderCircleIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <JobStatusGlyph job={props.job} />
           <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
             J-{props.job.number}
           </span>

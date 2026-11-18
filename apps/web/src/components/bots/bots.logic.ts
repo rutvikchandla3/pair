@@ -362,3 +362,19 @@ export function sessionStateLabel(state: BotSessionState): string {
 export function botColor(bot: Bot): string {
   return bot.color.trim() === "" ? "#4f46e5" : bot.color;
 }
+
+/** One line of plain text from a markdown message: no headings, emphasis or code ticks. */
+export function plainPreview(markdown: string, limit = 160): string {
+  return markdown
+    .replace(/^\s{0,3}#{1,6}\s+/gmu, "")
+    .replace(/(\*\*|__|`)/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, limit);
+}
+
+/** Ends a sentence with a full stop unless it already ends with one. */
+export function endSentence(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?…]$/u.test(trimmed) ? trimmed : `${trimmed}.`;
+}

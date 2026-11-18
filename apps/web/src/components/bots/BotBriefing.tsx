@@ -8,10 +8,9 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import {
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleCheckIcon,
-  CircleIcon,
-  CircleXIcon,
-  LoaderCircleIcon,
   MessageCircleQuestionIcon,
   PlusIcon,
 } from "lucide-react";
@@ -28,6 +27,7 @@ import { botsEnvironment, useBotHomeProjectIds } from "../../state/bots";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { BotAnsweredAskCard, BotAskCard } from "./BotAskCard";
+import { JobStatusGlyph } from "./BotJobGlyph";
 import { BotDecisionRow } from "./BotDecisionRow";
 import {
   BOT_EXAMPLE_JOBS,
@@ -54,6 +54,7 @@ function GroupHeader(props: {
   readonly label: string;
   readonly count?: number;
   readonly onToggle?: () => void;
+  readonly open?: boolean;
   readonly right?: React.ReactNode;
   readonly className?: string;
 }) {
@@ -69,9 +70,15 @@ function GroupHeader(props: {
       ) : (
         <button
           type="button"
-          className="flex items-center gap-1.5 font-medium hover:text-foreground"
+          className="-ml-1 flex items-center gap-1 font-medium hover:text-foreground"
+          aria-expanded={props.open === true}
           onClick={props.onToggle}
         >
+          {props.open === true ? (
+            <ChevronDownIcon className="size-3" />
+          ) : (
+            <ChevronRightIcon className="size-3" />
+          )}
           {props.label}
         </button>
       )}
@@ -80,20 +87,6 @@ function GroupHeader(props: {
       {props.right}
     </div>
   );
-}
-
-function JobStatusGlyph({ job }: { readonly job: BotJob }) {
-  if (job.headline.trim() === "" && job.status === "working") {
-    return <CircleIcon className="size-3.5 text-muted-foreground" />;
-  }
-  switch (job.status) {
-    case "done":
-      return <CircleCheckIcon className="size-3.5 text-success" />;
-    case "stopped":
-      return <CircleXIcon className="size-3.5 text-muted-foreground" />;
-    default:
-      return <LoaderCircleIcon className="size-3.5 text-muted-foreground" />;
-  }
 }
 
 /** One job row: glyph, J-n, title, headline, progress label, PR chips and a relative time. */
@@ -292,6 +285,7 @@ export function BotBriefing(props: {
               <GroupHeader
                 label="Answered"
                 count={answeredRecent.length}
+                open={answeredOpen}
                 onToggle={() => setAnsweredOpen(!answeredOpen)}
               />
               {answeredOpen ? (
@@ -365,6 +359,7 @@ export function BotBriefing(props: {
               <GroupHeader
                 label="Done this week"
                 count={groups.doneThisWeek.length}
+                open={doneOpen}
                 onToggle={() => setDoneOpen(!doneOpen)}
                 right={
                   <button

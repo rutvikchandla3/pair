@@ -10,6 +10,7 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { RelativeTime } from "../RelativeTime";
+import { endSentence } from "./bots.logic";
 
 const jobLine = (ask: BotAsk, job: BotJob | null): string => {
   if (job === null) return "";
@@ -46,10 +47,10 @@ export function BotAskCard(props: {
 
   return (
     <div className="rounded-lg border border-border bg-card p-3">
-      <div className="flex items-center gap-2">
-        <MessageCircleQuestionIcon className="size-3.5 shrink-0 text-input-foreground" />
-        <span className="min-w-0 flex-1 truncate font-medium text-sm">{props.ask.question}</span>
-        <span className="shrink-0 text-muted-foreground text-xs">
+      <div className="flex items-start gap-2">
+        <MessageCircleQuestionIcon className="mt-0.75 size-3.5 shrink-0 text-input-foreground" />
+        <span className="min-w-0 flex-1 font-medium text-sm">{props.ask.question}</span>
+        <span className="max-w-2/5 shrink-0 truncate pt-0.5 text-muted-foreground text-xs">
           {jobLine(props.ask, props.job)}
           <RelativeTime timestamp={props.ask.createdAt} />
         </span>
@@ -186,10 +187,10 @@ export function BotAnsweredAskCard(props: {
 
   return (
     <div className="rounded-lg border border-border bg-card p-3">
-      <div className="flex items-center gap-2">
-        <CheckIcon className="size-3.5 shrink-0 text-success" />
-        <span className="min-w-0 flex-1 truncate font-medium text-sm">{props.ask.question}</span>
-        <span className="shrink-0 text-muted-foreground text-xs">
+      <div className="flex items-start gap-2">
+        <CheckIcon className="mt-0.75 size-3.5 shrink-0 text-success" />
+        <span className="min-w-0 flex-1 font-medium text-sm">{props.ask.question}</span>
+        <span className="max-w-2/5 shrink-0 truncate pt-0.5 text-muted-foreground text-xs">
           {jobLine(props.ask, props.job)}
           <RelativeTime timestamp={props.ask.answeredAt ?? props.ask.createdAt} />
         </span>
@@ -201,7 +202,8 @@ export function BotAnsweredAskCard(props: {
           </>
         ) : (
           <>
-            You picked <span className="font-medium">{props.ask.answer}</span>.
+            {props.ask.answerKind === "text" ? "You answered: " : "You picked "}
+            <span className="font-medium">{endSentence(props.ask.answer ?? "")}</span>
           </>
         )}{" "}
         {props.bot.name} is continuing.

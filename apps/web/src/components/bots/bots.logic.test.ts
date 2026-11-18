@@ -31,6 +31,8 @@ import {
   quietMinutes,
   sessionState,
   sessionStateLabel,
+  endSentence,
+  plainPreview,
 } from "./bots.logic";
 
 const ENV = "env_00000000000000000001" as EnvironmentId;
@@ -398,5 +400,20 @@ describe("labels", () => {
         until: new Date(2026, 10, 18, 14, 0).toISOString(),
       }),
     ).toBe("Paused until 14:00");
+  });
+});
+
+describe("plainPreview", () => {
+  it("drops markdown headings, emphasis and code ticks", () => {
+    expect(plainPreview("Done.\n## Report\n**What changed** - Fixed `list()`")).toBe(
+      "Done. Report What changed - Fixed list()",
+    );
+  });
+});
+
+describe("endSentence", () => {
+  it("adds a full stop only when the text has none", () => {
+    expect(endSentence("30 requests a minute.")).toBe("30 requests a minute.");
+    expect(endSentence("Per user")).toBe("Per user.");
   });
 });

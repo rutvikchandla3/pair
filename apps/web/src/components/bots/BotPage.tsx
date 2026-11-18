@@ -168,7 +168,7 @@ export function BotPage(props: {
   const playbook = props.tab === "playbook";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-border p-3">
         <div className="flex items-center gap-3">
           <BotAvatar bot={bot} size="lg" />
