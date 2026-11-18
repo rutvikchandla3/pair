@@ -158,6 +158,10 @@ export class BotService extends Context.Service<
     ) => Effect.Effect<Record<string, never>, BotsError>;
 
     readonly wakes: Stream.Stream<BotWake>;
+    /** Publish a wake for a bot's home thread (the watcher's session events). */
+    readonly publishWake: (wake: BotWake) => Effect.Effect<void>;
+    /** The owner's member id after every write, so Inbox can refresh bot items. */
+    readonly changes: Stream.Stream<MemberId>;
     readonly getBot: (botId: BotId) => Effect.Effect<Option.Option<Bot>, BotsError>;
     readonly listAllBots: () => Effect.Effect<ReadonlyArray<Bot>, BotsError>;
     readonly botForHomeThread: (threadId: ThreadId) => Effect.Effect<Option.Option<Bot>, BotsError>;
@@ -693,8 +697,10 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           const ask = Option.getOrNull(yield* db(store.getAsk(input.askId)));
           if (ask === null) return yield* notFound("That ask is gone.");
           const bot = yield* requireBot(caller, ask.botId);
-          if (ask.status !== "open") {
-            return yield* invalidRequest("That ask was already answered.");
+          // Answering again is how the user changes their answer.
+          const changed = ask.status === "answered";
+          if (changed && input.kind === "bot-decides" && ask.answerKind === "bot-decides") {
+            return yield* invalidRequest("You already let the bot decide that.");
           }
           if (
             input.kind !== "bot-decides" &&
@@ -719,7 +725,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             text:
               input.kind === "bot-decides"
                 ? `You let ${bot.name} decide`
-                : `You answered: ${answer ?? ""}`,
+                : `${changed ? "You changed your answer to" : "You answered"}: ${answer ?? ""}`,
           });
           yield* touch(bot.ownerId);
           const label = yield* jobLabelOf(ask.jobId);
@@ -733,10 +739,16 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             const remember = input.remember
               ? ` They want you to remember this: save one short note with bot_learn (askId ${ask.id}).`
               : "";
+            const verb = changed
+              ? `changed their answer to Ask ${ask.id} (${label}) from "${ask.answer ?? "you decide"}" to`
+              : `answered Ask ${ask.id} (${label}):`;
+            const redo = changed
+              ? " Act on the new answer, and undo work that followed the old one."
+              : "";
             yield* wake({
               botId: bot.id,
               reason: "ask-answered",
-              text: `The user answered Ask ${ask.id} (${label}): "${answer ?? ""}".${remember}`,
+              text: `The user ${verb} "${answer ?? ""}".${redo}${remember}`,
             });
           }
           return updated;
@@ -1041,7 +1053,10 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           yield* appendEvent(bot, {
             jobId: ask.jobId,
             kind: "answered",
-            text: `You answered: ${input.answer ?? ""}`,
+            text:
+              input.answerKind === "bot-decides"
+                ? `${bot.name} decided: ${input.answer ?? ""}`
+                : `You answered in Chat: ${input.answer ?? ""}`,
           });
           yield* touch(bot.ownerId);
           return updated;
@@ -1109,6 +1124,8 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     updateNote,
     deleteNote,
     wakes: Stream.fromPubSub(wakePubSub),
+    publishWake: wake,
+    changes: Stream.fromPubSub(ownerWrites),
     getBot,
     listAllBots,
     botForHomeThread,

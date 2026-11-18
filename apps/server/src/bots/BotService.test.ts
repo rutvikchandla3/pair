@@ -131,10 +131,24 @@ it.effect("answers an ask with remember and wakes with the bot_learn line", () =
     assert.include(wake.text, "bot_learn");
     assert.include(wake.text, "Teal");
 
-    const again = yield* bots
-      .answerAsk(caller, { askId: ask.id, kind: "text", answer: "Indigo", remember: false })
+    // Answering again changes the answer and tells the bot to undo the old one.
+    const changed = yield* bots.answerAsk(caller, {
+      askId: ask.id,
+      kind: "text",
+      answer: "Indigo",
+      remember: false,
+    });
+    assert.strictEqual(changed.answer, "Indigo");
+    const changeWake = yield* Queue.take(wakes);
+    assert.include(changeWake.text, 'from "Teal" to "Indigo"');
+    assert.include(changeWake.text, "undo work");
+
+    yield* bots.answerAsk(caller, { askId: ask.id, kind: "bot-decides", remember: false });
+    yield* Queue.take(wakes);
+    const twice = yield* bots
+      .answerAsk(caller, { askId: ask.id, kind: "bot-decides", remember: false })
       .pipe(Effect.flip);
-    assert.strictEqual(again.reason, "invalid-request");
+    assert.strictEqual(twice.reason, "invalid-request");
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
