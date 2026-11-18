@@ -39,6 +39,22 @@ mode but send reports only while another member is connected, and the server res
 member's connections so stale state never reaches the next arrival. Keep both halves of that
 handshake when changing either side. See [presence](../../apps/server/src/team/Presence.ts).
 
+## Pair Builder host mode
+
+Pair Builder runs one sandbox per task and embeds a workspace in its own UI. With
+`PAIR_BUILDER_INGRESS_TOKEN` set ([config](../../apps/server/src/cli/config.ts)) the server is
+that workspace: the Builder's page serves the web client and reaches this server only through
+its proxy, which drops `Set-Cookie`, so a browser here never holds a credential of its own (see
+[environment auth](./environment-auth.md#pair-builders-proxy-vouches-for-its-users)). The
+server bootstraps one project for the Builder's workspace root instead of a starter thread,
+and a Builder session is a top-level thread in it.
+[PairBuilderHost](../../apps/server/src/pairBuilder/PairBuilderHost.ts) starts those threads
+for `POST /api/host/sessions`, and the
+[snapshot publisher](../../apps/server/src/pairBuilder/SessionsSnapshotPublisher.ts) posts the
+whole list back, which the Builder uses for its chat list and for parking idle sandboxes. That
+push is best effort: it runs beside orchestration, reads projections after they commit, and a
+Builder that is down only delays the next snapshot. Without the token none of this exists.
+
 ## Settings ownership
 
 Client preferences stay in the current client; environment defaults and project overrides stay

@@ -38,6 +38,7 @@ import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeReco
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as PairBuilderHost from "./pairBuilder/PairBuilderHost.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
@@ -95,6 +96,7 @@ it.effect.each([
           logWebSocketEvents: false,
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          pairBuilder: undefined,
           mode: "web",
           cwd: "/bootstrap-project",
           host: "localhost",
@@ -179,6 +181,7 @@ it.effect.each([
           countThreads: () => Effect.succeed(0),
           listActiveShellIndex: () => Effect.succeed([]),
         }),
+        Layer.mock(PairBuilderHost.PairBuilderHost)({}),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (input) => {
             assert.equal(input.modelSelection.instanceId, instanceId);

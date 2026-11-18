@@ -24,6 +24,7 @@ import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeReco
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as PairBuilderHost from "./pairBuilder/PairBuilderHost.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
@@ -96,6 +97,7 @@ it.effect("parks automatic pull until activation without delaying command readin
           logWebSocketEvents: false,
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          pairBuilder: undefined,
           mode: "desktop",
           cwd,
           host: "localhost",
@@ -143,6 +145,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         Layer.mock(ThreadManagement.ThreadManagementService)({
           countThreads: () => Effect.succeed(0),
         }),
+        Layer.mock(PairBuilderHost.PairBuilderHost)({}),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: true,

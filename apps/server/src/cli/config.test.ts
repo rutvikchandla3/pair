@@ -31,7 +31,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig } from "./config.ts";
+import { releasePairBuilderSecrets, resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -255,6 +255,85 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }
       expect(Redacted.value(web.devAuthToken)).toBe("reusable-dev-auth-token-that-is-long-enough");
       expect(desktop.devAuthToken).toBeUndefined();
+    }),
+  );
+
+  it.effect("reads Pair Builder host mode from its environment and refuses a broken one", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-pair-builder-" })),
+      );
+      const flags = {
+        ...minimalDesktopFlags(baseDir),
+        mode: Option.some("web" as const),
+        autoBootstrapProjectFromCwd: Option.some(true),
+      };
+      const secret = "ingress-secret-value";
+      const resolve = (env: Record<string, string>) =>
+        resolveServerConfig(flags, Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromEnv({ env })), NetService.layer),
+          ),
+        );
+      const host = {
+        PAIR_BUILDER_INGRESS_TOKEN: ` ${secret} `,
+        PAIR_BUILDER_SANDBOX_ID: "sandbox-1",
+        PAIR_BUILDER_WORKSPACE_ROOT: "/projects/challenge/",
+        PAIR_BUILDER_EVENTS_URL: "http://builder:8080/events",
+        PAIR_BUILDER_EVENTS_TOKEN: "events-secret-value",
+        PAIR_BUILDER_TASK: JSON.stringify({ key: "PAIR-12", title: "Fix login", space: "s" }),
+      };
+
+      const resolved = yield* resolve(host);
+      expect(resolved.autoBootstrapProjectFromCwd).toBe(false);
+      expect(resolved.pairBuilder).toMatchObject({
+        sandboxId: "sandbox-1",
+        workspaceRoot: "/projects/challenge",
+        workspaceTitle: "PAIR-12: Fix login",
+      });
+      expect(Redacted.value(resolved.pairBuilder!.ingressToken)).toBe(secret);
+      expect(resolved.pairBuilder?.events?.url.href).toBe("http://builder:8080/events");
+      expect(
+        (yield* resolve({ ...host, PAIR_BUILDER_TASK: JSON.stringify({ title: "Fix login" }) }))
+          .pairBuilder?.workspaceTitle,
+      ).toBe("Fix login");
+
+      const { PAIR_BUILDER_EVENTS_URL: _url, PAIR_BUILDER_TASK: _task, ...minimal } = host;
+      expect((yield* resolve(minimal)).pairBuilder).toMatchObject({
+        events: undefined,
+        workspaceTitle: undefined,
+      });
+      const off = yield* resolve({ ...host, PAIR_BUILDER_INGRESS_TOKEN: " " });
+      expect(off.pairBuilder).toBeUndefined();
+      expect(off.autoBootstrapProjectFromCwd).toBe(true);
+
+      for (const broken of [
+        { PAIR_BUILDER_WORKSPACE_ROOT: "" },
+        { PAIR_BUILDER_WORKSPACE_ROOT: "projects/challenge" },
+        { PAIR_BUILDER_EVENTS_URL: "builder:8080/events" },
+        { PAIR_BUILDER_EVENTS_URL: "ftp://builder/events" },
+        { PAIR_BUILDER_EVENTS_TOKEN: "" },
+        { PAIR_BUILDER_TASK: `{"key": "${secret}"` },
+      ]) {
+        const error = yield* Effect.flip(resolve({ ...host, ...broken }));
+        expect(String(error)).toContain("PAIR_BUILDER_");
+        expect(String(error)).not.toContain(secret);
+      }
+    }),
+  );
+
+  it.effect("drops the host-mode secrets from the environment children inherit", () =>
+    Effect.gen(function* () {
+      const environment: NodeJS.ProcessEnv = {
+        PATH: "/usr/bin",
+        PAIR_BUILDER_INGRESS_TOKEN: "ingress-secret-value",
+        PAIR_BUILDER_EVENTS_TOKEN: "events-secret-value",
+        PAIR_BUILDER_SANDBOX_ID: "sandbox-1",
+      };
+      yield* releasePairBuilderSecrets().pipe(
+        Effect.provideService(HostProcess.Environment, environment),
+      );
+      expect(environment).toEqual({ PATH: "/usr/bin", PAIR_BUILDER_SANDBOX_ID: "sandbox-1" });
     }),
   );
 

@@ -24,7 +24,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -122,15 +121,11 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const sql = yield* SqlClient.SqlClient;
   const pushDevices = yield* MemberPushDevices.MemberPushDevices;
-  const changes = yield* PubSub.unbounded<TeamMember>();
 
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
   const publish = (record: Members.MemberRecord) =>
-    Ref.update(teamState.members, (current) => new Map(current).set(record.id, record)).pipe(
-      Effect.andThen(PubSub.publish(changes, toTeamMember(record))),
-      Effect.as(toTeamMember(record)),
-    );
+    teamState.publish(record).pipe(Effect.as(toTeamMember(record)));
 
   const requireActive = Effect.fnUntraced(function* (memberId: MemberId) {
     const record = yield* repository
@@ -358,12 +353,12 @@ const make = Effect.gen(function* () {
   const streamChanges: TeamMembers["Service"]["streamChanges"] = Stream.unwrap(
     Effect.gen(function* () {
       // Subscribe before reading so no change falls between the snapshot and the tail.
-      const subscription = yield* PubSub.subscribe(changes);
+      const subscription = yield* teamState.subscribe;
       const members = yield* list;
       return Stream.concat(
         Stream.make({ _tag: "snapshot", members } as const),
         Stream.fromSubscription(subscription).pipe(
-          Stream.map((member) => ({ _tag: "upserted", member }) as const),
+          Stream.map((record) => ({ _tag: "upserted", member: toTeamMember(record) }) as const),
         ),
       );
     }),

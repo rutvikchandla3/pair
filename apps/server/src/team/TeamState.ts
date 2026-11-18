@@ -2,7 +2,9 @@ import { MemberId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
 
 import type { MemberRepositoryError } from "../persistence/Errors.ts";
 import * as Members from "../persistence/Members.ts";
@@ -19,6 +21,14 @@ export class TeamState extends Context.Service<
     /** Rereads the members first when the id is unknown, since the CLI writes them directly. */
     readonly isActive: (memberId: MemberId) => Effect.Effect<boolean, MemberRepositoryError>;
     readonly reload: Effect.Effect<void, MemberRepositoryError>;
+    /** Puts a member the server just wrote into the snapshot and streams it to subscribers. */
+    readonly publish: (record: Members.MemberRecord) => Effect.Effect<void>;
+    /** Every member `publish` receives from now on. */
+    readonly subscribe: Effect.Effect<
+      PubSub.Subscription<Members.MemberRecord>,
+      never,
+      Scope.Scope
+    >;
     /** Undefined, meaning the server's own identity, unless an active member set a git email. */
     readonly gitAuthorFor: (memberId: MemberId) => Effect.Effect<GitAuthor | undefined>;
   }
@@ -57,6 +67,20 @@ export const hasGitHubSignInMember = (members: ReadonlyMap<MemberId, Members.Mem
 const byId = (records: ReadonlyArray<Members.MemberRecord>) =>
   new Map(records.map((record) => [record.id, record] as const));
 
+const makePublisher = Effect.fnUntraced(function* (
+  members: Ref.Ref<ReadonlyMap<MemberId, Members.MemberRecord>>,
+) {
+  const changes = yield* PubSub.unbounded<Members.MemberRecord>();
+  return {
+    publish: (record: Members.MemberRecord) =>
+      Ref.update(members, (current) => new Map(current).set(record.id, record)).pipe(
+        Effect.andThen(PubSub.publish(changes, record)),
+        Effect.asVoid,
+      ),
+    subscribe: PubSub.subscribe(changes),
+  };
+});
+
 const isTeamMode = (members: Ref.Ref<ReadonlyMap<MemberId, Members.MemberRecord>>) =>
   Ref.get(members).pipe(
     Effect.map((current) => {
@@ -91,6 +115,7 @@ const makeTeamState = Effect.gen(function* () {
     isTeamMode: isTeamMode(members),
     isActive,
     reload,
+    ...(yield* makePublisher(members)),
     gitAuthorFor: gitAuthorFor(members),
   });
 });
@@ -124,6 +149,7 @@ export const layerTest = (records: ReadonlyArray<Members.MemberRecord> = [TEST_O
           return (yield* Ref.get(members)).get(memberId)?.removedAt === null;
         }),
         reload: Effect.void,
+        ...(yield* makePublisher(members)),
         gitAuthorFor: gitAuthorFor(members),
       });
     }),
