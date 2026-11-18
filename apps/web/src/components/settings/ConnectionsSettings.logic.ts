@@ -25,6 +25,7 @@ import {
   getDesktopUpdateDownloadedVersion,
   resolveDesktopUpdateButtonAction,
 } from "../desktopUpdate.logic";
+import { appHref } from "../../env";
 
 /** Keep terminal:read with terminal:operate to avoid creating unseen shells on every script run. */
 export function togglePairingScopeSelection(
@@ -435,7 +436,7 @@ export function resolveAdvertisedEndpointPairingUrl(
 }
 
 export function resolveCurrentOriginPairingUrl(credential: string): string {
-  const url = new URL("/pair", window.location.href);
+  const url = new URL(appHref("/pair"), window.location.href);
   return setPairingTokenOnUrl(url, credential).toString();
 }
 

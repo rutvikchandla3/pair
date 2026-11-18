@@ -1,6 +1,8 @@
 import type { ScheduledTaskWebhookEndpoint } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 
+import { resolveEnvironmentUrl } from "./environment/endpoint.ts";
+
 export interface WebhookAddress {
   readonly address: string;
   readonly copyable: boolean;
@@ -21,7 +23,7 @@ export function webhookAddress(
       note: "Set the server's public URL or link T3 Connect for a public URL.",
     };
   }
-  const url = new URL(endpoint.path, httpBaseUrl);
+  const url = new URL(resolveEnvironmentUrl(httpBaseUrl, endpoint.path));
   return {
     address: url.href,
     copyable: true,

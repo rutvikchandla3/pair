@@ -158,6 +158,23 @@ of requests to the hosted origin. The browser exchanges the secret with the
 environment and strips it from its history. Moving the token into a query
 parameter would disclose it to the wrong origin.
 
+### Embedded in a host page
+
+A host page can embed the web app in a same-origin iframe and name the server's path on its
+origin, for example a reverse proxy at `/sbx/<id>`
+([`embed/protocol.ts`](../../apps/web/src/embed/protocol.ts)). A base URL may therefore carry a
+path prefix, and every server path, the socket, and the root-relative asset and upload URLs the
+server returns resolve under it
+([`environment/endpoint.ts`](../../packages/client-runtime/src/environment/endpoint.ts)). A
+`wsBaseUrl` ending in `/` is a base; any other path is the socket itself, which is how relay
+endpoints name theirs. Saved environments still normalize to the origin: pairing and advertised
+endpoints only know origins.
+
+An unusable server path is an error, never a fallback to the page origin, which is the host's own
+server. Embedded, the app keeps its history in memory and its theme out of storage, because the
+address bar, the session history, and the origin's storage all belong to the host. Messages are
+accepted only from the parent window on the page's own origin.
+
 ## Access and process ownership are different
 
 Tailscale supplies an endpoint for ordinary pairing, so it needs no separate

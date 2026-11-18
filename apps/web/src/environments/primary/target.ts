@@ -1,9 +1,12 @@
+import { environmentEndpointUrl } from "@t3tools/client-runtime/environment";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopEnvironmentBootstrap } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { embedConfig } from "../../embed/mode";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 
 const PrimaryEnvironmentTargetSource = Schema.Literals([
+  "embedded",
   "configured",
   "window-origin",
   "desktop-managed",
@@ -56,6 +59,15 @@ export class DesktopEnvironmentBootstrapIncompleteError extends Schema.TaggedErr
       ...(this.hasWsBaseUrl ? [] : ["wsBaseUrl"]),
     ];
     return `Desktop bootstrap is missing ${missing.join(" and ")} for the local environment.`;
+  }
+}
+
+export class EmbeddedServerPathInvalidError extends Schema.TaggedError<EmbeddedServerPathInvalidError>()(
+  "EmbeddedServerPathInvalidError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return `This workspace could not be opened. ${this.reason}`;
   }
 }
 
@@ -178,7 +190,7 @@ function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): str
     return httpBaseUrl;
   }
 
-  return currentUrl.origin;
+  return new URL(targetUrl.pathname, currentUrl.origin).toString();
 }
 
 function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
@@ -210,30 +222,51 @@ function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
   };
 }
 
+/** The server that served the page, under the sub-path the bundle is served from. */
 function resolveWindowOriginPrimaryTarget(): PrimaryEnvironmentTarget {
   const url = parseTargetUrl({
-    rawValue: window.location.origin,
+    rawValue: import.meta.env.BASE_URL,
+    baseUrl: window.location.origin,
     source: "window-origin",
     urlKind: "http-base-url",
   });
+  return pageOriginTarget("window-origin", url);
+}
+
+function pageOriginTarget(
+  source: PrimaryEnvironmentTargetSource,
+  url: URL,
+): PrimaryEnvironmentTarget {
   const httpBaseUrl = url.toString();
   if (url.protocol === "http:") {
     url.protocol = "ws:";
   } else if (url.protocol === "https:") {
     url.protocol = "wss:";
   } else {
-    throw new PrimaryEnvironmentProtocolUnsupportedError({
-      source: "window-origin",
-      protocol: url.protocol,
-    });
+    throw new PrimaryEnvironmentProtocolUnsupportedError({ source, protocol: url.protocol });
   }
   return {
-    source: "window-origin",
+    source,
     target: {
       httpBaseUrl,
       wsBaseUrl: url.toString(),
     },
   };
+}
+
+/** The embedding host names the server's path; an unusable path never falls back to the origin. */
+function resolveEmbeddedPrimaryTarget(): PrimaryEnvironmentTarget | null {
+  if (!embedConfig.embedded) return null;
+  if (!embedConfig.server.ok) {
+    throw new EmbeddedServerPathInvalidError({ reason: embedConfig.server.reason });
+  }
+  const url = parseTargetUrl({
+    rawValue: `${embedConfig.server.path}/`,
+    baseUrl: window.location.origin,
+    source: "embedded",
+    urlKind: "http-base-url",
+  });
+  return pageOriginTarget("embedded", url);
 }
 
 function resolveDesktopPrimaryTarget(): PrimaryEnvironmentTarget | null {
@@ -282,19 +315,23 @@ export function resolvePrimaryEnvironmentHttpUrl(
     source: primaryTarget.source,
     urlKind: "http-base-url",
   });
-  url.pathname = pathname;
+  url.href = environmentEndpointUrl(url.href, pathname);
   if (searchParams) {
     url.search = new URLSearchParams(searchParams).toString();
   }
   return url.toString();
 }
 
-/** Null only for desktop with its local environment disabled; other hosts fall back to page origin. */
+/**
+ * Null only for desktop with its local environment disabled; other hosts fall back to page origin.
+ * A server path may follow the origin: the base URL is then a prefix of every server path.
+ */
 export function readPrimaryEnvironmentTarget(): PrimaryEnvironmentTarget | null {
   if (isLocalEnvironmentDisabled()) {
     return null;
   }
   return (
+    resolveEmbeddedPrimaryTarget() ??
     resolveDesktopPrimaryTarget() ??
     resolveConfiguredPrimaryTarget() ??
     resolveWindowOriginPrimaryTarget()

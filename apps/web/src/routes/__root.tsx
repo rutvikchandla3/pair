@@ -63,7 +63,12 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { useUiStateStore } from "../uiStateStore";
 import { configureClientTracing } from "../observability/clientTracing";
-import { resolveInitialServerAuthGateState } from "../environments/primary";
+import {
+  EmbeddedSessionRejectedError,
+  readPrimaryEnvironmentTarget,
+  resolveInitialServerAuthGateState,
+} from "../environments/primary";
+import { embedConfig } from "../embed/mode";
 import { GUEST_PAGE_PATH } from "../guestPage";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
@@ -77,6 +82,15 @@ import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
+    if (embedConfig.embedded) {
+      // A bad server path, or a session the host's proxy did not sign in, shows the error page.
+      readPrimaryEnvironmentTarget();
+      const authGateState = await resolveInitialServerAuthGateState();
+      if (authGateState.status !== "authenticated") throw new EmbeddedSessionRejectedError();
+      void configureClientTracing();
+      return { authGateState };
+    }
+
     // Guest links open on the owner's tunnel host in a browser with no T3 session, and must
     // not trigger pairing or an environment connection.
     if (location.pathname === GUEST_PAGE_PATH) {
@@ -199,7 +213,7 @@ function RootRouteBranch() {
 
   const appShell = (
     <CommandPalette>
-      <AppSidebarLayout>
+      <AppSidebarLayout embedded={embedConfig.embedded}>
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>
@@ -209,7 +223,7 @@ function RootRouteBranch() {
     <>
       <ChatGptWelcomeCoordinator />
       <FirstRunGate
-        enabled={primaryEnvironmentAuthenticated}
+        enabled={primaryEnvironmentAuthenticated && !embedConfig.embedded}
         hostedStatic={authGateState.status === "hosted-static"}
       >
         {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
@@ -243,7 +257,7 @@ function RootRouteBranch() {
         <SpaceDialogHost />
         <BotDialogHost />
         {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
-        {primaryEnvironmentAuthenticated ? (
+        {primaryEnvironmentAuthenticated && !embedConfig.embedded ? (
           <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
         ) : null}
         {appShell}

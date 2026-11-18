@@ -1,4 +1,5 @@
 export {
+  EmbeddedSessionRejectedError,
   peekPairingTokenFromUrl,
   pollGitHubSignIn,
   PrimaryEnvironmentPairingCredentialRejectedError,

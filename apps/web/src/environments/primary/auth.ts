@@ -25,6 +25,7 @@ import {
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 import { runPrimaryHttp, runtime } from "../../lib/runtime";
+import { appPathname } from "../../env";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -104,6 +105,16 @@ export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.Tag
 ) {
   override get message(): string {
     return "Enter a sign-in code to continue.";
+  }
+}
+
+/** An embedding host's proxy signs people in; without its session there is nothing to pair with. */
+export class EmbeddedSessionRejectedError extends Schema.TaggedError<EmbeddedSessionRejectedError>()(
+  "EmbeddedSessionRejectedError",
+  {},
+) {
+  override get message(): string {
+    return "This workspace did not accept your session. Reload the page to try again.";
   }
 }
 
@@ -364,7 +375,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
   // Preserve explicit grant replacement across the auth-gate reload triggered by token removal.
-  if (window.location.pathname.replace(/\/+$/, "") !== "/pair") {
+  if (appPathname(window.location.pathname).replace(/\/+$/, "") !== "/pair") {
     explicitPairingRequested = false;
   } else if (peekPairingTokenFromUrl()) {
     explicitPairingRequested = true;

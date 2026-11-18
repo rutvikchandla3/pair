@@ -155,12 +155,12 @@ export function registerNavigationHistoryCommands(router: AnyRouter): () => void
       "navigation.back": (event) => {
         event.preventDefault();
         event.stopPropagation();
-        window.history.back();
+        router.history.back();
       },
       "navigation.forward": (event) => {
         event.preventDefault();
         event.stopPropagation();
-        window.history.forward();
+        router.history.forward();
       },
     },
     {
@@ -213,7 +213,7 @@ function registerPullRequestsEscapeCommand(router: AnyRouter): () => void {
         const activeElement = document.activeElement;
         if (activeElement instanceof HTMLElement) activeElement.blur();
         if (router.state.location.state.__TSR_index !== 0) {
-          window.history.back();
+          router.history.back();
           return;
         }
         void router.navigate({ to: "/" });
@@ -293,14 +293,19 @@ function registerThreadUndoCommands(
 }
 
 /** Keyboard and menu commands that live as long as the app shell. */
-function registerAppShellCommands(router: AnyRouter, shellElement: Element): () => void {
+function registerAppShellCommands(
+  router: AnyRouter,
+  shellElement: Element,
+  options: { readonly threadUndo: boolean },
+): () => void {
   // The provider mirrors the visibility it renders onto its wrapper, so the
   // committed state is readable when a key arrives.
   const readSidebarVisible = () =>
     shellElement.closest('[data-slot="sidebar-wrapper"]')?.getAttribute("data-sidebar-state") ===
     "expanded";
   const disposers = [
-    registerThreadUndoCommands(router, readSidebarVisible),
+    // The undo notice lives in the thread sidebar.
+    ...(options.threadUndo ? [registerThreadUndoCommands(router, readSidebarVisible)] : []),
     registerNavigationHistoryCommands(router),
     registerWorkspaceFocusCommands(router),
     registerPullRequestsEscapeCommand(router),
@@ -314,8 +319,18 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
   };
 }
 
-function SidebarControl() {
+/** The shell's keyboard and menu commands, registered for as long as the shell is mounted. */
+function AppShellCommands({ threadUndo }: { readonly threadUndo: boolean }) {
   const router = useRouter();
+  // Created once so re-renders never re-register the commands.
+  const [ref] = useState(
+    () => (node: HTMLSpanElement | null) =>
+      node === null ? undefined : registerAppShellCommands(router, node, { threadUndo }),
+  );
+  return <span hidden ref={ref} />;
+}
+
+function SidebarControl() {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar, isMobile, mobileSheetMounted } = useSidebar();
@@ -366,16 +381,8 @@ function SidebarControl() {
     };
   }, [keybindings, toggleSidebar, usagePageOpen]);
 
-  // The control lives as long as the shell, so it carries the shell's commands. Created
-  // once so re-renders never re-register them.
-  const [appShellCommandsRef] = useState(
-    () => (node: HTMLDivElement | null) =>
-      node === null ? undefined : registerAppShellCommands(router, node),
-  );
-
   return (
     <div
-      ref={appShellCommandsRef}
       className={cn(
         "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
         isMobile && mobileSheetMounted && "hidden",
@@ -403,7 +410,14 @@ function SidebarControl() {
   );
 }
 
-export function AppSidebarLayout({ children }: { children: ReactNode }) {
+/** Embedded in a host page, the host lists the threads, so there is no thread sidebar. */
+export function AppSidebarLayout({
+  embedded = false,
+  children,
+}: {
+  readonly embedded?: boolean;
+  readonly children: ReactNode;
+}) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -452,33 +466,38 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
-        <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+        <AppShellCommands threadUndo={!embedded} />
         <SpaceShortcuts />
         <TeamPlaceShortcuts />
-        <Sidebar
-          side="left"
-          collapsible="offcanvas"
-          data-app-sidebar=""
-          {...sidebarArea}
-          role="navigation"
-          aria-label="Threads"
-          resizable={{
-            maxWidth: sidebarMaximumWidth,
-            minWidth: sidebarMinimumWidth,
-            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-              nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-            onResize: setSidebarWidth,
-          }}
-          style={windowControlsInsetStyle}
-        >
-          <ThreadSidebar routeReveal={sidebarRouteReveal} />
-          <SidebarRail onDoubleClick={resetSidebarWidth} />
-        </Sidebar>
+        {embedded ? null : (
+          <>
+            <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+            <Sidebar
+              side="left"
+              collapsible="offcanvas"
+              data-app-sidebar=""
+              {...sidebarArea}
+              role="navigation"
+              aria-label="Threads"
+              resizable={{
+                maxWidth: sidebarMaximumWidth,
+                minWidth: sidebarMinimumWidth,
+                shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                  nextWidth <= currentWidth ||
+                  wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+                onResize: setSidebarWidth,
+              }}
+              style={windowControlsInsetStyle}
+            >
+              <ThreadSidebar routeReveal={sidebarRouteReveal} />
+              <SidebarRail onDoubleClick={resetSidebarWidth} />
+            </Sidebar>
+          </>
+        )}
         {children}
         <BackgroundThreadAnnouncer />
-        <SidebarControl />
+        {embedded ? null : <SidebarControl />}
         {isElectron ? <HistorySwipeNavigation /> : null}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
