@@ -79,7 +79,7 @@ it.effect("creates a Default bot and shows it in the caller's snapshot", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("numbers jobs J-1, J-2 and wakes the home thread", () =>
+it.effect("numbers and titles jobs, and wakes the home thread", () =>
   Effect.gen(function* () {
     const bots = yield* BotService.BotService;
     const wakes = yield* bots.wakes.pipe(Stream.toQueue({ capacity: "unbounded" }));
@@ -96,9 +96,9 @@ it.effect("numbers jobs J-1, J-2 and wakes the home thread", () =>
     assert.strictEqual((yield* Queue.take(wakes)).reason, "created");
     const started: BotService.BotWake = yield* Queue.take(wakes);
     assert.strictEqual(started.reason, "job-started");
-    assert.include(started.text, "New job J-1");
+    assert.include(started.text, 'New job "First job"');
     const secondWake = yield* Queue.take(wakes);
-    assert.include(secondWake.text, "New job J-2");
+    assert.include(secondWake.text, 'New job "Second job"');
     assert.include(secondWake.text, "Pick the project.");
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
@@ -218,6 +218,51 @@ it.effect("saves a note from an ask and links it back", () =>
     assert.strictEqual(stored?.noteId, note.id);
     const cited = yield* bots.citeNote(note.id);
     assert.strictEqual(cited.citedCount, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("creates a job for the bot without waking the home thread", () =>
+  Effect.gen(function* () {
+    const bots = yield* BotService.BotService;
+    const bot = yield* createBot(bots);
+    const wakes = yield* bots.wakes.pipe(Stream.toQueue({ capacity: "unbounded" }));
+    yield* Effect.yieldNow;
+    const projectId = ProjectId.make("project:one");
+    const job = yield* bots.createJobForBot(bot.id, {
+      title: "Sidebar drag flicker",
+      request: "Fix the flicker",
+      projectId,
+    });
+    assert.strictEqual(job.title, "Sidebar drag flicker");
+    assert.strictEqual(job.request, "Fix the flicker");
+    assert.strictEqual(job.projectId, projectId);
+    assert.strictEqual(job.number, 1);
+    yield* Effect.yieldNow;
+    assert.isTrue(Option.isNone(yield* Queue.poll(wakes)));
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("forgets the bot's own note and refuses another bot's", () =>
+  Effect.gen(function* () {
+    const bots = yield* BotService.BotService;
+    const bot = yield* createBot(bots);
+    const other = yield* createBot(bots);
+    const note = yield* bots.addNote(bot.id, {
+      text: "Rate limits are per member",
+      source: "From Chat",
+      sourceJobId: null,
+    });
+    const forgotten = yield* bots.forgetNote(bot.id, note.id);
+    assert.strictEqual(forgotten.text, "Rate limits are per member");
+    assert.strictEqual((yield* bots.snapshotForBot(bot.id)).notes.length, 0);
+
+    const otherNote = yield* bots.addNote(other.id, {
+      text: "Their note",
+      source: "From Chat",
+      sourceJobId: null,
+    });
+    const failure = yield* bots.forgetNote(bot.id, otherNote.id).pipe(Effect.flip);
+    assert.strictEqual(failure.reason, "not-found");
   }).pipe(Effect.provide(layerTest)),
 );
 

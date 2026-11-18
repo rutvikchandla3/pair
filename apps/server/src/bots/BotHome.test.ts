@@ -5,13 +5,19 @@ import type { BotWake } from "./BotService.ts";
 import {
   formatWakeText,
   initialWakeState,
+  splitWakeMessages,
   wakeArrived,
   wakeSummary,
   windowClosed,
 } from "./BotHome.ts";
 
 const botId = BotIdValue.make("bot:atlas") as BotId;
-const wake = (text: string): BotWake => ({ botId, reason: "test", text });
+const wake = (text: string, label = "Pair update"): BotWake => ({
+  botId,
+  reason: "test",
+  label,
+  text,
+});
 
 describe("formatWakeText", () => {
   it("prefixes a single wake", () => {
@@ -26,10 +32,44 @@ describe("formatWakeText", () => {
 });
 
 describe("wakeSummary", () => {
-  it("labels one wake by its reason and several by count", () => {
-    expect(wakeSummary([{ botId, reason: "job-started", text: "J-1" }])).toBe("New job");
-    expect(wakeSummary([wake("one")])).toBe("Pair update");
-    expect(wakeSummary([wake("one"), wake("two")])).toBe("2 updates from Pair");
+  it("uses the wake's label, and counts the rest", () => {
+    expect(wakeSummary([wake("one", "New job")])).toBe("New job");
+    expect(wakeSummary([wake("one", "Sidebar flicker finished"), wake("two")])).toBe(
+      "Sidebar flicker finished and 1 more",
+    );
+    expect(wakeSummary([])).toBe("Pair update");
+  });
+});
+
+describe("splitWakeMessages", () => {
+  const request = (text: string): BotWake => ({
+    botId,
+    reason: "session-request",
+    label: `${text} is waiting`,
+    text,
+  });
+
+  it("keeps one message when no request needs a decision", () => {
+    expect(splitWakeMessages([wake("one"), wake("two")])).toEqual([[wake("one"), wake("two")]]);
+  });
+
+  it("rides the first request with the rest and gives each later one its own message", () => {
+    const groups = splitWakeMessages([
+      wake("finished"),
+      request("one"),
+      wake("quiet"),
+      request("two"),
+      request("three"),
+    ]);
+    expect(groups.map((group) => group.map((entry) => entry.text))).toEqual([
+      ["finished", "one", "quiet"],
+      ["two"],
+      ["three"],
+    ]);
+  });
+
+  it("returns nothing for no wakes", () => {
+    expect(splitWakeMessages([])).toEqual([]);
   });
 });
 

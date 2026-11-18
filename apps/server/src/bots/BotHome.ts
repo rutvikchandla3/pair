@@ -82,32 +82,35 @@ export const windowClosed = (
   wakes: state.batch ?? [],
 });
 
-const WAKE_LABELS: Record<string, string> = {
-  created: "Bot created",
-  "job-started": "New job",
-  "job-stopped": "Job stopped",
-  "job-reopened": "Job reopened",
-  "ask-answered": "You answered",
-  "ask-remember": "Remember this",
-  "decision-corrected": "You corrected a decision",
-  "playbook-changed": "Playbook changed",
-  resumed: "Resumed",
-  "session-handed-back": "Session handed back",
-  "session-finished": "Session finished",
-  "session-failed": "Session failed",
-  "session-stopped": "Session stopped",
-  "session-request": "Session is waiting",
-  "session-usage-limit": "Session hit a usage limit",
-  "session-quiet": "Session is quiet",
-  "session-taken-over": "You took over a session",
-};
-
 /** The short label the home thread shows above a wake message. */
 export const wakeSummary = (wakes: ReadonlyArray<BotWake>): string => {
   const first = wakes[0];
   if (first === undefined) return "Pair update";
-  if (wakes.length > 1) return `${wakes.length} updates from Pair`;
-  return WAKE_LABELS[first.reason] ?? "Pair update";
+  return wakes.length > 1 ? `${first.label} and ${wakes.length - 1} more` : first.label;
+};
+
+/**
+ * A batch becomes one message per decision it needs from the user: the first session-request rides
+ * with the other wakes, and each later one is its own message and so its own turn.
+ */
+export const splitWakeMessages = (
+  wakes: ReadonlyArray<BotWake>,
+): ReadonlyArray<ReadonlyArray<BotWake>> => {
+  const messages: Array<Array<BotWake>> = [[]];
+  let sawRequest = false;
+  for (const wake of wakes) {
+    if (wake.reason !== "session-request") {
+      messages[0]!.push(wake);
+      continue;
+    }
+    if (!sawRequest) {
+      sawRequest = true;
+      messages[0]!.push(wake);
+      continue;
+    }
+    messages.push([wake]);
+  }
+  return messages.filter((message) => message.length > 0);
 };
 
 /** The one line, or list, the home thread hears. */
@@ -225,7 +228,7 @@ const make = Effect.gen(function* () {
   );
 
   const deliver = Effect.fn("BotHome.deliver")(
-    function* (botId: BotId, wakes: ReadonlyArray<BotWake>) {
+    function* (botId: BotId, group: ReadonlyArray<BotWake>) {
       const home = yield* ensureHome(botId);
       const suffix = yield* random.uuidV4();
       yield* engine.dispatch({
@@ -233,11 +236,11 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`server:bot-wake:${suffix}`),
         threadId: home.threadId,
         messageId: MessageId.make(`message:bot-wake:${suffix}`),
-        text: formatWakeText(wakes),
+        text: formatWakeText(group),
         notification: {
           source: { kind: "system" },
           outcome: "updated",
-          summary: wakeSummary(wakes),
+          summary: wakeSummary(group),
         },
         attachments: [],
         dispatchMode: { type: "queue_after_active" },
@@ -251,6 +254,13 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  const deliverBatch = Effect.fn("BotHome.deliverBatch")(function* (
+    botId: BotId,
+    wakes: ReadonlyArray<BotWake>,
+  ) {
+    for (const group of splitWakeMessages(wakes)) yield* deliver(botId, group);
+  });
+
   const slots = yield* SynchronizedRef.make(new Map<string, WakeState>());
 
   const closeWindow = Effect.fn("BotHome.closeWindow")(function* (botId: BotId) {
@@ -261,7 +271,7 @@ const make = Effect.gen(function* () {
       next.set(botId, closed.state);
       return [closed.wakes, next] as const;
     });
-    if (result.length > 0) yield* deliver(botId, result);
+    if (result.length > 0) yield* deliverBatch(botId, result);
   });
 
   const handleWake = Effect.fn("BotHome.handleWake")(function* (wake: BotWake) {

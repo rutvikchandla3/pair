@@ -5,11 +5,13 @@ import {
   OrchestratorMcpFailure,
   ProjectId,
 } from "@t3tools/contracts";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as BotSessions from "../../../bots/BotSessions.ts";
 import * as BotService from "../../../bots/BotService.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -140,6 +142,31 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
     }),
   ),
 
+  bot_job_create: McpToolAccess.writes((params) =>
+    Effect.gen(function* () {
+      const botId = yield* resolveBotId();
+      const bots = yield* BotService.BotService;
+      const projects = yield* ProjectService.ProjectService;
+      const project = Option.getOrNull(
+        yield* projects.getById(params.projectId).pipe(Effect.mapError(() => unavailable())),
+      );
+      if (project === null) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "That project was not found.",
+        });
+      }
+      const job = yield* mapError(
+        bots.createJobForBot(botId, {
+          title: params.title,
+          request: params.request,
+          projectId: project.id,
+        }),
+      );
+      return { jobId: job.id, title: job.title };
+    }),
+  ),
+
   bot_job_update: McpToolAccess.writes((params) =>
     Effect.gen(function* () {
       const botId = yield* resolveBotId();
@@ -179,6 +206,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
   bot_start_session: McpToolAccess.writes((params) =>
     Effect.gen(function* () {
       const botId = yield* resolveBotId();
+      const scope = yield* McpInvocationContext.McpInvocationContext;
       const sessions = yield* BotSessions.BotSessions;
       const session = yield* mapError(
         sessions.start(botId, {
@@ -189,7 +217,13 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           task: params.task,
         }),
       );
-      return { threadId: session.threadId };
+      return {
+        threadId: session.threadId,
+        link: formatThreadLink(
+          { environmentId: scope.environmentId, threadId: session.threadId },
+          session.title,
+        ),
+      };
     }),
   ),
 
@@ -246,6 +280,13 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
     Effect.gen(function* () {
       const botId = yield* resolveBotId();
       const bots = yield* BotService.BotService;
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const homeThreadId = scope.thread?.threadId;
+      const shell =
+        homeThreadId === undefined
+          ? null
+          : yield* threads.getThreadShell(homeThreadId).pipe(Effect.orElseSucceed(() => null));
       if (params.options.length > 3) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
@@ -265,6 +306,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           why: params.why,
           options: params.options,
           pick: params.pick ?? null,
+          homeRunId: shell?.activeRunId ?? null,
         }),
       );
       return { askId: ask.id };
@@ -326,7 +368,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           ? undefined
           : snapshot.jobs.find((candidate) => candidate.id === sourceJobId);
       const source =
-        params.source ?? (job === undefined ? "From Chat" : `From your answer on J-${job.number}`);
+        params.source ?? (job === undefined ? "From Chat" : `From your answer on "${job.title}"`);
       const note = yield* mapError(
         bots.addNote(botId, {
           text: params.text,
@@ -336,6 +378,15 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
         }),
       );
       return { noteId: note.id };
+    }),
+  ),
+
+  bot_forget: McpToolAccess.writes((params) =>
+    Effect.gen(function* () {
+      const botId = yield* resolveBotId();
+      const bots = yield* BotService.BotService;
+      const note = yield* mapError(bots.forgetNote(botId, params.noteId));
+      return { forgotten: true as const, text: note.text };
     }),
   ),
 });

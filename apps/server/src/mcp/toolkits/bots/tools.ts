@@ -140,10 +140,24 @@ const JobUpdateTool = Tool.make("bot_job_update", {
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
 
+const JobCreateTool = Tool.make("bot_job_create", {
+  ...shared,
+  description:
+    "Create a job for one independent piece of the user's request. Give it a short title, the request in full, and the project it should run in.",
+  parameters: Schema.Struct({
+    title: TrimmedNonEmptyString,
+    request: Schema.String,
+    projectId: ProjectId,
+  }),
+  success: Schema.Struct({ jobId: BotJob.fields.id, title: Schema.String }),
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
+
 const StartSessionTool = Tool.make("bot_start_session", {
   ...shared,
   description:
-    "Start a coding session for a job in one of its projects, in a new worktree. Use role worker for implementation and reviewer for review.",
+    "Start a coding session for a job in one of its projects, in a new worktree. Use role worker for implementation and reviewer for review. Put the returned link in your reply exactly as given.",
   parameters: Schema.Struct({
     jobId: BotJob.fields.id,
     projectId: ProjectId,
@@ -151,7 +165,7 @@ const StartSessionTool = Tool.make("bot_start_session", {
     title: TrimmedNonEmptyString,
     task: Schema.String,
   }),
-  success: Schema.Struct({ threadId: ThreadId }),
+  success: Schema.Struct({ threadId: ThreadId, link: Schema.String }),
 })
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
@@ -234,8 +248,19 @@ const LearnTool = Tool.make("bot_learn", {
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
 
+const ForgetTool = Tool.make("bot_forget", {
+  ...shared,
+  description:
+    "Forget a note you saved from your playbook. Use it when the user says to forget what you learned.",
+  parameters: Schema.Struct({ noteId: BotNoteId }),
+  success: Schema.Struct({ forgotten: Schema.Literal(true), text: Schema.String }),
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
+
 export const BotsToolkit = Toolkit.make(
   BotBriefTool,
+  JobCreateTool,
   JobUpdateTool,
   StartSessionTool,
   SessionMessageTool,
@@ -243,4 +268,5 @@ export const BotsToolkit = Toolkit.make(
   AskTool,
   AskResolveTool,
   LearnTool,
+  ForgetTool,
 );

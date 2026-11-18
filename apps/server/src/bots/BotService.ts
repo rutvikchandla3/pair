@@ -39,7 +39,9 @@ import {
   CommandId,
   type MemberId,
   type ModelSelection,
+  type ProjectId,
   ProviderInstanceId,
+  type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -67,6 +69,8 @@ export interface BotCaller {
 export interface BotWake {
   readonly botId: BotId;
   readonly reason: string;
+  /** The short line the home thread shows as that turn's fold label. */
+  readonly label: string;
   readonly text: string;
 }
 
@@ -139,6 +143,15 @@ export class BotService extends Context.Service<
       caller: BotCaller,
       input: BotsCreateJobInput,
     ) => Effect.Effect<BotJob, BotsError>;
+    /** The bot's own `bot_job_create`: no wake, since the bot made it inside its own turn. */
+    readonly createJobForBot: (
+      botId: BotId,
+      input: {
+        readonly title: BotJob["title"];
+        readonly request: string;
+        readonly projectId: ProjectId;
+      },
+    ) => Effect.Effect<BotJob, BotsError>;
     readonly stopJob: (caller: BotCaller, input: BotsJobInput) => Effect.Effect<BotJob, BotsError>;
     readonly reopenJob: (
       caller: BotCaller,
@@ -168,6 +181,8 @@ export class BotService extends Context.Service<
       caller: BotCaller,
       input: BotsNoteInput,
     ) => Effect.Effect<Record<string, never>, BotsError>;
+    /** The bot's own `bot_forget`: throws away a note it saved, returning the deleted text. */
+    readonly forgetNote: (botId: BotId, noteId: BotNoteId) => Effect.Effect<BotNote, BotsError>;
 
     readonly wakes: Stream.Stream<BotWake>;
     /** Publish a wake for a bot's home thread (the watcher's session events). */
@@ -221,6 +236,7 @@ export class BotService extends Context.Service<
         readonly why: string;
         readonly options: ReadonlyArray<string>;
         readonly pick: string | null;
+        readonly homeRunId?: RunId | null;
       },
     ) => Effect.Effect<BotAsk, BotsError>;
     readonly resolveAsk: (
@@ -360,6 +376,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
       readonly why: string;
       readonly options: ReadonlyArray<string>;
       readonly pick: string | null;
+      readonly homeRunId?: RunId | null;
     },
   ) {
     const at = DateTime.formatIso(yield* DateTime.now);
@@ -376,7 +393,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
       answer: null,
       remember: false,
       noteId: null,
-      homeRunId: null,
+      homeRunId: input.homeRunId ?? null,
       createdAt: at,
       answeredAt: null,
     };
@@ -481,6 +498,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           yield* wake({
             botId: bot.id,
             reason: "created",
+            label: "Bot created",
             text: "You were just created. Call bot_brief, then say hello in one line and wait for a job.",
           });
           return bot;
@@ -512,6 +530,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             yield* wake({
               botId: bot.id,
               reason: "playbook-changed",
+              label: "Playbook changed",
               text: "Your playbook or settings changed. Call bot_brief before your next decision.",
             });
           }
@@ -536,6 +555,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           yield* wake({
             botId: bot.id,
             reason: "resumed",
+            label: "Resumed",
             text: "You were resumed. Call bot_brief to catch up on what happened while you were paused.",
           });
         }
@@ -590,38 +610,54 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     },
   );
 
+  /** The record every new job shares; the user RPC wakes, the bot's own tool does not. */
+  const insertJob = Effect.fnUntraced(function* (
+    bot: Bot,
+    input: {
+      readonly title?: BotJob["title"];
+      readonly request: string;
+      readonly projectId?: ProjectId;
+    },
+  ) {
+    const at = DateTime.formatIso(yield* DateTime.now);
+    const number = bot.nextJobNumber;
+    const id = yield* newJobId(random);
+    const job: BotJob = {
+      id,
+      botId: bot.id,
+      number,
+      title: input.title ?? titleOf(input.request),
+      request: input.request,
+      projectId: input.projectId ?? null,
+      status: "working",
+      headline: "",
+      headlineAt: null,
+      pullRequests: [],
+      report: null,
+      createdAt: at,
+      updatedAt: at,
+      finishedAt: null,
+    };
+    yield* db(store.upsertJob(job));
+    yield* db(store.upsertBot({ ...bot, nextJobNumber: number + 1, updatedAt: at }));
+    yield* appendEvent(bot, {
+      jobId: id,
+      kind: "job-started",
+      text: `Started ${job.title}`,
+    });
+    yield* touch(bot.ownerId);
+    return job;
+  });
+
   const createJob: BotService["Service"]["createJob"] = Effect.fn("BotService.createJob")(
     function* (caller, input) {
       return yield* withLock(
         Effect.gen(function* () {
           const bot = yield* requireBot(caller, input.botId);
-          const at = DateTime.formatIso(yield* DateTime.now);
-          const number = bot.nextJobNumber;
-          const id = yield* newJobId(random);
-          const job: BotJob = {
-            id,
-            botId: bot.id,
-            number,
-            title: titleOf(input.request),
+          const job = yield* insertJob(bot, {
             request: input.request,
-            projectId: input.projectId ?? null,
-            status: "working",
-            headline: "",
-            headlineAt: null,
-            pullRequests: [],
-            report: null,
-            createdAt: at,
-            updatedAt: at,
-            finishedAt: null,
-          };
-          yield* db(store.upsertJob(job));
-          yield* db(store.upsertBot({ ...bot, nextJobNumber: number + 1, updatedAt: at }));
-          yield* appendEvent(bot, {
-            jobId: id,
-            kind: "job-started",
-            text: `Started J-${number}`,
+            ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
           });
-          yield* touch(bot.ownerId);
           if (!bot.paused) {
             const project =
               input.projectId === undefined
@@ -630,7 +666,8 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             yield* wake({
               botId: bot.id,
               reason: "job-started",
-              text: `New job J-${number} (jobId ${id}): ${input.request}${project}`,
+              label: "New job",
+              text: `New job "${job.title}" (jobId ${job.id}): ${input.request}${project}`,
             });
           }
           return job;
@@ -638,6 +675,17 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
       );
     },
   );
+
+  const createJobForBot: BotService["Service"]["createJobForBot"] = Effect.fn(
+    "BotService.createJobForBot",
+  )(function* (botId, input) {
+    return yield* withLock(
+      Effect.gen(function* () {
+        const bot = yield* loadBot(botId);
+        return yield* insertJob(bot, input);
+      }),
+    );
+  });
 
   const stopJob: BotService["Service"]["stopJob"] = Effect.fn("BotService.stopJob")(
     function* (caller, input) {
@@ -652,12 +700,17 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           for (const session of yield* db(store.listSessionsForJob(job.id))) {
             yield* stopThread(session.threadId, "Bot job stopped");
           }
-          yield* appendEvent(bot, { jobId: job.id, kind: "job-stopped", text: "Stopped by you" });
+          yield* appendEvent(bot, {
+            jobId: job.id,
+            kind: "job-stopped",
+            text: `Stopped ${job.title}`,
+          });
           yield* touch(bot.ownerId);
           yield* wake({
             botId: bot.id,
             reason: "job-stopped",
-            text: `The user stopped J-${job.number}. Don't start new work for it.`,
+            label: "Job stopped",
+            text: `The user stopped the job "${job.title}" (jobId ${job.id}). Don't start new work for it.`,
           });
           return updated;
         }),
@@ -687,13 +740,14 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           yield* appendEvent(bot, {
             jobId: job.id,
             kind: "job-reopened",
-            text: `Reopened J-${job.number}`,
+            text: `Reopened ${job.title}`,
           });
           yield* touch(bot.ownerId);
           yield* wake({
             botId: bot.id,
             reason: "job-reopened",
-            text: `The user reopened J-${job.number}. Pick it up where it stopped; call bot_brief.`,
+            label: "Job reopened",
+            text: `The user reopened the job "${job.title}" (jobId ${job.id}). Pick it up where it stopped; call bot_brief.`,
           });
           return updated;
         }),
@@ -701,10 +755,11 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     },
   );
 
-  const jobLabelOf = Effect.fnUntraced(function* (jobId: BotJobId | null) {
-    if (jobId === null) return "J-?";
+  /** A job named the way the bot acts on it: title, then id. Never its number. */
+  const jobRefOf = Effect.fnUntraced(function* (jobId: BotJobId | null) {
+    if (jobId === null) return "the job";
     const job = Option.getOrNull(yield* db(store.getJob(jobId)));
-    return job === null ? "J-?" : `J-${job.number}`;
+    return job === null ? "the job" : `the job \"${job.title}\" (jobId ${job.id})`;
   });
 
   const answerAsk: BotService["Service"]["answerAsk"] = Effect.fn("BotService.answerAsk")(
@@ -745,26 +800,28 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
                 : `${changed ? "You changed your answer to" : "You answered"}: ${answer ?? ""}`,
           });
           yield* touch(bot.ownerId);
-          const label = yield* jobLabelOf(ask.jobId);
+          const jobRef = yield* jobRefOf(ask.jobId);
           if (input.kind === "bot-decides") {
             yield* wake({
               botId: bot.id,
               reason: "ask-answered",
-              text: `The user let you decide Ask ${ask.id} (${label}). Decide, act on it, and record it with bot_ask_resolve (decision cite "You let ${bot.name} decide").`,
+              label: "You answered",
+              text: `The user let you decide Ask ${ask.id} on ${jobRef}. Decide, act on it, and record it with bot_ask_resolve (decision cite "You let ${bot.name} decide").`,
             });
           } else {
             const remember = input.remember
               ? ` They want you to remember this: save one short note with bot_learn (askId ${ask.id}).`
               : "";
             const verb = changed
-              ? `changed their answer to Ask ${ask.id} (${label}) from "${ask.answer ?? "you decide"}" to`
-              : `answered Ask ${ask.id} (${label}):`;
+              ? `changed their answer to Ask ${ask.id} on ${jobRef} from "${ask.answer ?? "you decide"}" to`
+              : `answered Ask ${ask.id} on ${jobRef}:`;
             const redo = changed
               ? " Act on the new answer, and undo work that followed the old one."
               : "";
             yield* wake({
               botId: bot.id,
               reason: "ask-answered",
+              label: "You answered",
               text: `The user ${verb} "${answer ?? ""}".${redo}${remember}`,
             });
           }
@@ -790,6 +847,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           yield* wake({
             botId: bot.id,
             reason: "ask-remember",
+            label: "Remember this",
             text: `Save one short note from the user's answer to Ask ${ask.id} with bot_learn (askId ${ask.id}).`,
           });
           return updated;
@@ -825,6 +883,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
         yield* wake({
           botId: bot.id,
           reason: "decision-corrected",
+          label: "You corrected a decision",
           text: `The user corrected your decision ${event.id} on session "${decision.sessionTitle}" ("${decision.question}" → "${decision.answer}"): "${input.correction}". Re-steer that session if it is still running (bot_session_message), and offer to edit the cited note.`,
         });
         return updated;
@@ -849,11 +908,11 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           sessionThreadId: session.threadId,
         });
         yield* touch(bot.ownerId);
-        const label = yield* jobLabelOf(session.jobId);
         yield* wake({
           botId: bot.id,
           reason: "session-handed-back",
-          text: `The user handed session "${session.title}" (thread ${session.threadId}, ${label}) back to you. Read what changed with t3_thread_read, then continue.`,
+          label: `${session.title} was handed back`,
+          text: `The user handed session "${session.title}" (thread ${session.threadId}) back to you. Read what changed with t3_thread_read, then continue.`,
         });
         return updated;
       }),
@@ -890,6 +949,21 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           yield* db(store.deleteNote(note.id));
           yield* touch(bot.ownerId);
           return {};
+        }),
+      );
+    },
+  );
+
+  const forgetNote: BotService["Service"]["forgetNote"] = Effect.fn("BotService.forgetNote")(
+    function* (botId, noteId) {
+      return yield* withLock(
+        Effect.gen(function* () {
+          const note = Option.getOrNull(yield* db(store.getNote(noteId)));
+          if (note === null || note.botId !== botId) return yield* notFound("That note is gone.");
+          const bot = yield* loadBot(note.botId);
+          yield* db(store.deleteNote(note.id));
+          yield* touch(bot.ownerId);
+          return note;
         }),
       );
     },
@@ -1151,6 +1225,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     delete: remove,
     markSeen,
     createJob,
+    createJobForBot,
     stopJob,
     reopenJob,
     answerAsk,
@@ -1159,6 +1234,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     handBackSession,
     updateNote,
     deleteNote,
+    forgetNote,
     wakes: Stream.fromPubSub(wakePubSub),
     publishWake: wake,
     changes: Stream.fromPubSub(ownerWrites),
