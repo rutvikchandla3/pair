@@ -100,6 +100,23 @@ tokens never enter `SessionStore`, so no RPC, WebSocket, or MCP path can accept
 one. Guest routes also require T3 Connect to still serve the link's hostname;
 the request's Host header is not checked, because a LAN client can forge it.
 
+### Pair Builder's proxy vouches for its users
+
+In [Pair Builder host mode](./overview.md#pair-builder-host-mode) the Builder's proxy
+strips cookies and `Authorization` and adds its own ingress token and an `X-Pair-User`
+identity to every request. [EnvironmentAuth](../../apps/server/src/auth/EnvironmentAuth.ts)
+trusts the identity only beside the token (compared in constant time) and treats a missing or
+malformed one as no identity, so the token alone opens no session; only `/api/host/sessions`
+accepts it bare. The person is the member bound to their Builder user id
+([PairBuilderMembers](../../apps/server/src/team/PairBuilderMembers.ts)), added as a `member`
+on first sight. A removed member keeps the binding, so removal is what locks a Builder user out.
+
+The token rides along with every browser request, so it is as ambient as a cookie and gets the
+same origin check; the proxy must pass `Origin` and `X-Forwarded-Host` through. Each member has
+one persisted `pair-builder-ingress` session that never expires: it carries no credential, and
+it exists so `/ws` can track and close sockets and role changes reach them. Revoking it only
+closes those sockets; the next proxied request opens a new one.
+
 ### MCP clients are a separate audience
 
 Agents T3 Code did not launch sign in to `/mcp` through a narrow OAuth

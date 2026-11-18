@@ -111,6 +111,7 @@ import Migration0104 from "./Migrations/104_GuardSpaceTaskIndex.ts";
 import Migration0105 from "./Migrations/105_InboxMemberItems.ts";
 import Migration0106 from "./Migrations/106_BranchLineage.ts";
 import Migration0107 from "./Migrations/107_Bots.ts";
+import Migration0108 from "./Migrations/108_MemberPairBuilderUser.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -221,6 +222,7 @@ const migrationEntries = [
   [105, "InboxMemberItems", Migration0105],
   [106, "BranchLineage", Migration0106],
   [107, "Bots", Migration0107],
+  [108, "MemberPairBuilderUser", Migration0108],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

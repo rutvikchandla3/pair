@@ -8,6 +8,7 @@ import {
   authScopeResponse,
   AuthStandardClientScopes,
   MemberId,
+  teamRoleScopes,
 } from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
@@ -19,7 +20,9 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
@@ -81,6 +84,16 @@ const makeBearerRequest = (
   }) as unknown as Parameters<
     EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
   >[0];
+
+const PAIR_BUILDER_INGRESS_TOKEN = "pair-builder-ingress-token";
+const pairBuilderHost = {
+  ingressToken: Redacted.make(PAIR_BUILDER_INGRESS_TOKEN),
+  sandboxId: "sandbox-1",
+  workspaceRoot: "/projects/challenge",
+  workspaceTitle: undefined,
+  events: undefined,
+} satisfies ServerConfig.PairBuilderHostConfig;
+const pairUserHeader = (user: unknown) => Buffer.from(JSON.stringify(user)).toString("base64url");
 
 const requestMetadata = {
   deviceType: "desktop" as const,
@@ -963,6 +976,137 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(
         Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
       ),
+    );
+
+    it.effect("authenticates Pair Builder proxy requests as the member X-Pair-User names", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const teamState = yield* TeamState.TeamState;
+        const members = yield* Members.MemberRepository;
+        const proxied = (headers: Record<string, string>, token = PAIR_BUILDER_INGRESS_TOKEN) =>
+          ({
+            url: "/ws",
+            cookies: {},
+            headers: { host: "10.0.0.5:8070", authorization: `Bearer ${token}`, ...headers },
+          }) as never;
+        const ada = { "x-pair-user": pairUserHeader({ id: "u-1", name: "Ada", login: "ada" }) };
+        const memberOf = (memberId: MemberId) =>
+          Ref.get(teamState.members).pipe(Effect.map((current) => current.get(memberId)));
+
+        const first = yield* serverAuth.authenticateHttpRequest(proxied(ada));
+        expect(first).toMatchObject({
+          subject: "pair-builder",
+          method: "pair-builder-ingress",
+          scopes: teamRoleScopes("member"),
+        });
+        expect(yield* memberOf(first.memberId)).toMatchObject({
+          name: "Ada",
+          role: "member",
+          pairBuilderUserId: "u-1",
+        });
+        expect(yield* serverAuth.authenticateWebSocketUpgrade(proxied(ada), "rpc")).toMatchObject({
+          sessionId: first.sessionId,
+          memberId: first.memberId,
+        });
+        expect(yield* serverAuth.getSessionState(proxied(ada))).toMatchObject({
+          authenticated: true,
+          sessionMethod: "pair-builder-ingress",
+          memberId: first.memberId,
+        });
+
+        const renamed = yield* serverAuth.authenticateHttpRequest(
+          proxied({ "x-pair-user": pairUserHeader({ id: "u-1", name: "  Ada\nLovelace " }) }),
+        );
+        expect(renamed.sessionId).toBe(first.sessionId);
+        expect((yield* memberOf(first.memberId))?.name).toBe("Ada Lovelace");
+        const grace = yield* serverAuth.authenticateHttpRequest(
+          proxied({ "x-pair-user": pairUserHeader({ id: "u-2", name: null, login: "grace" }) }),
+        );
+        expect(grace.memberId).not.toBe(first.memberId);
+        expect((yield* memberOf(grace.memberId))?.name).toBe("grace");
+
+        yield* serverAuth.authenticateHttpRequest(
+          proxied({
+            ...ada,
+            origin: "https://builder.example",
+            "x-forwarded-host": "builder.example",
+          }),
+        );
+        const rejected = (request: never) =>
+          serverAuth.authenticateHttpRequest(request).pipe(
+            Effect.flip,
+            Effect.map((error) => error._tag),
+          );
+        for (const headers of [
+          {},
+          { "x-pair-user": "not base64url json!" },
+          { "x-pair-user": pairUserHeader({ name: "No id" }) },
+          { "x-pair-user": pairUserHeader({ id: "  " }) },
+          { "x-pair-user": pairUserHeader("u-1") },
+          { "x-pair-user": pairUserHeader({ id: "u-1", name: "x".repeat(4_000) }) },
+          { ...ada, origin: "https://elsewhere.example" },
+        ]) {
+          expect(yield* rejected(proxied(headers))).toBe("ServerAuthInvalidCredentialError");
+        }
+        expect(yield* rejected(proxied(ada, "wrong-token"))).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        expect(yield* serverAuth.authenticatePairBuilderIngress(proxied({}))).toEqual(
+          Option.none(),
+        );
+        expect(yield* serverAuth.authenticatePairBuilderIngress(proxied(ada))).toEqual(
+          Option.some({ id: "u-1", name: "Ada" }),
+        );
+        expect(
+          (yield* Effect.flip(
+            serverAuth.authenticatePairBuilderIngress(proxied({ "x-pair-user": "not json" })),
+          ))._tag,
+        ).toBe("ServerAuthInvalidCredentialError");
+        expect(
+          (yield* Effect.flip(
+            serverAuth.authenticatePairBuilderIngress(proxied(ada, "wrong-token")),
+          ))._tag,
+        ).toBe("ServerAuthInvalidCredentialError");
+
+        // Revoking the session only closes its sockets; the next proxied request opens another.
+        yield* sessions.revoke(first.sessionId);
+        const reopened = yield* serverAuth.authenticateHttpRequest(proxied(ada));
+        expect(reopened.sessionId).not.toBe(first.sessionId);
+        expect(reopened.memberId).toBe(first.memberId);
+
+        yield* members.markRemoved({ id: first.memberId, removedAt: "2026-09-02T00:00:00.000Z" });
+        yield* teamState.reload;
+        expect(yield* rejected(proxied(ada))).toBe("ServerAuthInvalidCredentialError");
+        const bound = Array.from((yield* Ref.get(teamState.members)).values()).filter(
+          (member) => member.pairBuilderUserId === "u-1",
+        );
+        expect(bound).toHaveLength(1);
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuth({ mode: "web", host: "0.0.0.0", pairBuilder: pairBuilderHost }),
+        ),
+      ),
+    );
+
+    it.effect("treats the ingress token as an unknown credential outside host mode", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const request = {
+          cookies: {},
+          headers: {
+            authorization: `Bearer ${PAIR_BUILDER_INGRESS_TOKEN}`,
+            "x-pair-user": pairUserHeader({ id: "u-1", name: "Ada" }),
+          },
+        } as never;
+        expect((yield* Effect.flip(serverAuth.authenticateHttpRequest(request)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        expect((yield* Effect.flip(serverAuth.authenticatePairBuilderIngress(request)))._tag).toBe(
+          "ServerAuthMissingCredentialError",
+        );
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "0.0.0.0" }))),
     );
   },
 );

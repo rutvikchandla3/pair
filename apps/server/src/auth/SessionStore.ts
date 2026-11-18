@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
@@ -64,6 +65,15 @@ export interface VerifiedSession {
   readonly runtimeModeCeiling?: RuntimeMode;
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
+}
+
+/** A session for a credential the server checks itself on every request; it has no token. */
+export interface MemberSession {
+  readonly sessionId: AuthSessionId;
+  readonly subject: string;
+  readonly memberId: MemberId;
+  readonly method: ServerAuthSessionMethod;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
 }
 
 export interface VerifiedWebSocketTicket extends VerifiedSession {
@@ -407,7 +417,8 @@ export class SessionStore extends Context.Service<
       readonly memberId: MemberId;
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
-      readonly method?: ServerAuthSessionMethod;
+      /** A Pair Builder session has no token to issue; see `ensureMemberSession`. */
+      readonly method?: Exclude<ServerAuthSessionMethod, "pair-builder-ingress">;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
@@ -417,6 +428,17 @@ export class SessionStore extends Context.Service<
       readonly replaceSessionId?: AuthSessionId;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
+    /**
+     * The member's unrevoked session with this subject and method, opened when there is none, so
+     * sockets on it can be tracked and closed. It never expires; revoking it only closes them.
+     */
+    readonly ensureMemberSession: (input: {
+      readonly memberId: MemberId;
+      readonly subject: string;
+      readonly method: ServerAuthSessionMethod;
+      readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+      readonly label: string;
+    }) => Effect.Effect<MemberSession, SessionCredentialInternalError>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
       input?: {
@@ -468,10 +490,14 @@ export class SessionStore extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
+    /** Open sockets across all sessions. */
+    readonly connectionCount: Effect.Effect<number>;
   }
 >()("t3/auth/SessionStore") {}
 
 const SIGNING_SECRET_NAME = "server-signing-key";
+// The schema requires an expiry; a member session's credential is checked on every request.
+const MEMBER_SESSION_EXPIRES_AT = DateTime.makeUnsafe("9999-12-31T23:59:59.999Z");
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 
@@ -915,6 +941,98 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const memberSessionIds = new Map<string, AuthSessionId>();
+  const memberSessionCreation = yield* Semaphore.make(1);
+  const memberSessionKey = (input: Parameters<SessionStore["Service"]["ensureMemberSession"]>[0]) =>
+    JSON.stringify([input.memberId, input.subject, input.method]);
+  const toMemberSession = (row: AuthSessions.AuthSessionRecord, memberId: MemberId) =>
+    ({
+      sessionId: row.sessionId,
+      subject: row.subject,
+      memberId,
+      method: row.method,
+      scopes: row.scopes,
+    }) satisfies MemberSession;
+
+  const openMemberSession = Effect.fn("SessionStore.openMemberSession")(function* (
+    input: Parameters<SessionStore["Service"]["ensureMemberSession"]>[0],
+  ) {
+    const existing = yield* authSessions
+      .findActiveForMember({
+        memberId: input.memberId,
+        subject: input.subject,
+        method: input.method,
+      })
+      .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause })));
+    if (Option.isSome(existing)) {
+      memberSessionIds.set(memberSessionKey(input), existing.value.sessionId);
+      return toMemberSession(existing.value, input.memberId);
+    }
+    const sessionId = AuthSessionId.make(
+      yield* random
+        .uuidV4()
+        .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause }))),
+    );
+    const record = {
+      sessionId,
+      subject: input.subject,
+      memberId: input.memberId,
+      scopes: input.scopes,
+      method: input.method,
+      client: {
+        label: input.label,
+        ipAddress: null,
+        userAgent: null,
+        deviceType: "unknown",
+        os: null,
+        browser: null,
+      },
+      issuedAt: yield* DateTime.now,
+      expiresAt: MEMBER_SESSION_EXPIRES_AT,
+    } satisfies AuthSessions.CreateAuthSessionInput;
+    yield* authSessions
+      .create(record)
+      .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+    memberSessionIds.set(memberSessionKey(input), sessionId);
+    yield* emitUpsert(
+      toAuthClientSession({
+        ...record,
+        client: { label: input.label, deviceType: "unknown" },
+        lastConnectedAt: null,
+        connected: false,
+      }),
+    );
+    return toMemberSession({ ...record, lastConnectedAt: null, revokedAt: null }, input.memberId);
+  }, memberSessionCreation.withPermits(1));
+
+  // Runs inside every request's authenticate span; only opening a session gets its own.
+  const ensureMemberSession: SessionStore["Service"]["ensureMemberSession"] = Effect.fnUntraced(
+    function* (input) {
+      const cached = memberSessionIds.get(memberSessionKey(input));
+      if (cached !== undefined) {
+        const row = yield* authSessions
+          .getById({ sessionId: cached })
+          .pipe(
+            Effect.mapError(
+              (cause) => new SessionCredentialVerificationError({ sessionId: cached, cause }),
+            ),
+          );
+        if (Option.isSome(row) && row.value.revokedAt === null) {
+          return toMemberSession(row.value, input.memberId);
+        }
+      }
+      return yield* openMemberSession(input);
+    },
+  );
+
+  const connectionCount = Ref.get(connectedSessionsRef).pipe(
+    Effect.map((connected) => {
+      let count = 0;
+      for (const sockets of connected.values()) count += sockets;
+      return count;
+    }),
+  );
+
   const encodeWsClaims = Schema.encodeEffect(Schema.fromJsonString(WebSocketClaims));
   const issueWebSocketToken: SessionStore["Service"]["issueWebSocketToken"] = Effect.fn(
     "SessionStore.issueWebSocketToken",
@@ -1230,6 +1348,7 @@ const make = Effect.gen(function* () {
     legacyCookieName,
     issue,
     verify,
+    ensureMemberSession,
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,
@@ -1243,6 +1362,7 @@ const make = Effect.gen(function* () {
     updateScopesForMember,
     markConnected,
     markDisconnected,
+    connectionCount,
   });
 });
 

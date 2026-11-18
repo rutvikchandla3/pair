@@ -410,6 +410,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     }),
   );
 
+  it.effect("keeps one member session across restarts and opens another once it is revoked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-member-session-" });
+      const input = {
+        memberId,
+        subject: "pair-builder",
+        method: "pair-builder-ingress",
+        scopes: ["orchestration:read"],
+        label: "Pair Builder",
+      } as const;
+      const first = yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const opened = yield* sessions.ensureMemberSession(input);
+        expect(yield* sessions.ensureMemberSession(input)).toEqual(opened);
+        expect(yield* sessions.ensureMemberSession({ ...input, subject: "other" })).not.toEqual(
+          opened,
+        );
+        yield* sessions.markConnected(opened.sessionId);
+        yield* sessions.markConnected(opened.sessionId);
+        expect(yield* sessions.connectionCount).toBe(2);
+        return opened;
+      }).pipe(Effect.provide(yield* makeDiskSessionStoreLayer(baseDir)), Effect.scoped);
+
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        expect(yield* sessions.ensureMemberSession(input)).toEqual(first);
+        yield* sessions.revoke(first.sessionId);
+        const reopened = yield* sessions.ensureMemberSession(input);
+        expect(reopened.sessionId).not.toBe(first.sessionId);
+        expect(reopened).toMatchObject({ memberId, scopes: input.scopes });
+      }).pipe(Effect.provide(yield* makeDiskSessionStoreLayer(baseDir)), Effect.scoped);
+    }),
+  );
+
   it.effect("invalidates old dev credentials and tickets after rotation or removal", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
