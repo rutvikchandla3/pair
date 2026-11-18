@@ -55,16 +55,22 @@ function inboxTitle(item: InboxItem, viewer: SpaceViewer): string {
     case "added-to-space":
       return `${who(item.actorId, viewer)} added you to ${item.spaceName ?? "a space"}`;
     case "bot-ask":
-      return `${item.botName ?? "Your bot"} asks: ${item.excerpt ?? "a question"}`;
+      return item.excerpt ?? "A question for you";
     case "bot-job-done":
-      return `${item.botName ?? "Your bot"} finished ${
-        item.jobNumber === undefined ? "a job" : `J-${item.jobNumber}`
-      }${item.jobTitle === undefined ? "" : ` · ${item.jobTitle}`}`;
+      return `${item.jobTitle ?? "A job"} is done`;
   }
 }
 
 /** Row copy for one Inbox item. Rows keyed on a thread name its owner; yours reads "your thread". */
 export function inboxRowCopy(item: InboxItem, viewer: SpaceViewer): InboxRowCopy {
+  const botDetail = (...parts: ReadonlyArray<string | undefined>): string =>
+    parts.filter((part): part is string => part !== undefined && part !== "").join(" · ");
+  if (item.reason === "bot-ask" || item.reason === "bot-job-done") {
+    return {
+      title: inboxTitle(item, viewer),
+      detail: botDetail(item.botName, item.reason === "bot-ask" ? item.jobTitle : undefined),
+    };
+  }
   const place =
     item.spaceName !== undefined && item.taskTitle !== undefined
       ? `${item.spaceName} › ${item.taskTitle}`

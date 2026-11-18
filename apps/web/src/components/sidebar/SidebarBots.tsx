@@ -1,40 +1,174 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { LoaderCircleIcon, PauseIcon, PlusIcon } from "lucide-react";
+import type { Bot, BotsSnapshot, EnvironmentId } from "@t3tools/contracts";
+import { Link, useParams } from "@tanstack/react-router";
+import { ChevronRightIcon, PlusIcon } from "lucide-react";
+import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { useQuietThreadShells } from "../../state/entities";
-import { useBotsSnapshot, useBotsNow } from "../../state/bots";
+import { useBotsNow, useBotsSnapshot } from "../../state/bots";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { BotAvatar } from "../bots/BotAvatar";
-import { botSessions, needsYouCount, sessionState, type ShellLookup } from "../bots/bots.logic";
+import { BotStateGlyph } from "../bots/BotStateGlyph";
+import { useCreateBot } from "../bots/useCreateBot";
+import {
+  botSidebarSessions,
+  botWorking,
+  openAsks,
+  type BotSidebarSession,
+  type ShellLookup,
+} from "../bots/bots.logic";
 
 const rowClass =
   "group/bot-row flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground hover:bg-sidebar-row-hover";
+const sessionRowClass =
+  "group/bot-session-row flex h-7 min-w-0 items-center gap-1.5 rounded-md pe-2 ps-7.5 text-sm text-sidebar-foreground hover:bg-sidebar-row-hover";
+
+function compact(label: string): string {
+  return label.endsWith(" ago") ? label.slice(0, -4) : label;
+}
+
+function SessionTime(props: { readonly timestamp: string }) {
+  const nowMinute = useNowMinute();
+  return (
+    <span className="shrink-0 text-sidebar-muted-foreground text-xs tabular-nums">
+      {compact(formatRelativeTimeLabel(props.timestamp, Date.parse(`${nowMinute}:00.000Z`)))}
+    </span>
+  );
+}
 
 function NewBotButton() {
-  const navigate = useNavigate();
+  const environmentId = usePrimaryEnvironmentId();
+  const createBot = useCreateBot();
   return (
     <Button
       size="icon-micro"
       variant="ghost-muted"
       aria-label="New bot"
-      onClick={() => void navigate({ to: "/bots", search: { new: 1 } })}
+      disabled={environmentId === null}
+      onClick={() => {
+        if (environmentId !== null) void createBot(environmentId);
+      }}
     >
       <PlusIcon />
     </Button>
   );
 }
 
-/** The sidebar's Bots section: a header with +, then one row per bot. */
+function SessionRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly row: BotSidebarSession;
+  readonly selectedThreadId: string | null;
+}) {
+  const { session } = props.row;
+  return (
+    <Link
+      to="/$environmentId/$threadId"
+      params={{ environmentId: props.environmentId, threadId: session.threadId }}
+      aria-current={props.selectedThreadId === session.threadId ? "page" : undefined}
+      className={cn(
+        sessionRowClass,
+        props.selectedThreadId === session.threadId && "bg-sidebar-row-active",
+      )}
+    >
+      <span className="inline-flex w-3.5 shrink-0 justify-center">
+        <BotStateGlyph glyph={props.row.glyph} className="size-3.5" />
+      </span>
+      <span className="min-w-0 flex-1 truncate">{session.title}</span>
+      {props.row.finishedAt === null ? null : <SessionTime timestamp={props.row.finishedAt} />}
+    </Link>
+  );
+}
+
+function BotGroup(props: {
+  readonly environmentId: EnvironmentId;
+  readonly bot: Bot;
+  readonly snapshot: BotsSnapshot;
+  readonly shells: ShellLookup;
+  readonly now: number;
+  readonly selectedBotId: string | null;
+  readonly selectedThreadId: string | null;
+}) {
+  const [showEarlier, setShowEarlier] = useState(false);
+  const askCount = openAsks(props.snapshot, props.bot.id).length;
+  const working = botWorking(props.snapshot, props.bot, props.shells, props.now);
+  const { rows, earlier } = botSidebarSessions(
+    props.snapshot,
+    props.bot.id,
+    props.shells,
+    props.now,
+  );
+  const selected = props.selectedBotId === props.bot.id;
+  return (
+    <>
+      <Link
+        to="/bots/$environmentId/$botId"
+        params={{ environmentId: props.environmentId, botId: props.bot.id }}
+        aria-current={selected ? "page" : undefined}
+        className={cn(rowClass, selected && "bg-sidebar-row-active")}
+      >
+        <BotAvatar bot={props.bot} size="sm" />
+        <span className="min-w-0 flex-1 truncate">{props.bot.name}</span>
+        {askCount > 0 ? (
+          <span
+            aria-label={`${askCount} need you`}
+            className="shrink-0 rounded-full bg-input-foreground/12 px-1.5 text-input-foreground text-xs tabular-nums"
+          >
+            {askCount}
+          </span>
+        ) : props.bot.paused ? (
+          <span className="shrink-0 text-sidebar-muted-foreground text-xs">Paused</span>
+        ) : working ? (
+          <BotStateGlyph glyph="working" className="size-3.5" />
+        ) : null}
+      </Link>
+      {rows.map((row) => (
+        <SessionRow
+          key={row.session.threadId}
+          environmentId={props.environmentId}
+          row={row}
+          selectedThreadId={props.selectedThreadId}
+        />
+      ))}
+      {earlier.length === 0 ? null : (
+        <>
+          {showEarlier
+            ? earlier.map((row) => (
+                <SessionRow
+                  key={row.session.threadId}
+                  environmentId={props.environmentId}
+                  row={row}
+                  selectedThreadId={props.selectedThreadId}
+                />
+              ))
+            : null}
+          <button
+            type="button"
+            aria-expanded={showEarlier}
+            className={cn(rowClass, "ps-7.5 text-sidebar-muted-foreground")}
+            onClick={() => setShowEarlier(!showEarlier)}
+          >
+            <ChevronRightIcon
+              className={cn("size-3 shrink-0 transition-transform", showEarlier && "rotate-90")}
+            />
+            {showEarlier ? "Hide earlier" : `${earlier.length} earlier`}
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
+/** The sidebar's Bots section: a header with +, then each bot with its sessions nested. */
 export function SidebarBots() {
   const environmentId = usePrimaryEnvironmentId();
   const snapshot = useBotsSnapshot(environmentId);
   const shells = useQuietThreadShells();
   const params = useParams({ strict: false });
-  const navigate = useNavigate();
   const now = useBotsNow();
+  const createBot = useCreateBot();
 
   if (environmentId === null || snapshot === null) return null;
 
@@ -45,6 +179,10 @@ export function SidebarBots() {
   );
   const selectedBotId =
     params.environmentId === environmentId && params.botId !== undefined ? params.botId : null;
+  const selectedThreadId =
+    params.environmentId === environmentId && params.threadId !== undefined
+      ? params.threadId
+      : null;
 
   return (
     <div className="mb-2 flex flex-col gap-px" role="presentation">
@@ -57,52 +195,24 @@ export function SidebarBots() {
         <button
           type="button"
           className={cn(rowClass, "w-full text-left text-sidebar-muted-foreground")}
-          onClick={() => void navigate({ to: "/bots" })}
+          onClick={() => void createBot(environmentId)}
         >
           <PlusIcon className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate">New bot</span>
         </button>
       ) : (
-        snapshot.bots.map((bot) => {
-          const needYou = needsYouCount(snapshot, bot.id, shellMap, now);
-          const working =
-            !bot.paused &&
-            botSessions(snapshot, bot.id).some((session) => {
-              const state = sessionState(session, shellMap.get(session.threadId) ?? null, now);
-              return state.kind === "working" || state.kind === "quiet";
-            });
-          return (
-            <Link
-              key={bot.id}
-              to="/bots/$environmentId/$botId"
-              params={{ environmentId: environmentId as EnvironmentId, botId: bot.id }}
-              search={{ tab: "briefing" }}
-              aria-current={selectedBotId === bot.id ? "page" : undefined}
-              className={cn(rowClass, selectedBotId === bot.id && "bg-sidebar-row-active")}
-            >
-              <BotAvatar bot={bot} size="sm" />
-              <span className="min-w-0 flex-1 truncate">{bot.name}</span>
-              {needYou > 0 ? (
-                <span
-                  aria-label={`${needYou} need you`}
-                  className="shrink-0 rounded-full bg-input-foreground/12 px-1.5 text-input-foreground text-xs tabular-nums"
-                >
-                  {needYou}
-                </span>
-              ) : working ? (
-                <LoaderCircleIcon
-                  aria-label="Working"
-                  className="size-3.5 shrink-0 text-sidebar-muted-foreground"
-                />
-              ) : bot.paused ? (
-                <PauseIcon
-                  aria-label="Paused"
-                  className="size-3.5 shrink-0 text-sidebar-muted-foreground"
-                />
-              ) : null}
-            </Link>
-          );
-        })
+        snapshot.bots.map((bot) => (
+          <BotGroup
+            key={bot.id}
+            environmentId={environmentId}
+            bot={bot}
+            snapshot={snapshot}
+            shells={shellMap}
+            now={now}
+            selectedBotId={selectedBotId}
+            selectedThreadId={selectedThreadId}
+          />
+        ))
       )}
     </div>
   );

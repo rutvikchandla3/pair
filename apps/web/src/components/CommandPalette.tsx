@@ -8,6 +8,7 @@ import { useForkAllowed } from "./branchOff/useBranchOff";
 import { useLineagePaletteItems } from "./lineage/LineageShortcuts";
 import { useTeamEnvironmentIds } from "../state/inbox";
 import { useBotsSnapshot } from "../state/bots";
+import { useCreateBot } from "./bots/useCreateBot";
 import { SPACE_TASK_STATUSES } from "@t3tools/client-runtime/spaces";
 import { useSetSpaceTaskStatus } from "./spaces/SpaceStatusMenu";
 import { SpaceTaskStatusGlyph } from "./spaces/SpaceStatusIcon";
@@ -529,6 +530,7 @@ function OpenCommandPaletteDialog(props: {
   const spaceTarget = useSpaceShortcutTarget();
   const teamMode = useTeamEnvironmentIds().length > 0;
   const botsSnapshot = useBotsSnapshot(primaryEnvironmentId);
+  const createBot = useCreateBot();
   const spaceThread = useSpaceThreadActions(
     activeThread?.environmentId ?? null,
     activeThread?.id ?? null,
@@ -1896,7 +1898,7 @@ function OpenCommandPaletteDialog(props: {
           await navigate({
             to: "/bots/$environmentId/$botId",
             params: { environmentId: primaryEnvironmentId, botId: bot.id },
-            search: { tab: "briefing" },
+            search: {},
           });
         },
       });
@@ -1908,7 +1910,7 @@ function OpenCommandPaletteDialog(props: {
       title: "New bot",
       icon: <PlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        await navigate({ to: "/bots", search: { new: 1 } });
+        await createBot(primaryEnvironmentId);
       },
     });
   }

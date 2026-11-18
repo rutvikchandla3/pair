@@ -11,7 +11,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
 import { Dialog, DialogFooter, DialogHeader, DialogPopup, DialogTitle } from "../ui/dialog";
-import { Input } from "../ui/input";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 
 const PICKER_TRIGGER = "w-full justify-between";
@@ -30,7 +29,7 @@ const MODEL_LABELS: Readonly<Record<BotModelRole, string>> = {
   reviewer: "Reviewer",
 };
 
-/** Name, charter and the three models. */
+/** The bot's three models. */
 export function BotSettingsDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly bot: Bot;
@@ -38,8 +37,6 @@ export function BotSettingsDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const update = useAtomCommand(botsEnvironment.update);
-  const [name, setName] = useState(props.bot.name);
-  const [charter, setCharter] = useState(props.bot.charter);
   const [models, setModels] = useState<BotModels>(props.bot.models);
   const [busy, setBusy] = useState(false);
   const settings = usePrimarySettings();
@@ -60,14 +57,13 @@ export function BotSettingsDialog(props: {
   };
 
   const save = async () => {
-    if (name.trim() === "") return;
     setBusy(true);
     const result = await update({
       environmentId: props.environmentId,
-      input: { botId: props.bot.id, name: name.trim(), charter, models },
+      input: { botId: props.bot.id, models },
     });
     setBusy(false);
-    toastCommandFailure("Could not save the bot", result);
+    toastCommandFailure("Could not save the models", result);
     if (result._tag === "Success") props.onOpenChange(false);
   };
 
@@ -75,21 +71,9 @@ export function BotSettingsDialog(props: {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>{props.bot.name} settings</DialogTitle>
+          <DialogTitle>{props.bot.name} models</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-3 px-6 pb-4">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-muted-foreground">Name</span>
-            <Input value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-muted-foreground">What it&apos;s for</span>
-            <Input
-              value={charter}
-              placeholder="Runs my software work end to end"
-              onChange={(event) => setCharter(event.target.value)}
-            />
-          </label>
           {(["brain", "worker", "reviewer"] as ReadonlyArray<BotModelRole>).map((role) => (
             <div key={role} className="flex flex-col gap-1">
               <span className="text-muted-foreground text-sm">{MODEL_LABELS[role]}</span>
@@ -112,7 +96,7 @@ export function BotSettingsDialog(props: {
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={busy || name.trim() === ""} onClick={() => void save()}>
+          <Button disabled={busy} onClick={() => void save()}>
             Save
           </Button>
         </DialogFooter>
