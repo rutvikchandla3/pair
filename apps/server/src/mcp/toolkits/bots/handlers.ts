@@ -368,7 +368,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           ? undefined
           : snapshot.jobs.find((candidate) => candidate.id === sourceJobId);
       const source =
-        params.source ?? (job === undefined ? "From Chat" : `From your answer on "${job.title}"`);
+        params.source ?? (job === undefined ? "From Chat" : `From your reply about ${job.title}`);
       const note = yield* mapError(
         bots.addNote(botId, {
           text: params.text,

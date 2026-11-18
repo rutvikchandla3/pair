@@ -356,7 +356,7 @@ const make = Effect.gen(function* () {
       botId: session.botId,
       reason: "session-request",
       label: `${session.title} is waiting`,
-      text: `Session "${session.title}" (thread ${event.threadId}) is waiting: ${event.payload.kind} request ${event.payload.id}: "${question}". Answer with bot_session_respond if your playbook covers it and no limit applies; otherwise raise an Ask.`,
+      text: `Session "${session.title}" (thread ${event.threadId}) is waiting: ${event.payload.kind} request ${event.payload.id}: "${question}". Answer with bot_session_respond if your playbook covers it and no limit applies; otherwise ask the user with bot_ask.`,
     });
     yield* Ref.update(pending, (entries) =>
       new Map(entries).set(key, {
