@@ -40,6 +40,8 @@ function runBootScript(options: {
   storage?: Record<string, string>;
   storageThrows?: boolean;
   prefersDark: boolean;
+  search?: string;
+  framed?: boolean;
 }): BootResult {
   const classes = new Set<string>();
   const bootVariables: Record<string, string> = {};
@@ -72,7 +74,8 @@ function runBootScript(options: {
     documentElement,
     querySelectorAll: (selector: string) => (selector === 'meta[name="theme-color"]' ? [meta] : []),
   };
-  const fakeWindow = {
+  const fakeWindow: Record<string, unknown> = {
+    location: { search: options.search ?? "" },
     localStorage: {
       getItem: (key: string): string | null => {
         if (options.storageThrows) throw new Error("storage blocked");
@@ -81,6 +84,7 @@ function runBootScript(options: {
     },
     matchMedia: () => ({ matches: options.prefersDark }),
   };
+  fakeWindow.parent = options.framed ? {} : fakeWindow;
 
   const fakeCss = {
     supports: (property: string, value: string) =>
@@ -378,5 +382,16 @@ describe("index.html boot script", () => {
 
     const dark = runBootScript({ storageThrows: true, prefersDark: true });
     expect(dark.isDark).toBe(true);
+  });
+
+  it.each([
+    { search: "?embed=1&theme=dark", framed: true, prefersDark: false, isDark: true },
+    { search: "?embed=1&theme=light", framed: true, prefersDark: true, isDark: false },
+    { search: "?embed=1", framed: true, prefersDark: true, isDark: true },
+    { search: "?embed=1&theme=dark", framed: false, prefersDark: false, isDark: false },
+  ])("lets an embedding host decide the theme: $search framed=$framed", (input) => {
+    const result = runBootScript({ ...input, storage: { [THEME_STORAGE_KEY]: "light" } });
+    expect(result.isDark).toBe(input.isDark);
+    expect(result.themeId).toBeUndefined();
   });
 });

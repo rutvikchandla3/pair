@@ -49,7 +49,7 @@ describe("usage toggle shortcut on Usage", () => {
     await using screen = await render(null, { router: "/usage" });
     using _commands = { [Symbol.dispose]: registerNavigationHistoryCommands(screen.router!) };
 
-    using back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    using back = vi.spyOn(screen.router!.history, "back").mockImplementation(() => undefined);
     await userEvent.keyboard("{Control>}u{/Control}");
 
     expect(back).toHaveBeenCalledOnce();

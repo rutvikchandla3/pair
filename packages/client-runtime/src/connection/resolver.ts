@@ -51,6 +51,7 @@ import {
 } from "./compatibility.ts";
 import { credentialConnectionId } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import { environmentSocketUrl } from "../environment/endpoint.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -81,10 +82,7 @@ function primarySocketUrl(
   clientMetadata: AuthClientPresentationMetadata | undefined,
   owners: ClientOwnerParams,
 ): string {
-  const url = new URL(target.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
+  const url = environmentSocketUrl(target.wsBaseUrl);
   appendClientConnectionParams(url, clientMetadata, "direct", owners);
   return url.toString();
 }
