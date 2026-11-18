@@ -105,6 +105,7 @@ function ask(overrides: Partial<BotAsk> = {}): BotAsk {
     answer: null,
     remember: false,
     noteId: null,
+    homeRunId: null,
     createdAt: new Date(NOW).toISOString(),
     answeredAt: null,
     ...overrides,

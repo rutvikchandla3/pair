@@ -3,6 +3,7 @@
  * threads) to do the work, answers them from your playbook, and asks you only when it must.
  * Spec: docs/product/bots.md.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -11,6 +12,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -185,6 +187,8 @@ export const BotAsk = Schema.Struct({
   /** The user asked the bot to remember this answer; `noteId` is set once it saved the note. */
   remember: Schema.Boolean,
   noteId: Schema.NullOr(BotNoteId),
+  /** The home-thread turn that asked it; the chat scrolls to that turn's last message. */
+  homeRunId: Schema.NullOr(RunId).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   createdAt: IsoDateTime,
   answeredAt: Schema.NullOr(IsoDateTime),
 });
@@ -274,10 +278,9 @@ export const BOT_QUIET_AFTER_MS = 30 * 60_000;
 /** Wakes this close together are sent to the home thread as one message. */
 export const BOT_WAKE_BATCH_MS = 3_000;
 
-// ---------- RPC inputs ----------
-
 export const BotsCreateInput = Schema.Struct({
-  name: TrimmedNonEmptyString,
+  /** Omitted by "+": the server picks Atlas, or the next free name. */
+  name: Schema.optionalKey(TrimmedNonEmptyString),
   charter: Schema.String,
   starter: BotStarter,
   models: Schema.optionalKey(BotModels),

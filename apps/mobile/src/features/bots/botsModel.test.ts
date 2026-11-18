@@ -245,6 +245,7 @@ describe("needsYouCount", () => {
       answer: null,
       remember: false,
       noteId: null,
+      homeRunId: null,
       createdAt: "2026-11-18T09:00:00.000Z",
       answeredAt: null,
       ...overrides,

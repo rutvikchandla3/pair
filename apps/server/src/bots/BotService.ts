@@ -70,6 +70,18 @@ export interface BotWake {
   readonly text: string;
 }
 
+const BOT_NAMES = ["Atlas", "Nova", "Echo", "Juno", "Orion", "Vega", "Iris", "Kai"] as const;
+
+/** "+" names new bots without asking: the first unused name, then "Atlas 2", "Atlas 3"… */
+const nextBotName = (existing: ReadonlyArray<Pick<Bot, "name">>): string => {
+  const taken = new Set(existing.map((bot) => bot.name.toLowerCase()));
+  const free = BOT_NAMES.find((name) => !taken.has(name.toLowerCase()));
+  if (free !== undefined) return free;
+  let n = 2;
+  while (taken.has(`atlas ${n}`)) n += 1;
+  return `Atlas ${n}`;
+};
+
 const BOT_COLORS = ["#4f46e5", "#0d9488", "#db2777", "#ea580c", "#2563eb", "#7c3aed"] as const;
 
 const BRAIN_MODEL: ModelSelection = {
@@ -364,6 +376,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
       answer: null,
       remember: false,
       noteId: null,
+      homeRunId: null,
       createdAt: at,
       answeredAt: null,
     };
@@ -445,7 +458,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           const bot: Bot = {
             id: yield* newBotId(random),
             ownerId: caller.memberId,
-            name: input.name,
+            name: input.name ?? nextBotName(mine),
             color: BOT_COLORS[mine.length % BOT_COLORS.length]!,
             charter: input.charter,
             instructions: input.starter === "default" ? BOT_DEFAULT_INSTRUCTIONS : "",
