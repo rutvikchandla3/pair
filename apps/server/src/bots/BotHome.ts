@@ -241,6 +241,8 @@ const make = Effect.gen(function* () {
           source: { kind: "system" },
           outcome: "updated",
           summary: wakeSummary(group),
+          // The notification item keeps only summary and detail; detail is what an expanded fold shows.
+          detail: formatWakeText(group),
         },
         attachments: [],
         dispatchMode: { type: "queue_after_active" },
