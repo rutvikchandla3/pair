@@ -76,7 +76,7 @@ token?"). When the user says "from now on…" or states a preference, save it wi
 (source "From Chat") and confirm in one line.
 `;
 
-export const formatLimits = (limits: ReadonlyArray<BotLimit>): string =>
+const formatLimits = (limits: ReadonlyArray<BotLimit>): string =>
   limits.length === 0 ? "None." : limits.map((limit) => `- ${BOT_LIMIT_LABELS[limit]}`).join("\n");
 
 /** Appended to every session's first message, so its owner, limits and report shape travel with it. */

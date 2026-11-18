@@ -60,12 +60,7 @@
         "graphql.config.ts",
       ],
       // The generated operations export every selection's class.
-      // The bots persona's limit formatter is used only by `sessionTaskFooter` in its own file;
-      // the watcher and session surfaces land alongside the persona change.
-      "ignoreIssues": {
-        "**/*.graphql.ts": ["exports", "types", "namespaceMembers"],
-        "src/bots/botPersona.ts": ["exports"],
-      },
+      "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
       // Native and disk-loaded provider packages stay external to the bundle; the
@@ -111,14 +106,6 @@
     "apps/marketing": {
       // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
       "ignoreDependencies": ["@astrojs/check"],
-    },
-    "packages/contracts": {
-      // The bots contract lands ahead of its watcher and Inbox consumers.
-      "ignoreIssues": { "src/bots.ts": ["exports"] },
-    },
-    "packages/client-runtime": {
-      // The bots atoms land ahead of the web Bot page that reads them.
-      "ignoreIssues": { "src/state/bots.ts": ["exports"] },
     },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.

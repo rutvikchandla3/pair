@@ -96,7 +96,8 @@ const WAKE_LABELS: Record<string, string> = {
   "session-finished": "Session finished",
   "session-failed": "Session failed",
   "session-stopped": "Session stopped",
-  "session-waiting": "Session is waiting",
+  "session-request": "Session is waiting",
+  "session-usage-limit": "Session hit a usage limit",
   "session-quiet": "Session is quiet",
   "session-taken-over": "You took over a session",
 };
