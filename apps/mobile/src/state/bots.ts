@@ -37,6 +37,7 @@ export function usePrimaryEnvironmentId(): EnvironmentId | null {
 /** The Bots mutations the mobile screens run, all against the screen's environment. */
 export function useBotsCommands() {
   return {
+    create: useAtomCommand(botsEnvironment.create, { reportFailure: false }),
     createJob: useAtomCommand(botsEnvironment.createJob, { reportFailure: false }),
     answerAsk: useAtomCommand(botsEnvironment.answerAsk, { reportFailure: false }),
     rememberAsk: useAtomCommand(botsEnvironment.rememberAsk, { reportFailure: false }),

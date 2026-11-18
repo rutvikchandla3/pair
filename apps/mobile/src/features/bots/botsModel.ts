@@ -1,48 +1,18 @@
-import { BOT_QUIET_AFTER_MS, type BotAsk, type BotJob, type BotSession } from "@t3tools/contracts";
+import {
+  BOT_QUIET_AFTER_MS,
+  type Bot,
+  type BotAsk,
+  type BotJob,
+  type BotSession,
+} from "@t3tools/contracts";
 
 import { relativeTime } from "../../lib/time";
 
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const ACTIVE_SESSION_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 const FAILED_SESSION_STATUSES = new Set(["failed", "rolled_back"]);
 const STOPPED_SESSION_STATUSES = new Set(["interrupted", "cancelled"]);
-
-export interface BotJobGroups {
-  readonly inProgress: ReadonlyArray<BotJob>;
-  readonly doneThisWeek: ReadonlyArray<BotJob>;
-}
-
-/** Newest job number first, so the Briefing reads J-15, J-14, J-13. */
-function byNumberDesc(a: BotJob, b: BotJob): number {
-  return b.number - a.number;
-}
-
-/** In progress, then done in the last week; stopped and older done jobs drop out. */
-export function groupJobs(jobs: ReadonlyArray<BotJob>, nowMs: number = Date.now()): BotJobGroups {
-  const inProgress: BotJob[] = [];
-  const doneThisWeek: BotJob[] = [];
-  for (const job of jobs) {
-    if (job.status === "working") inProgress.push(job);
-    else if (
-      job.status === "done" &&
-      job.finishedAt !== null &&
-      nowMs - Date.parse(job.finishedAt) <= WEEK_MS
-    ) {
-      doneThisWeek.push(job);
-    }
-  }
-  return {
-    inProgress: inProgress.sort(byNumberDesc),
-    doneThisWeek: doneThisWeek.sort(byNumberDesc),
-  };
-}
-
-/** The bot's headline, or the placeholder until its first update. */
-export function jobHeadline(job: BotJob, botName: string): string {
-  const headline = job.headline.trim();
-  return headline === "" ? `Waiting for ${botName}` : headline;
-}
 
 /** The avatar's initial: the first letter of the name, upper-cased. */
 export function botInitial(name: string): string {
@@ -77,6 +47,8 @@ export interface BotSessionState {
   readonly label: string;
   /** A state worth the warning colour: taken over, failed, paused or quiet. */
   readonly trouble: boolean;
+  /** The shell's last update, for a finished row's relative time. Null without a shell. */
+  readonly updatedAt: string | null;
 }
 
 /** Local time of day, e.g. `14:00`, for "paused until 14:00". */
@@ -87,8 +59,13 @@ export function timeOfDay(iso: string): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function sessionState(kind: BotSessionStateKind, label: string, trouble: boolean): BotSessionState {
-  return { kind, label, trouble };
+function sessionState(
+  kind: BotSessionStateKind,
+  label: string,
+  trouble: boolean,
+  updatedAt: string | null,
+): BotSessionState {
+  return { kind, label, trouble, updatedAt };
 }
 
 /** One session's state from its thread shell; taken over wins over everything. */
@@ -99,23 +76,28 @@ export function botSessionState(input: {
   readonly nowMs: number;
 }): BotSessionState {
   const { session, shell, botName, nowMs } = input;
-  if (session.takenOver) return sessionState("taken-over", "You took over", true);
-  if (shell === null) return sessionState("working", "", false);
+  if (session.takenOver) return sessionState("taken-over", "You took over", true, null);
+  if (shell === null) return sessionState("working", "", false, null);
   const resetAt = shell.usageLimitResetAt;
   if (resetAt !== null && Date.parse(resetAt) > nowMs) {
-    return sessionState("paused", `${session.title} paused until ${timeOfDay(resetAt)}`, true);
+    return sessionState(
+      "paused",
+      `${session.title} paused until ${timeOfDay(resetAt)}`,
+      true,
+      shell.updatedAt,
+    );
   }
   if (shell.hasPendingApprovals || shell.hasPendingUserInput || shell.blockedOnThreadWait) {
-    return sessionState("waiting", `Waiting on ${botName}`, false);
+    return sessionState("waiting", `Waiting on ${botName}`, false, shell.updatedAt);
   }
   if (
     shell.lastError !== null ||
     (shell.status !== null && FAILED_SESSION_STATUSES.has(shell.status))
   ) {
-    return sessionState("failed", `${session.title} failed`, true);
+    return sessionState("failed", `${session.title} failed`, true, shell.updatedAt);
   }
   if (shell.status !== null && STOPPED_SESSION_STATUSES.has(shell.status)) {
-    return sessionState("stopped", `${session.title} stopped`, true);
+    return sessionState("stopped", `${session.title} stopped`, true, shell.updatedAt);
   }
   if (shell.status === null || ACTIVE_SESSION_STATUSES.has(shell.status)) {
     const updatedAt = Date.parse(shell.updatedAt);
@@ -124,61 +106,125 @@ export function botSessionState(input: {
         "quiet",
         `${session.title} quiet ${relativeTime(shell.updatedAt, nowMs)}`,
         true,
+        shell.updatedAt,
       );
     }
-    return sessionState("working", "", false);
+    return sessionState("working", "", false, shell.updatedAt);
   }
-  return sessionState("done", "", false);
+  return sessionState("done", "", false, shell.updatedAt);
 }
 
-/** Worse states rank lower; the Briefing names the worst session when one is in trouble. */
-const SESSION_SEVERITY: Readonly<Record<BotSessionStateKind, number>> = {
-  "taken-over": 0,
-  failed: 1,
-  paused: 2,
-  quiet: 3,
-  stopped: 4,
-  waiting: 5,
-  working: 6,
-  done: 7,
-};
-
-/** The state worth showing first: taken over, failed, paused, quiet, stopped, then the rest. */
-export function worstSessionState(states: ReadonlyArray<BotSessionState>): BotSessionState | null {
-  let worst: BotSessionState | null = null;
-  for (const state of states) {
-    if (worst === null || SESSION_SEVERITY[state.kind] < SESSION_SEVERITY[worst.kind]) {
-      worst = state;
-    }
-  }
-  return worst;
-}
-
-/** "2 of 3 sessions done", or the worst session when one is in trouble; null with no sessions. */
-export function jobProgressLabel(states: ReadonlyArray<BotSessionState>): string | null {
-  if (states.length === 0) return null;
-  const worst = worstSessionState(states);
-  if (worst !== null && worst.trouble) return worst.label;
-  const done = states.filter((state) => state.kind === "done").length;
-  return `${done} of ${states.length} sessions done`;
-}
-
-/** The bot's open Asks; "Needs you" on the Briefing and in the sidebar count. */
+/** The bot's open Asks; the row's count pill and the status line read it. */
 export function needsYouCount(asks: ReadonlyArray<BotAsk>): number {
   return asks.filter((ask) => ask.status === "open").length;
 }
 
-/** The header's muted summary, e.g. "5 jobs · 3 sessions working · 2 need you". */
-export function botSummaryLine(input: {
-  readonly jobCount: number;
+export type BotStatusTone = "input" | "muted" | "paused";
+
+export interface BotStatusLine {
+  readonly text: string;
+  readonly tone: BotStatusTone;
+}
+
+/** A session the bot is working on: neither finished nor failed. */
+function isWorkingState(state: BotSessionState): boolean {
+  return state.kind !== "done" && state.kind !== "failed";
+}
+
+/** The newest session of the ask's job, else the job's title; null when the ask names neither. */
+function askSubject(
+  ask: BotAsk,
+  jobs: ReadonlyArray<BotJob>,
+  sessions: ReadonlyArray<BotSession>,
+): string | null {
+  if (ask.jobId === null) return null;
+  let newest: BotSession | null = null;
+  for (const session of sessions) {
+    if (session.jobId !== ask.jobId) continue;
+    if (newest === null || Date.parse(session.createdAt) > Date.parse(newest.createdAt)) {
+      newest = session;
+    }
+  }
+  if (newest !== null) return newest.title;
+  return jobs.find((job) => job.id === ask.jobId)?.title ?? null;
+}
+
+/** The bot row's one status line: a question that needs you, work in progress, or nothing. */
+export function botStatusLine(input: {
+  readonly bot: Pick<Bot, "paused">;
+  readonly asks: ReadonlyArray<BotAsk>;
+  readonly jobs: ReadonlyArray<BotJob>;
+  readonly sessions: ReadonlyArray<BotSession>;
   readonly sessionStates: ReadonlyArray<BotSessionState>;
-  readonly needsYou: number;
-}): string {
-  const working = input.sessionStates.filter(
-    (state) => state.kind === "working" || state.kind === "quiet",
-  ).length;
-  const parts = [`${input.jobCount} ${input.jobCount === 1 ? "job" : "jobs"}`];
-  if (working > 0) parts.push(`${working} ${working === 1 ? "session" : "sessions"} working`);
-  if (input.needsYou > 0) parts.push(`${input.needsYou} need you`);
-  return parts.join(" · ");
+}): BotStatusLine {
+  if (input.bot.paused) return { text: "Paused", tone: "paused" };
+  const open = input.asks.filter((ask) => ask.status === "open");
+  if (open.length === 1) {
+    const subject = askSubject(open[0]!, input.jobs, input.sessions);
+    return subject === null
+      ? { text: "1 question for you", tone: "input" }
+      : { text: `${subject} needs you`, tone: "input" };
+  }
+  if (open.length > 1) return { text: `${open.length} questions for you`, tone: "input" };
+  const working = input.sessionStates.filter(isWorkingState).length;
+  if (working > 0) {
+    return { text: `${working} ${working === 1 ? "session" : "sessions"} working`, tone: "muted" };
+  }
+  return { text: "Nothing running", tone: "muted" };
+}
+
+/** Needs you, then failed sessions, then the bot's running work, then the last day's finished. */
+export type BotSessionBucket = "needs-you" | "working" | "failed" | "finished";
+
+const BUCKET_RANK: Readonly<Record<BotSessionBucket, number>> = {
+  "needs-you": 0,
+  failed: 1,
+  working: 2,
+  finished: 3,
+};
+
+export interface BotSessionRow {
+  readonly session: BotSession;
+  readonly state: BotSessionState;
+  readonly bucket: BotSessionBucket;
+}
+
+function sessionBucket(
+  hasOpenAsk: boolean,
+  state: BotSessionState,
+  nowMs: number,
+): BotSessionBucket | null {
+  if (state.kind === "done") {
+    const updatedAt = state.updatedAt === null ? Number.NaN : Date.parse(state.updatedAt);
+    return Number.isFinite(updatedAt) && nowMs - updatedAt <= DAY_MS ? "finished" : null;
+  }
+  if (hasOpenAsk) return "needs-you";
+  if (state.kind === "failed") return "failed";
+  return "working";
+}
+
+/** The sessions nested under a bot, ordered, with finished rows older than a day dropped. */
+export function botSessionRows(input: {
+  readonly sessions: ReadonlyArray<BotSession>;
+  readonly states: ReadonlyArray<BotSessionState>;
+  readonly asks: ReadonlyArray<BotAsk>;
+  readonly nowMs: number;
+}): ReadonlyArray<BotSessionRow> {
+  const rows: BotSessionRow[] = [];
+  input.sessions.forEach((session, index) => {
+    const state = input.states[index];
+    if (state === undefined) return;
+    const hasOpenAsk = input.asks.some(
+      (ask) => ask.status === "open" && ask.jobId === session.jobId,
+    );
+    const bucket = sessionBucket(hasOpenAsk, state, input.nowMs);
+    if (bucket === null) return;
+    rows.push({ session, state, bucket });
+  });
+  return rows.sort((left, right) => {
+    const rank = BUCKET_RANK[left.bucket] - BUCKET_RANK[right.bucket];
+    if (rank !== 0) return rank;
+    if (left.bucket !== "finished") return 0;
+    return (right.state.updatedAt ?? "").localeCompare(left.state.updatedAt ?? "");
+  });
 }
