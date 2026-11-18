@@ -3159,8 +3159,28 @@ export const layerWsRpc = (
         [WS_METHODS.botsPause]: (input) => bots.pause({ memberId: currentSession.memberId }, input),
         [WS_METHODS.botsResume]: (input) =>
           bots.resume({ memberId: currentSession.memberId }, input),
-        [WS_METHODS.botsDelete]: (input) =>
-          bots.delete({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsDelete]: Effect.fn("ws.botsDelete")(function* (input) {
+          const bot = Option.getOrNull(yield* bots.getBot(input.botId));
+          const result = yield* bots.delete({ memberId: currentSession.memberId }, input);
+          // The home project and its home thread exist only for the bot; remove them with it.
+          if (bot?.homeProjectId) {
+            yield* projectService
+              .delete({
+                commandId: yield* serverCommandId("bot-delete"),
+                projectId: bot.homeProjectId,
+                force: true,
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("bots.delete: could not remove the home project", {
+                    botId: input.botId,
+                    cause,
+                  }),
+                ),
+              );
+          }
+          return result;
+        }),
         [WS_METHODS.botsMarkSeen]: (input) =>
           bots.markSeen({ memberId: currentSession.memberId }, input),
         [WS_METHODS.botsCreateJob]: (input) =>

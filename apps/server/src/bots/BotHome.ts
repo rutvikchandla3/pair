@@ -82,6 +82,33 @@ export const windowClosed = (
   wakes: state.batch ?? [],
 });
 
+const WAKE_LABELS: Record<string, string> = {
+  created: "Bot created",
+  "job-started": "New job",
+  "job-stopped": "Job stopped",
+  "job-reopened": "Job reopened",
+  "ask-answered": "You answered",
+  "ask-remember": "Remember this",
+  "decision-corrected": "You corrected a decision",
+  "playbook-changed": "Playbook changed",
+  resumed: "Resumed",
+  "session-handed-back": "Session handed back",
+  "session-finished": "Session finished",
+  "session-failed": "Session failed",
+  "session-stopped": "Session stopped",
+  "session-waiting": "Session is waiting",
+  "session-quiet": "Session is quiet",
+  "session-taken-over": "You took over a session",
+};
+
+/** The short label the home thread shows above a wake message. */
+export const wakeSummary = (wakes: ReadonlyArray<BotWake>): string => {
+  const first = wakes[0];
+  if (first === undefined) return "Pair update";
+  if (wakes.length > 1) return `${wakes.length} updates from Pair`;
+  return WAKE_LABELS[first.reason] ?? "Pair update";
+};
+
 /** The one line, or list, the home thread hears. */
 export const formatWakeText = (wakes: ReadonlyArray<BotWake>): string => {
   const first = wakes[0];
@@ -209,7 +236,7 @@ const make = Effect.gen(function* () {
         notification: {
           source: { kind: "system" },
           outcome: "updated",
-          summary: wakes[0]?.reason ?? "Bot wake",
+          summary: wakeSummary(wakes),
         },
         attachments: [],
         dispatchMode: { type: "queue_after_active" },

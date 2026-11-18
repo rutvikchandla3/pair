@@ -2,7 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { type BotId, BotId as BotIdValue } from "@t3tools/contracts";
 
 import type { BotWake } from "./BotService.ts";
-import { formatWakeText, initialWakeState, wakeArrived, windowClosed } from "./BotHome.ts";
+import {
+  formatWakeText,
+  initialWakeState,
+  wakeArrived,
+  wakeSummary,
+  windowClosed,
+} from "./BotHome.ts";
 
 const botId = BotIdValue.make("bot:atlas") as BotId;
 const wake = (text: string): BotWake => ({ botId, reason: "test", text });
@@ -16,6 +22,14 @@ describe("formatWakeText", () => {
     expect(formatWakeText([wake("Session finished"), wake("Ask answered")])).toBe(
       "[Pair] 2 updates:\n- Session finished\n- Ask answered",
     );
+  });
+});
+
+describe("wakeSummary", () => {
+  it("labels one wake by its reason and several by count", () => {
+    expect(wakeSummary([{ botId, reason: "job-started", text: "J-1" }])).toBe("New job");
+    expect(wakeSummary([wake("one")])).toBe("Pair update");
+    expect(wakeSummary([wake("one"), wake("two")])).toBe("2 updates from Pair");
   });
 });
 

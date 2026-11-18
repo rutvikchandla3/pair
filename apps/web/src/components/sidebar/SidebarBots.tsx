@@ -56,7 +56,7 @@ export function SidebarBots() {
       {snapshot.bots.length === 0 ? (
         <button
           type="button"
-          className={cn(rowClass, "text-sidebar-muted-foreground")}
+          className={cn(rowClass, "w-full text-left text-sidebar-muted-foreground")}
           onClick={() => void navigate({ to: "/bots" })}
         >
           <PlusIcon className="size-3.5 shrink-0" />
