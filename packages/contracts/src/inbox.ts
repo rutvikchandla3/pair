@@ -10,6 +10,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { BotAskId, BotId, BotJobId } from "./bots.ts";
 import { SpaceId, SpaceTask, SpaceTaskId, SpaceTaskStatus } from "./space.ts";
 
 export const INBOX_PAGE_LIMIT = 100;
@@ -30,6 +31,10 @@ export const InboxItemReason = Schema.Literals([
   "pair-reply",
   "shared-with-you",
   "added-to-space",
+  /** A bot's question to you. */
+  "bot-ask",
+  /** A bot finished or stopped a job. */
+  "bot-job-done",
 ]);
 export type InboxItemReason = typeof InboxItemReason.Type;
 
@@ -39,6 +44,7 @@ export const INBOX_NEEDS_YOU_REASONS: ReadonlySet<InboxItemReason> = new Set([
   "task-assigned",
   "task-handed-back",
   "offer",
+  "bot-ask",
 ]);
 
 /** Flat and optional, so a reason a client doesn't know is dropped from its list, not an error. */
@@ -63,6 +69,17 @@ export const InboxItem = Schema.Struct({
   requestId: Schema.optionalKey(RuntimeRequestId),
   offerId: Schema.optionalKey(TrimmedNonEmptyString),
   snoozedUntil: Schema.optionalKey(IsoDateTime),
+  /**
+   * Bot items, and requests from a bot's sessions that it hasn't answered for 10 minutes (or
+   * while it's paused) carry the bot and job so rows can show the bot's avatar.
+   */
+  botId: Schema.optionalKey(BotId),
+  botName: Schema.optionalKey(Schema.String),
+  botColor: Schema.optionalKey(Schema.String),
+  askId: Schema.optionalKey(BotAskId),
+  jobId: Schema.optionalKey(BotJobId),
+  jobNumber: Schema.optionalKey(PositiveInt),
+  jobTitle: Schema.optionalKey(Schema.String),
 });
 export type InboxItem = typeof InboxItem.Type;
 

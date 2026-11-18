@@ -6,6 +6,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   AlarmClockIcon,
   AtSignIcon,
+  CircleCheckIcon,
   GitCompareArrowsIcon,
   InboxIcon,
   InfinityIcon,
@@ -375,6 +376,8 @@ const REASON_ICONS: Readonly<Record<InboxItemReason, typeof InboxIcon>> = {
   "pair-reply": InfinityIcon,
   "shared-with-you": Share2Icon,
   "added-to-space": UsersRoundIcon,
+  "bot-ask": MessageCircleQuestionIcon,
+  "bot-job-done": CircleCheckIcon,
 };
 
 const rowId = (item: InboxItem) => `inbox-item-${item.id}`;

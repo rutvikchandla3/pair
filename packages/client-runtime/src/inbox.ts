@@ -54,6 +54,12 @@ function inboxTitle(item: InboxItem, viewer: SpaceViewer): string {
       return `${who(item.actorId, viewer)} shared ${item.threadTitle ?? "a thread"}`;
     case "added-to-space":
       return `${who(item.actorId, viewer)} added you to ${item.spaceName ?? "a space"}`;
+    case "bot-ask":
+      return `${item.botName ?? "Your bot"} asks: ${item.excerpt ?? "a question"}`;
+    case "bot-job-done":
+      return `${item.botName ?? "Your bot"} finished ${
+        item.jobNumber === undefined ? "a job" : `J-${item.jobNumber}`
+      }${item.jobTitle === undefined ? "" : ` · ${item.jobTitle}`}`;
   }
 }
 

@@ -60,6 +60,9 @@ export function inboxItemTarget(item: InboxItem): InboxItemTarget | null {
         : item.threadId === undefined
           ? null
           : { type: "thread", threadId: item.threadId };
+    case "bot-ask":
+    case "bot-job-done":
+      return null;
   }
 }
 
@@ -93,6 +96,8 @@ export const INBOX_REASON_SYMBOL: Readonly<Record<InboxItemReason, AppSymbolName
   "pair-reply": "bubble.left",
   "shared-with-you": "square.and.arrow.up",
   "added-to-space": "person.2",
+  "bot-ask": "questionmark.bubble",
+  "bot-job-done": "checkmark.circle",
 };
 
 export type SharedWithYouRow =
