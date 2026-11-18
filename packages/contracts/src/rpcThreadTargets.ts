@@ -187,6 +187,8 @@ export const RPC_THREAD_TARGETS: {
   [WS_METHODS.threadMoveToOwnMachine]: thread,
   [WS_METHODS.threadBranchOffSummary]: (input) => [{ threadId: input.sourceThreadId }],
   [WS_METHODS.threadStartFromMain]: thread,
+  // The session thread belongs to the caller's bot; they may always open their own sessions.
+  [WS_METHODS.botsHandBackSession]: thread,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) => [
     ...(input.threadId === undefined
       ? []
@@ -331,6 +333,14 @@ export const RPC_OUTPUT_EXEMPT: { readonly [M in WsMethod]?: string } = {
   [WS_METHODS.spacesAction]:
     "The caller's own action, in a room they are a member of; it names only that space's tasks, which members open.",
   [WS_METHODS.spacesNotes]: "Notes cite posts in a room the caller is a member of, or its tasks.",
+  // Bots are single-user: the snapshot and each Bot carry only the caller's own bots.
+  [WS_METHODS.botsSubscribe]: "bots/BotService.ts snapshot: only the caller's own bots.",
+  [WS_METHODS.botsCreate]: "The caller's own bot, which only they can see.",
+  [WS_METHODS.botsUpdate]: "The caller's own bot, which only they can see.",
+  [WS_METHODS.botsPause]: "The caller's own bot, which only they can see.",
+  [WS_METHODS.botsResume]: "The caller's own bot, which only they can see.",
+  [WS_METHODS.botsCorrectDecision]:
+    "bots/BotService.ts: the decision event of the caller's own bot; its session thread is theirs.",
   [WS_METHODS.serverListAcpRegistrySessions]: refusedOnCloudOnly,
   [WS_METHODS.serverImportAcpRegistrySession]: refusedOnCloudOnly,
   [WS_METHODS.agentSessionsScan]: refusedOnCloudOnly,

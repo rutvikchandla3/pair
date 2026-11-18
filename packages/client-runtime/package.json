@@ -335,6 +335,10 @@
       "types": "./src/state/inbox.ts",
       "default": "./src/state/inbox.ts"
     },
+    "./state/bots": {
+      "types": "./src/state/bots.ts",
+      "default": "./src/state/bots.ts"
+    },
     "./state/branch-lineage": {
       "types": "./src/state/branchLineage.ts",
       "default": "./src/state/branchLineage.ts"

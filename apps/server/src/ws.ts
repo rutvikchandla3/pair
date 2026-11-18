@@ -9,6 +9,7 @@ import * as SpaceService from "./space/SpaceService.ts";
 import * as BranchOffService from "./lineage/BranchOffService.ts";
 import * as BranchLineageService from "./lineage/BranchLineageService.ts";
 import * as InboxService from "./inbox/InboxService.ts";
+import * as BotService from "./bots/BotService.ts";
 import * as TeamClaudeKey from "./team/TeamClaudeKey.ts";
 
 import * as DateTime from "effect/DateTime";
@@ -1711,6 +1712,7 @@ export const layerWsRpc = (
       const cloudMoves = yield* CloudMoves.CloudMoves;
       const spaces = yield* SpaceService.SpaceService;
       const inbox = yield* InboxService.InboxService;
+      const bots = yield* BotService.BotService;
       const branchOffService = yield* BranchOffService.BranchOffService;
       const branchLineage = yield* BranchLineageService.BranchLineageService;
       const teamClaudeKey = yield* TeamClaudeKey.TeamClaudeKey;
@@ -3149,6 +3151,36 @@ export const layerWsRpc = (
         [WS_METHODS.inboxDismiss]: (input) => inbox.dismiss(spaceCaller, input),
         [WS_METHODS.inboxSnooze]: (input) => inbox.snooze(spaceCaller, input),
         [WS_METHODS.inboxUnsnooze]: (input) => inbox.unsnooze(spaceCaller, input),
+        [WS_METHODS.botsSubscribe]: () => bots.subscribe({ memberId: currentSession.memberId }),
+        [WS_METHODS.botsCreate]: (input) =>
+          bots.create({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsUpdate]: (input) =>
+          bots.update({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsPause]: (input) => bots.pause({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsResume]: (input) =>
+          bots.resume({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsDelete]: (input) =>
+          bots.delete({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsMarkSeen]: (input) =>
+          bots.markSeen({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsCreateJob]: (input) =>
+          bots.createJob({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsStopJob]: (input) =>
+          bots.stopJob({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsReopenJob]: (input) =>
+          bots.reopenJob({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsAnswerAsk]: (input) =>
+          bots.answerAsk({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsRememberAsk]: (input) =>
+          bots.rememberAsk({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsCorrectDecision]: (input) =>
+          bots.correctDecision({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsHandBackSession]: (input) =>
+          bots.handBackSession({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsUpdateNote]: (input) =>
+          bots.updateNote({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsDeleteNote]: (input) =>
+          bots.deleteNote({ memberId: currentSession.memberId }, input),
         [WS_METHODS.sharedWithYouList]: (input) => inbox.sharedWithYou(spaceCaller, input),
         [WS_METHODS.myTasksListClosed]: () => inbox.closedTasks(spaceCaller),
         [WS_METHODS.lineageRead]: (input) => branchLineage.read(spaceCaller, input),
@@ -4135,6 +4167,7 @@ export const layer = Layer.unwrap(
     const cloudMoves = yield* CloudMoves.CloudMoves;
     const spaces = yield* SpaceService.SpaceService;
     const inbox = yield* InboxService.InboxService;
+    const bots = yield* BotService.BotService;
     const branchOff = yield* BranchOffService.BranchOffService;
     const branchLineage = yield* BranchLineageService.BranchLineageService;
     const projections = yield* ProjectionStoreV2;
@@ -4251,6 +4284,7 @@ export const layer = Layer.unwrap(
                 Layer.mergeAll(
                   Layer.succeed(SpaceService.SpaceService, spaces),
                   Layer.succeed(InboxService.InboxService, inbox),
+                  Layer.succeed(BotService.BotService, bots),
                   Layer.succeed(BranchOffService.BranchOffService, branchOff),
                   Layer.succeed(BranchLineageService.BranchLineageService, branchLineage),
                 ),

@@ -105,6 +105,27 @@ import {
 } from "./inbox.ts";
 import { TeamClaudeKeyError, TeamClaudeKeySetInput, TeamClaudeKeyStatus } from "./teamClaudeKey.ts";
 import {
+  Bot,
+  BotAsk,
+  BotEvent,
+  BotJob,
+  BotNote,
+  BotsAnswerAskInput,
+  BotsAskInput,
+  BotsBotInput,
+  BotsCorrectDecisionInput,
+  BotsCreateInput,
+  BotsCreateJobInput,
+  BotsError,
+  BotsJobInput,
+  BotsNoteInput,
+  BotsSessionInput,
+  BotsSnapshot,
+  BotsUpdateInput,
+  BotsUpdateNoteInput,
+  BotSession,
+} from "./bots.ts";
+import {
   BRANCH_LINEAGE_WS_METHODS,
   BranchLineageError,
   LineageReadInput,
@@ -663,6 +684,22 @@ export const WS_METHODS = {
   inboxDismiss: "inbox.dismiss",
   inboxSnooze: "inbox.snooze",
   inboxUnsnooze: "inbox.unsnooze",
+  botsSubscribe: "bots.subscribe",
+  botsCreate: "bots.create",
+  botsUpdate: "bots.update",
+  botsPause: "bots.pause",
+  botsResume: "bots.resume",
+  botsDelete: "bots.delete",
+  botsMarkSeen: "bots.markSeen",
+  botsCreateJob: "bots.createJob",
+  botsStopJob: "bots.stopJob",
+  botsReopenJob: "bots.reopenJob",
+  botsAnswerAsk: "bots.answerAsk",
+  botsRememberAsk: "bots.rememberAsk",
+  botsCorrectDecision: "bots.correctDecision",
+  botsHandBackSession: "bots.handBackSession",
+  botsUpdateNote: "bots.updateNote",
+  botsDeleteNote: "bots.deleteNote",
   sharedWithYouList: "sharedWithYou.list",
   myTasksListClosed: "myTasks.listClosed",
   serverUpdateSettings: "server.updateSettings",
@@ -1134,6 +1171,105 @@ const WsInboxUnsnoozeRpc = Rpc.make(WS_METHODS.inboxUnsnooze, {
   payload: InboxItemInput,
   success: Schema.Struct({}),
   error: inboxRpcError,
+});
+
+const botsRpcError = Schema.Union([BotsError, EnvironmentAuthorizationError]);
+
+/** The caller's bots and everything under them, then each change. */
+const WsBotsSubscribeRpc = Rpc.make(WS_METHODS.botsSubscribe, {
+  success: BotsSnapshot,
+  error: botsRpcError,
+  stream: true,
+});
+
+const WsBotsCreateRpc = Rpc.make(WS_METHODS.botsCreate, {
+  payload: BotsCreateInput,
+  success: Bot,
+  error: botsRpcError,
+});
+
+const WsBotsUpdateRpc = Rpc.make(WS_METHODS.botsUpdate, {
+  payload: BotsUpdateInput,
+  success: Bot,
+  error: botsRpcError,
+});
+
+const WsBotsPauseRpc = Rpc.make(WS_METHODS.botsPause, {
+  payload: BotsBotInput,
+  success: Bot,
+  error: botsRpcError,
+});
+
+const WsBotsResumeRpc = Rpc.make(WS_METHODS.botsResume, {
+  payload: BotsBotInput,
+  success: Bot,
+  error: botsRpcError,
+});
+
+const WsBotsDeleteRpc = Rpc.make(WS_METHODS.botsDelete, {
+  payload: BotsBotInput,
+  success: Schema.Struct({}),
+  error: botsRpcError,
+});
+
+const WsBotsMarkSeenRpc = Rpc.make(WS_METHODS.botsMarkSeen, {
+  payload: BotsBotInput,
+  success: Schema.Struct({}),
+  error: botsRpcError,
+});
+
+const WsBotsCreateJobRpc = Rpc.make(WS_METHODS.botsCreateJob, {
+  payload: BotsCreateJobInput,
+  success: BotJob,
+  error: botsRpcError,
+});
+
+const WsBotsStopJobRpc = Rpc.make(WS_METHODS.botsStopJob, {
+  payload: BotsJobInput,
+  success: BotJob,
+  error: botsRpcError,
+});
+
+const WsBotsReopenJobRpc = Rpc.make(WS_METHODS.botsReopenJob, {
+  payload: BotsJobInput,
+  success: BotJob,
+  error: botsRpcError,
+});
+
+const WsBotsAnswerAskRpc = Rpc.make(WS_METHODS.botsAnswerAsk, {
+  payload: BotsAnswerAskInput,
+  success: BotAsk,
+  error: botsRpcError,
+});
+
+const WsBotsRememberAskRpc = Rpc.make(WS_METHODS.botsRememberAsk, {
+  payload: BotsAskInput,
+  success: BotAsk,
+  error: botsRpcError,
+});
+
+const WsBotsCorrectDecisionRpc = Rpc.make(WS_METHODS.botsCorrectDecision, {
+  payload: BotsCorrectDecisionInput,
+  success: BotEvent,
+  error: botsRpcError,
+});
+
+const WsBotsHandBackSessionRpc = Rpc.make(WS_METHODS.botsHandBackSession, {
+  payload: BotsSessionInput,
+  success: BotSession,
+  error: botsRpcError,
+});
+
+const WsBotsUpdateNoteRpc = Rpc.make(WS_METHODS.botsUpdateNote, {
+  payload: BotsUpdateNoteInput,
+  success: BotNote,
+  error: botsRpcError,
+});
+
+const WsBotsDeleteNoteRpc = Rpc.make(WS_METHODS.botsDeleteNote, {
+  payload: BotsNoteInput,
+  success: Schema.Struct({}),
+  error: botsRpcError,
 });
 
 /** Threads others shared with the caller, by name or with the whole team. */
@@ -2800,6 +2936,22 @@ export const WsRpcGroup = RpcGroup.make(
   WsInboxDismissRpc,
   WsInboxSnoozeRpc,
   WsInboxUnsnoozeRpc,
+  WsBotsSubscribeRpc,
+  WsBotsCreateRpc,
+  WsBotsUpdateRpc,
+  WsBotsPauseRpc,
+  WsBotsResumeRpc,
+  WsBotsDeleteRpc,
+  WsBotsMarkSeenRpc,
+  WsBotsCreateJobRpc,
+  WsBotsStopJobRpc,
+  WsBotsReopenJobRpc,
+  WsBotsAnswerAskRpc,
+  WsBotsRememberAskRpc,
+  WsBotsCorrectDecisionRpc,
+  WsBotsHandBackSessionRpc,
+  WsBotsUpdateNoteRpc,
+  WsBotsDeleteNoteRpc,
   WsSharedWithYouListRpc,
   WsMyTasksListClosedRpc,
   WsServerDiscoverSourceControlRpc,

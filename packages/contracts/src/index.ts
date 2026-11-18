@@ -49,6 +49,7 @@ export * from "./space.ts";
 export * from "./spaceRpc.ts";
 export * from "./spaceAgent.ts";
 export * from "./inbox.ts";
+export * from "./bots.ts";
 export * from "./teamClaudeKey.ts";
 export * from "./cloudMove.ts";
 export * from "./guestShare.ts";

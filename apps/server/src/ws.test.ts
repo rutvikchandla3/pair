@@ -53,6 +53,7 @@ import * as CloudOnly from "./environment/CloudOnly.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as SpaceService from "./space/SpaceService.ts";
 import * as InboxService from "./inbox/InboxService.ts";
+import * as BotService from "./bots/BotService.ts";
 import * as BranchLineageService from "./lineage/BranchLineageService.ts";
 import * as BranchOffService from "./lineage/BranchOffService.ts";
 import * as TeamClaudeKey from "./team/TeamClaudeKey.ts";
@@ -1129,6 +1130,7 @@ it.effect.each([
           Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
           Layer.mock(SpaceService.SpaceService)({}),
           Layer.mock(InboxService.InboxService)({}),
+          Layer.mock(BotService.BotService)({}),
           Layer.mock(BranchLineageService.BranchLineageService)({}),
           Layer.mock(BranchOffService.BranchOffService)({}),
           Layer.mock(TeamClaudeKey.TeamClaudeKey)({}),
@@ -1254,6 +1256,7 @@ const layerConfigRpcTest = Layer.mergeAll(
   Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
   Layer.mock(SpaceService.SpaceService)({}),
   Layer.mock(InboxService.InboxService)({}),
+  Layer.mock(BotService.BotService)({}),
   Layer.mock(BranchLineageService.BranchLineageService)({}),
   Layer.mock(BranchOffService.BranchOffService)({}),
   Layer.mock(TeamClaudeKey.TeamClaudeKey)({}),
@@ -1660,6 +1663,7 @@ const callCloudOnly = <R extends Rpc.Any>(
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(SpaceService.SpaceService)({}),
         Layer.mock(InboxService.InboxService)({}),
+        Layer.mock(BotService.BotService)({}),
         Layer.mock(BranchLineageService.BranchLineageService)({}),
         Layer.mock(BranchOffService.BranchOffService)({}),
         Layer.mock(TeamClaudeKey.TeamClaudeKey)({}),
