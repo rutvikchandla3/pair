@@ -28,12 +28,12 @@ export function BotNotifications() {
     null,
   );
 
-  const openBot = (botId: string, jobId?: string) => {
+  const openBot = (botId: string) => {
     if (environmentId === null) return;
     void navigate({
       to: "/bots/$environmentId/$botId",
       params: { environmentId, botId },
-      search: { tab: "briefing", ...(jobId === undefined ? {} : { job: jobId }) },
+      search: {},
     });
   };
 
@@ -100,9 +100,9 @@ export function BotNotifications() {
       const name = bot?.name ?? "Your bot";
       notify(
         `bot-job:${job.id}`,
-        `${name} ${job.status === "stopped" ? "stopped" : "finished"} J-${job.number} · ${job.title}`,
+        `${name} ${job.status === "stopped" ? "stopped" : "finished"} ${job.title}`,
         job.headline,
-        () => openBot(job.botId, job.id),
+        () => openBot(job.botId),
       );
     }
   });

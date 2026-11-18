@@ -1,9 +1,19 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { BotAskId, EnvironmentId, RunId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { MoreHorizontalIcon, PauseIcon, SettingsIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  ChevronRightIcon,
+  CpuIcon,
+  MessageCircleQuestionIcon,
+  MoreHorizontalIcon,
+  PauseIcon,
+  PencilIcon,
+  PlayIcon,
+  SparklesIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { useState } from "react";
 
-import { cn } from "~/lib/utils";
+import type { BotChatOptions } from "../chat/botChat";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { useQuietThreadShells } from "../../state/entities";
 import { botsEnvironment, useBotsNow, useBotsSnapshot } from "../../state/bots";
@@ -23,62 +33,24 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { Toggle } from "../ui/toggle";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { BotAvatar } from "./BotAvatar";
-import { BotBriefing } from "./BotBriefing";
-import { BotJobPanel } from "./BotJobPanel";
-import { BotPlaybook } from "./BotPlaybook";
+import { BotMemoryPanel } from "./BotMemoryPanel";
+import { BotRenameDialog } from "./BotRenameDialog";
 import { BotSettingsDialog } from "./BotSettingsDialog";
-import { botSummary, botSessions, sessionState, type ShellLookup } from "./bots.logic";
-
-export type BotTab = "briefing" | "chat" | "playbook";
-
-const TABS: ReadonlyArray<{ readonly value: BotTab; readonly label: string }> = [
-  { value: "briefing", label: "Briefing" },
-  { value: "chat", label: "Chat" },
-  { value: "playbook", label: "Playbook" },
-];
+import { botSessions, botStatusLine, sessionState, type ShellLookup } from "./bots.logic";
 
 const EMBEDDED_PANEL: SideChatParentPanel = {
   openToolDiff: () => {},
   runShellCommand: () => {},
 };
 
-function TabSegmented(props: {
-  readonly tab: BotTab;
-  readonly onChange: (tab: BotTab) => void;
-  readonly playbook: boolean;
-}) {
-  return (
-    <div className="inline-flex items-center rounded-lg bg-muted p-0.5">
-      {TABS.filter((entry) => props.playbook || entry.value !== "playbook").map((entry) => (
-        <button
-          key={entry.value}
-          type="button"
-          className={cn(
-            "rounded-md px-2.5 py-1 text-sm",
-            entry.value === props.tab
-              ? "bg-background font-medium text-foreground shadow-xs"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-          onClick={() => props.onChange(entry.value)}
-        >
-          {entry.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** A bot's page: header, tabs, and the tab bodies; the job panel overlays the Briefing. */
+/** A bot's page: header, the home thread's ChatView, and the Memory panel. */
 export function BotPage(props: {
   readonly environmentId: EnvironmentId;
   readonly botId: string;
-  readonly tab: BotTab;
-  readonly jobId: string | null;
-  readonly onTabChange: (tab: BotTab) => void;
-  readonly onOpenJob: (jobId: string) => void;
-  readonly onCloseJob: () => void;
+  readonly askId: BotAskId | null;
 }) {
   const snapshot = useBotsSnapshot(props.environmentId);
   const navigate = useNavigate();
@@ -88,35 +60,19 @@ export function BotPage(props: {
       .filter((shell) => shell.environmentId === props.environmentId)
       .map((shell) => [shell.id, shell] as const),
   );
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [composerText, setComposerText] = useState("");
-  const [visitMark, setVisitMark] = useState<{
-    readonly botId: string;
-    readonly lastSeenAt: string | null;
+  const [focusState, setFocusState] = useState<{
+    readonly runId: RunId;
+    readonly nonce: number;
+    readonly askId: string | null;
   } | null>(null);
-  const bot = snapshot?.bots.find((candidate) => candidate.id === props.botId) ?? null;
-  // Capture the visit mark once, before markSeen moves it, so the Briefing's counts hold still.
-  if (bot !== null && visitMark?.botId !== bot.id) {
-    setVisitMark({ botId: bot.id, lastSeenAt: bot.lastSeenAt });
-  }
   const now = useBotsNow();
   const pause = useAtomCommand(botsEnvironment.pause);
   const resume = useAtomCommand(botsEnvironment.resume);
   const remove = useAtomCommand(botsEnvironment.remove);
-  const markSeen = useAtomCommand(botsEnvironment.markSeen, { reportFailure: false });
-  const seen = useRef(false);
-
-  // Mark seen once per visit, after the first render.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one bots.markSeen call per page visit
-  useEffect(() => {
-    if (bot === null || seen.current) return;
-    seen.current = true;
-    void markSeen({
-      environmentId: props.environmentId,
-      input: { botId: bot.id },
-    });
-  }, [bot, markSeen, props.environmentId]);
 
   if (snapshot === null) {
     return (
@@ -125,6 +81,7 @@ export function BotPage(props: {
       </div>
     );
   }
+  const bot = snapshot.bots.find((candidate) => candidate.id === props.botId) ?? null;
   if (bot === null) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2">
@@ -136,15 +93,37 @@ export function BotPage(props: {
     );
   }
 
-  const lastSeenAt = visitMark?.botId === bot.id ? visitMark.lastSeenAt : bot.lastSeenAt;
-  const summary = botSummary(snapshot, bot.id, shellMap, now);
+  // The URL's ask scrolls the chat once it resolves; a new ask id scrolls again. The button
+  // below uses the same counter, and the render-phase adjustment keeps one nonce per source.
+  const routeAsk =
+    props.askId === null
+      ? null
+      : (snapshot.asks.find((candidate) => candidate.id === props.askId) ?? null);
+  if (routeAsk !== null && routeAsk.homeRunId !== null && focusState?.askId !== routeAsk.id) {
+    setFocusState({
+      runId: routeAsk.homeRunId,
+      nonce: (focusState?.nonce ?? 0) + 1,
+      askId: routeAsk.id,
+    });
+  }
+  const focus: BotChatOptions["focus"] =
+    focusState === null ? null : { runId: focusState.runId, nonce: focusState.nonce };
+
+  const status = botStatusLine(snapshot, bot, shellMap, now);
   const sessions = botSessions(snapshot, bot.id);
   const runningSessions = sessions.filter((session) => {
     const state = sessionState(session, shellMap.get(session.threadId) ?? null, now);
     return state.kind === "working" || state.kind === "quiet";
   }).length;
-  const job =
-    props.jobId === null ? null : (snapshot.jobs.find((entry) => entry.id === props.jobId) ?? null);
+
+  const focusAsk = (runId: RunId | null) => {
+    if (runId === null) return;
+    setFocusState((current) => ({
+      runId,
+      nonce: (current?.nonce ?? 0) + 1,
+      askId: current?.askId ?? null,
+    }));
+  };
 
   const togglePause = async () => {
     if (bot.paused) {
@@ -165,143 +144,122 @@ export function BotPage(props: {
     }
   };
 
-  const playbook = props.tab === "playbook";
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-border p-3">
-        <div className="flex items-center gap-3">
-          <BotAvatar bot={bot} size="lg" />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-baseline gap-2">
-              <h1 className="font-medium text-base">{bot.name}</h1>
-              {bot.charter.trim() === "" ? null : (
-                <span className="min-w-0 truncate text-muted-foreground text-sm">
-                  {bot.charter}
-                </span>
-              )}
-            </div>
-            <div className="truncate text-muted-foreground text-xs">{summary.label}</div>
-          </div>
-          <TabSegmented tab={props.tab} onChange={props.onTabChange} playbook={true} />
-          <Menu>
-            <MenuTrigger render={<Button size="icon-sm" variant="ghost" aria-label="Bot menu" />}>
-              <MoreHorizontalIcon />
-            </MenuTrigger>
-            <MenuPopup align="end">
-              <MenuItem onClick={() => void togglePause()}>
-                <PauseIcon />
-                {bot.paused ? `Resume ${bot.name}` : `Pause ${bot.name}`}
-              </MenuItem>
-              <MenuItem onClick={() => setSettingsOpen(true)}>
-                <SettingsIcon />
-                Settings
-              </MenuItem>
-              <MenuSeparator />
-              <MenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
-                <Trash2Icon />
-                Delete bot…
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
-        </div>
-        {bot.paused ? (
-          <div className="mt-2 flex items-center gap-2 rounded-md border border-border px-2.5 py-2">
-            <PauseIcon className="size-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <p className="font-medium text-sm">{bot.name} is paused</p>
-              <p className="text-muted-foreground text-xs">
-                Its sessions keep running; their questions come to you.
-              </p>
-            </div>
-            <Button size="sm" onClick={() => void togglePause()}>
-              Resume
-            </Button>
-          </div>
-        ) : null}
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-border p-3">
+        <BotAvatar bot={bot} size="lg" />
+        <h1 className="font-medium text-base">{bot.name}</h1>
+        {status.kind === "needs" ? (
+          <button
+            type="button"
+            onClick={() => focusAsk(status.focusRunId)}
+            className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-input-foreground text-xs whitespace-nowrap hover:bg-accent"
+          >
+            <MessageCircleQuestionIcon className="size-3" />
+            {status.label}
+            <ChevronRightIcon className="size-3" />
+          </button>
+        ) : (
+          <span className="truncate text-muted-foreground text-xs whitespace-nowrap">
+            {status.label}
+          </span>
+        )}
+        <span className="flex-1" />
+        <Toggle
+          variant="ghost"
+          size="sm"
+          pressed={memoryOpen}
+          onPressedChange={setMemoryOpen}
+          aria-label="Memory"
+        >
+          <SparklesIcon />
+          Memory
+        </Toggle>
+        <Menu>
+          <MenuTrigger render={<Button size="icon-sm" variant="ghost" aria-label="Bot menu" />}>
+            <MoreHorizontalIcon />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem onClick={() => void togglePause()}>
+              {bot.paused ? <PlayIcon /> : <PauseIcon />}
+              {bot.paused ? `Resume ${bot.name}` : `Pause ${bot.name}`}
+            </MenuItem>
+            <MenuItem onClick={() => setSettingsOpen(true)}>
+              <CpuIcon />
+              Models…
+            </MenuItem>
+            <MenuItem onClick={() => setRenameOpen(true)}>
+              <PencilIcon />
+              Rename…
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
+              <Trash2Icon />
+              Delete bot…
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       </div>
 
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
-          {props.tab === "briefing" ? (
-            <BotBriefing
-              environmentId={props.environmentId}
-              bot={bot}
-              snapshot={snapshot}
-              shells={shellMap}
-              lastSeenAt={lastSeenAt}
-              now={now}
-              composerText={composerText}
-              onComposerTextChange={setComposerText}
-              onOpenJob={props.onOpenJob}
-              onOpenSession={(threadId) =>
-                void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: { environmentId: props.environmentId, threadId },
-                })
-              }
-              onResume={() => void togglePause()}
-            />
+          {bot.paused ? (
+            <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5">
+              <PauseIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              <p className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
+                {bot.name} is paused. Its sessions keep running; their questions wait here.
+              </p>
+              <Button size="xs" onClick={() => void togglePause()}>
+                Resume
+              </Button>
+            </div>
           ) : null}
-          {props.tab === "chat" ? (
-            bot.homeThreadId === null ? (
-              <div className="flex flex-1 items-center justify-center">
-                <p className="text-muted-foreground text-sm">{bot.name} is starting…</p>
-              </div>
-            ) : (
-              <BackgroundThreadContext value>
-                <ComposerHandleContext value={null}>
-                  <ChatView
-                    environmentId={props.environmentId}
-                    threadId={bot.homeThreadId}
-                    routeKind="server"
-                    embedded={EMBEDDED_PANEL}
-                  />
-                </ComposerHandleContext>
-              </BackgroundThreadContext>
-            )
-          ) : null}
-          {playbook ? (
-            <BotPlaybook environmentId={props.environmentId} bot={bot} snapshot={snapshot} />
-          ) : null}
+          {bot.homeThreadId === null ? (
+            <div className="flex flex-1 items-center justify-center">
+              <p className="text-muted-foreground text-sm">{bot.name} is starting…</p>
+            </div>
+          ) : (
+            <BackgroundThreadContext value>
+              <ComposerHandleContext value={null}>
+                <ChatView
+                  environmentId={props.environmentId}
+                  threadId={bot.homeThreadId}
+                  routeKind="server"
+                  embedded={EMBEDDED_PANEL}
+                  bot={{ name: bot.name, focus }}
+                />
+              </ComposerHandleContext>
+            </BackgroundThreadContext>
+          )}
         </div>
 
-        {job === null ? null : (
-          <div className="fixed inset-0 z-30 bg-background md:static md:z-auto md:w-[420px] md:shrink-0">
-            <BotJobPanel
+        {memoryOpen ? (
+          <div className="fixed inset-0 z-30 md:static md:z-auto md:w-[380px] md:shrink-0 md:border-l md:border-border">
+            <BotMemoryPanel
+              key={bot.id}
               environmentId={props.environmentId}
               bot={bot}
-              job={job}
               snapshot={snapshot}
-              shells={shellMap}
-              now={now}
-              onClose={props.onCloseJob}
-              onOpenSession={(threadId) =>
-                void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: { environmentId: props.environmentId, threadId },
-                })
-              }
-              onMessageAboutJob={() => {
-                props.onTabChange("chat");
-                props.onCloseJob();
-              }}
-              onStartSuggestedJob={(request) => {
-                setComposerText(request);
-                props.onTabChange("briefing");
-                props.onCloseJob();
-              }}
+              onClose={() => setMemoryOpen(false)}
             />
           </div>
-        )}
+        ) : null}
       </div>
 
       <BotSettingsDialog
-        key={`${bot.id}:${settingsOpen}`}
+        key={`settings:${bot.id}:${settingsOpen}`}
         environmentId={props.environmentId}
         bot={bot}
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+      />
+
+      <BotRenameDialog
+        key={`rename:${bot.id}:${renameOpen}`}
+        environmentId={props.environmentId}
+        bot={bot}
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
       />
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
@@ -311,7 +269,7 @@ export function BotPage(props: {
             <AlertDialogDescription>
               All {sessions.length} of its session{sessions.length === 1 ? "" : "s"} move into
               Threads ({runningSessions} {runningSessions === 1 ? "is" : "are"} still running and
-              keep going). Its jobs and notes are deleted.
+              keep going). Its notes are deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -1,4 +1,5 @@
 import {
+  BotAskId,
   BotId,
   BotJobId,
   type InboxItem,
@@ -55,12 +56,24 @@ describe("inbox item actions", () => {
     expect(inboxSnoozeKind(entry)).toBe(snooze);
   });
 
-  it("carries the job when a bot job finishes", () => {
+  it("carries the ask when a bot asks", () => {
+    expect(
+      inboxItemTarget(
+        item({
+          reason: "bot-ask",
+          botId: BotId.make("bot-1"),
+          askId: BotAskId.make("ask-1"),
+        }),
+      ),
+    ).toEqual({ kind: "bot", botId: "bot-1", askId: "ask-1" });
+  });
+
+  it("opens the bot page for a finished job, without a job number", () => {
     expect(
       inboxItemTarget(
         item({ reason: "bot-job-done", botId: BotId.make("bot-1"), jobId: BotJobId.make("job-1") }),
       ),
-    ).toEqual({ kind: "bot", botId: "bot-1", jobId: "job-1" });
+    ).toEqual({ kind: "bot", botId: "bot-1" });
   });
 
   it("j and k hold at the ends and start from the top without a selection", () => {

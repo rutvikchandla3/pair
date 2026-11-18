@@ -1,4 +1,5 @@
 import {
+  BotId,
   type InboxItem,
   MemberId,
   ProjectId,
@@ -96,6 +97,29 @@ describe("inboxRowCopy", () => {
       item({ reason: "added-to-space", group: "for-you", actorId: meera, spaceName: "Billing v3" }),
       "Meera added you to Billing v3",
       "Billing v3",
+    ],
+    [
+      item({
+        reason: "bot-ask",
+        botId: BotId.make("bot-1"),
+        botName: "Atlas",
+        excerpt: "Per member or per API token?",
+        jobTitle: "Rate limit threads API",
+      }),
+      "Per member or per API token?",
+      "Atlas · Rate limit threads API",
+    ],
+    [
+      item({
+        reason: "bot-job-done",
+        group: "for-you",
+        botId: BotId.make("bot-1"),
+        botName: "Atlas",
+        jobNumber: 12,
+        jobTitle: "Sidebar drag flicker",
+      }),
+      "Sidebar drag flicker is done",
+      "Atlas",
     ],
   ])("names the reason and where it lives: %#", (input, title, detail) => {
     expect(inboxRowCopy(input, viewer)).toEqual({ title, detail });

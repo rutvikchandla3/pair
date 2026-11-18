@@ -1,15 +1,17 @@
 import { Navigate, Outlet, createFileRoute, useLocation } from "@tanstack/react-router";
+import { BotIcon } from "lucide-react";
 
-import { BotFirstRun } from "../components/bots/BotFirstRun";
+import { useCreateBot } from "../components/bots/useCreateBot";
+import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
 import { useBotsSnapshot } from "../state/bots";
 import { usePrimaryEnvironmentId } from "../state/environments";
 
-/** `/bots`: the first-run card, or a redirect to the first bot's page. */
+/** `/bots`: the first bot's page, or a centred empty state that makes one. */
 function BotsIndex() {
   const environmentId = usePrimaryEnvironmentId();
   const snapshot = useBotsSnapshot(environmentId);
-  const showNew = Route.useSearch().new === 1;
+  const createBot = useCreateBot();
 
   if (environmentId === null) {
     return (
@@ -26,17 +28,26 @@ function BotsIndex() {
     );
   }
   const first = snapshot.bots[0];
-  if (first !== undefined && !showNew) {
+  if (first !== undefined) {
     return (
       <Navigate
         to="/bots/$environmentId/$botId"
         params={{ environmentId, botId: first.id }}
-        search={{ tab: "briefing" }}
         replace
       />
     );
   }
-  return <BotFirstRun environmentId={environmentId} />;
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+      <span className="inline-flex size-10 items-center justify-center rounded-xl bg-muted">
+        <BotIcon className="size-5 text-muted-foreground" />
+      </span>
+      <p className="max-w-[420px] text-muted-foreground text-sm">
+        A bot is one chat. Give it work; it runs sessions and reports back here.
+      </p>
+      <Button onClick={() => void createBot(environmentId)}>New bot</Button>
+    </div>
+  );
 }
 
 function BotsRouteLayout() {
@@ -45,8 +56,5 @@ function BotsRouteLayout() {
 }
 
 export const Route = createFileRoute("/_chat/bots")({
-  validateSearch: (raw: Record<string, unknown>): { new?: number | undefined } => ({
-    new: raw.new === 1 || raw.new === "1" || raw.new === true ? 1 : undefined,
-  }),
   component: BotsRouteLayout,
 });

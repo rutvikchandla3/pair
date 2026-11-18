@@ -15,14 +15,11 @@ import {
   type BotSessionShell,
   type BotSessionState,
   botInitial,
+  botSessionRows,
   botSessionState,
-  botSummaryLine,
-  groupJobs,
-  jobHeadline,
-  jobProgressLabel,
+  botStatusLine,
   needsYouCount,
   timeOfDay,
-  worstSessionState,
 } from "./botsModel";
 
 const botId = BotId.make("bot:atlas");
@@ -50,7 +47,7 @@ function job(overrides: Partial<BotJob> & { number: number }): BotJob {
 
 function session(jobId: BotJobId, overrides: Partial<BotSession> = {}): BotSession {
   return {
-    threadId: ThreadId.make(`thread:${jobId}`),
+    threadId: ThreadId.make(`thread:${jobId}:${overrides.title ?? "Implement"}`),
     botId,
     jobId,
     role: "worker",
@@ -58,6 +55,27 @@ function session(jobId: BotJobId, overrides: Partial<BotSession> = {}): BotSessi
     projectId,
     takenOver: false,
     createdAt: "2026-11-18T09:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function ask(overrides: Partial<BotAsk> = {}): BotAsk {
+  return {
+    id: BotAskId.make("ask:1"),
+    botId,
+    jobId: null,
+    question: "Which?",
+    why: "",
+    options: [],
+    pick: null,
+    status: "open",
+    answerKind: null,
+    answer: null,
+    remember: false,
+    noteId: null,
+    homeRunId: null,
+    createdAt: "2026-11-18T09:00:00.000Z",
+    answeredAt: null,
     ...overrides,
   };
 }
@@ -76,7 +94,7 @@ function shell(overrides: Partial<BotSessionShell> = {}): BotSessionShell {
 }
 
 function state(overrides: Partial<BotSessionState>): BotSessionState {
-  return { kind: "working", label: "", trouble: false, ...overrides };
+  return { kind: "working", label: "", trouble: false, updatedAt: null, ...overrides };
 }
 
 const stateFor = (overrides: Parameters<typeof botSessionState>[0]["shell"], takenOver = false) =>
@@ -86,41 +104,6 @@ const stateFor = (overrides: Parameters<typeof botSessionState>[0]["shell"], tak
     botName: "Atlas",
     nowMs,
   });
-
-describe("groupJobs", () => {
-  it("keeps working jobs newest first and drops stopped and older done jobs", () => {
-    const groups = groupJobs(
-      [
-        job({ number: 12, status: "working" }),
-        job({ number: 14, status: "working" }),
-        job({
-          number: 13,
-          status: "done",
-          finishedAt: "2026-11-17T09:00:00.000Z",
-        }),
-        job({
-          number: 11,
-          status: "done",
-          finishedAt: "2026-11-01T09:00:00.000Z",
-        }),
-        job({ number: 10, status: "stopped", finishedAt: "2026-11-17T09:00:00.000Z" }),
-      ],
-      nowMs,
-    );
-    expect(groups.inProgress.map((entry) => entry.number)).toEqual([14, 12]);
-    expect(groups.doneThisWeek.map((entry) => entry.number)).toEqual([13]);
-  });
-});
-
-describe("jobHeadline", () => {
-  it("falls back to Waiting for the bot until the first update", () => {
-    expect(jobHeadline(job({ number: 1 }), "Atlas")).toBe("Waiting for Atlas");
-    expect(jobHeadline(job({ number: 1, headline: "  " }), "Atlas")).toBe("Waiting for Atlas");
-    expect(jobHeadline(job({ number: 1, headline: "  Moving the tests  " }), "Atlas")).toBe(
-      "Moving the tests",
-    );
-  });
-});
 
 describe("botInitial", () => {
   it("uses the first letter, upper-cased", () => {
@@ -136,11 +119,17 @@ describe("botSessionState", () => {
       kind: "taken-over",
       label: "You took over",
       trouble: true,
+      updatedAt: null,
     });
   });
 
   it("an unloaded shell is working with nothing to say", () => {
-    expect(stateFor(null)).toEqual({ kind: "working", label: "", trouble: false });
+    expect(stateFor(null)).toEqual({
+      kind: "working",
+      label: "",
+      trouble: false,
+      updatedAt: null,
+    });
   });
 
   it("names a future usage-limit reset as paused until its local time", () => {
@@ -189,85 +178,120 @@ describe("botSessionState", () => {
   });
 });
 
-describe("worstSessionState", () => {
-  it("picks the lowest severity and returns null when empty", () => {
-    expect(worstSessionState([])).toBeNull();
-    expect(
-      worstSessionState([
-        state({ kind: "working" }),
-        state({ kind: "failed" }),
-        state({ kind: "taken-over" }),
-      ])?.kind,
-    ).toBe("taken-over");
-    expect(worstSessionState([state({ kind: "done" }), state({ kind: "paused" })])?.kind).toBe(
-      "paused",
-    );
-  });
-});
-
-describe("jobProgressLabel", () => {
-  it("counts done sessions when nothing is in trouble", () => {
-    expect(
-      jobProgressLabel([
-        state({ kind: "done" }),
-        state({ kind: "done" }),
-        state({ kind: "working" }),
-      ]),
-    ).toBe("2 of 3 sessions done");
-  });
-
-  it("names the worst session when one is in trouble", () => {
-    expect(
-      jobProgressLabel([
-        state({ kind: "working" }),
-        state({ kind: "quiet", label: "Upgrade web quiet 34m", trouble: true }),
-      ]),
-    ).toBe("Upgrade web quiet 34m");
-  });
-
-  it("has nothing to show with no sessions", () => {
-    expect(jobProgressLabel([])).toBeNull();
-  });
-});
-
 describe("needsYouCount", () => {
   it("counts only open asks", () => {
-    const ask = (overrides: Partial<BotAsk>): BotAsk => ({
-      id: BotAskId.make("ask:1"),
-      botId,
-      jobId: null,
-      question: "Which?",
-      why: "",
-      options: [],
-      pick: null,
-      status: "open",
-      answerKind: null,
-      answer: null,
-      remember: false,
-      noteId: null,
-      createdAt: "2026-11-18T09:00:00.000Z",
-      answeredAt: null,
-      ...overrides,
-    });
     expect(needsYouCount([ask({}), ask({ status: "answered" })])).toBe(1);
     expect(needsYouCount([])).toBe(0);
   });
 });
 
-describe("botSummaryLine", () => {
-  it("joins the parts and drops the empty ones", () => {
+describe("botStatusLine", () => {
+  const base = { bot: { paused: false }, asks: [], jobs: [], sessions: [], sessionStates: [] };
+
+  it("names the newest session of the ask's job", () => {
+    const jobId = BotJobIdSchema.make("job:1");
     expect(
-      botSummaryLine({
-        jobCount: 5,
+      botStatusLine({
+        ...base,
+        asks: [ask({ jobId })],
+        jobs: [job({ number: 1, title: "Rate limit threads API" })],
+        sessions: [
+          session(jobId, { title: "Older session", createdAt: "2026-11-18T08:00:00.000Z" }),
+          session(jobId, { title: "Newest session", createdAt: "2026-11-18T10:00:00.000Z" }),
+        ],
+      }),
+    ).toEqual({ text: "Newest session needs you", tone: "input" });
+  });
+
+  it("falls back to the job's title when the job has no sessions", () => {
+    const jobId = BotJobIdSchema.make("job:1");
+    expect(
+      botStatusLine({
+        ...base,
+        asks: [ask({ jobId })],
+        jobs: [job({ number: 1, title: "Rate limit threads API" })],
+      }),
+    ).toEqual({ text: "Rate limit threads API needs you", tone: "input" });
+  });
+
+  it("counts several questions", () => {
+    expect(
+      botStatusLine({
+        ...base,
+        asks: [ask({ id: BotAskId.make("ask:1") }), ask({ id: BotAskId.make("ask:2") })],
+      }),
+    ).toEqual({ text: "2 questions for you", tone: "input" });
+  });
+
+  it("counts the sessions still working", () => {
+    expect(
+      botStatusLine({
+        ...base,
         sessionStates: [
           state({ kind: "working" }),
-          state({ kind: "working" }),
-          state({ kind: "working" }),
+          state({ kind: "waiting" }),
+          state({ kind: "done" }),
         ],
-        needsYou: 2,
       }),
-    ).toBe("5 jobs · 3 sessions working · 2 need you");
-    expect(botSummaryLine({ jobCount: 1, sessionStates: [], needsYou: 0 })).toBe("1 job");
+    ).toEqual({ text: "2 sessions working", tone: "muted" });
+    expect(botStatusLine({ ...base, sessionStates: [state({ kind: "working" })] })).toEqual({
+      text: "1 session working",
+      tone: "muted",
+    });
+  });
+
+  it("says nothing is running, and Paused when paused", () => {
+    expect(botStatusLine(base)).toEqual({ text: "Nothing running", tone: "muted" });
+    expect(botStatusLine({ ...base, bot: { paused: true } })).toEqual({
+      text: "Paused",
+      tone: "paused",
+    });
+  });
+});
+
+describe("botSessionRows", () => {
+  const askedJobId = BotJobIdSchema.make("job:asked");
+  const otherJobId = BotJobIdSchema.make("job:other");
+  const openAsk = ask({ jobId: askedJobId });
+
+  it("orders needs-you, failed, working, then finished newest first and drops old ones", () => {
+    const sessions = [
+      session(otherJobId, { title: "Finished older", createdAt: "2026-11-18T07:00:00.000Z" }),
+      session(otherJobId, { title: "Working" }),
+      session(otherJobId, { title: "Failed" }),
+      session(askedJobId, { title: "Needs you" }),
+      session(otherJobId, { title: "Finished newer", createdAt: "2026-11-18T08:00:00.000Z" }),
+      session(otherJobId, { title: "Too old" }),
+    ];
+    const states = [
+      state({ kind: "done", updatedAt: "2026-11-18T11:00:00.000Z" }),
+      state({ kind: "working" }),
+      state({ kind: "failed" }),
+      state({ kind: "waiting" }),
+      state({ kind: "done", updatedAt: "2026-11-18T11:30:00.000Z" }),
+      state({ kind: "done", updatedAt: "2026-11-10T11:00:00.000Z" }),
+    ];
+    expect(
+      botSessionRows({ sessions, states, asks: [openAsk], nowMs }).map(
+        (row) => `${row.session.title}:${row.bucket}`,
+      ),
+    ).toEqual([
+      "Needs you:needs-you",
+      "Failed:failed",
+      "Working:working",
+      "Finished newer:finished",
+      "Finished older:finished",
+    ]);
+  });
+
+  it("does not mark a finished session as needs-you", () => {
+    const rows = botSessionRows({
+      sessions: [session(askedJobId, { title: "Finished" })],
+      states: [state({ kind: "done", updatedAt: "2026-11-18T11:00:00.000Z" })],
+      asks: [openAsk],
+      nowMs,
+    });
+    expect(rows.map((row) => row.bucket)).toEqual(["finished"]);
   });
 });
 

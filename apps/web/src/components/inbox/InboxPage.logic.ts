@@ -5,7 +5,7 @@ export type InboxItemTarget =
   | { readonly kind: "thread"; readonly threadId: ThreadId }
   | { readonly kind: "task"; readonly spaceId: SpaceId; readonly taskId: SpaceTaskId }
   | { readonly kind: "room"; readonly spaceId: SpaceId }
-  | { readonly kind: "bot"; readonly botId: string; readonly jobId?: string };
+  | { readonly kind: "bot"; readonly botId: string; readonly askId?: string };
 
 export function inboxItemTarget(item: InboxItem): InboxItemTarget | null {
   switch (item.reason) {
@@ -19,15 +19,15 @@ export function inboxItemTarget(item: InboxItem): InboxItemTarget | null {
     case "added-to-space":
       return item.spaceId === undefined ? null : { kind: "room", spaceId: item.spaceId };
     case "bot-ask":
-      return item.botId === undefined ? null : { kind: "bot", botId: item.botId };
-    case "bot-job-done":
       return item.botId === undefined
         ? null
         : {
             kind: "bot",
             botId: item.botId,
-            ...(item.jobId === undefined ? {} : { jobId: item.jobId }),
+            ...(item.askId === undefined ? {} : { askId: item.askId }),
           };
+    case "bot-job-done":
+      return item.botId === undefined ? null : { kind: "bot", botId: item.botId };
     default:
       return item.threadId === undefined ? null : { kind: "thread", threadId: item.threadId };
   }

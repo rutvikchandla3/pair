@@ -23,7 +23,6 @@ import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { derivePendingUserInputProgress } from "../../pendingUserInput";
-import { BotInboxAskActions } from "../bots/BotInboxAskActions";
 import { openSpaceThreadDialog } from "../spaces/spaceThreadDialogStore";
 import { useCanOperateSpaces } from "../../state/spaces";
 import {
@@ -99,13 +98,6 @@ export function InboxPreview(props: {
         <>
           <p className="font-medium text-sm">{copy.title}</p>
           {item.excerpt === undefined ? null : <Excerpt text={item.excerpt} />}
-          {item.reason === "bot-ask" && item.botId !== undefined && item.askId !== undefined ? (
-            <BotInboxAskActions
-              environmentId={props.environmentId}
-              botId={item.botId}
-              askId={item.askId}
-            />
-          ) : null}
         </>
       )}
     </div>

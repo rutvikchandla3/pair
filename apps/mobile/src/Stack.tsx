@@ -70,9 +70,7 @@ import { UpdateSheet } from "./features/lineage/UpdateSheet";
 import { MyTasksFiltersSheet, SharedWithYouFiltersSheet } from "./features/inbox/InboxFilterSheets";
 import { InboxRequestSheet } from "./features/inbox/InboxRequestSheet";
 import { InboxScreen } from "./features/inbox/InboxScreen";
-import { BotAskSheet } from "./features/bots/BotAskSheet";
-import { BotBriefingRouteScreen } from "./features/bots/BotBriefingScreen";
-import { BotJobScreen } from "./features/bots/BotJobScreen";
+import { BotHomeRouteScreen } from "./features/bots/BotHomeScreen";
 import { MyTasksScreen } from "./features/inbox/MyTasksScreen";
 import { SharedWithYouScreen } from "./features/inbox/SharedWithYouScreen";
 import { SpaceAttachThreadSheet } from "./features/spaces/SpaceAttachThreadSheet";
@@ -764,19 +762,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: InboxRequestSheet,
       options: SPACE_SHEET_OPTIONS,
     }),
-    BotBriefing: createNativeStackScreen({
-      screen: BotBriefingRouteScreen,
+    BotHome: createNativeStackScreen({
+      screen: BotHomeRouteScreen,
       linking: "bots/:environmentId/:botId",
       options: { headerShown: false },
-    }),
-    BotJob: createNativeStackScreen({
-      screen: BotJobScreen,
-      linking: "bots/:environmentId/:botId/jobs/:jobId",
-      options: { ...DETAIL_HEADER_OPTIONS, title: "Job" },
-    }),
-    BotAsk: createNativeStackScreen({
-      screen: BotAskSheet,
-      options: SPACE_SHEET_OPTIONS,
     }),
     MyTasks: createNativeStackScreen({
       screen: MyTasksScreen,

@@ -29,6 +29,7 @@ import {
   contextCompactionTokenCounts,
   type ToolGroupSummaryKind,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { botMemoryNote, summarizeBotTurn } from "./botTimeline.logic";
 import {
   deriveRevertTurnCountByUserMessageId,
   formatDuration,
@@ -562,6 +563,8 @@ type MessagesTimelineRowContent =
       runId: RunId;
       label: string;
       expanded: boolean;
+      /** A bot wake's row: its time, or a merged run's span, follows the label. */
+      wake?: TurnFoldWake;
     }
   | {
       kind: "attempt-fold";
@@ -651,6 +654,13 @@ type MessagesTimelineRowContent =
       mcpApp: McpAppReference;
     };
 
+interface TurnFoldWake {
+  readonly startedAt: string;
+  readonly endedAt?: string;
+  readonly memoryNote?: string;
+  readonly memberRunIds?: ReadonlyArray<RunId>;
+}
+
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
   result: MessagesTimelineRow[];
@@ -725,6 +735,25 @@ interface TurnFold {
   /** Every entry in the segment, including the cards a fold never hides. */
   entryIds: ReadonlySet<string>;
   label: string;
+  /** A bot home thread's wake turn, or a merged run of quiet ones, labelled by its wake. */
+  wake?: BotWakeFold;
+}
+
+interface BotWakeFold {
+  readonly startedAt: string;
+  /** The last merged wake's time. */
+  readonly endedAt?: string;
+  readonly memoryAnswers: number;
+  /** Wrote nothing and asked, finished, learned or forgot nothing, so it may merge. */
+  readonly quiet: boolean;
+  /** The member turns of a merged fold. */
+  readonly memberRunIds?: ReadonlyArray<RunId>;
+}
+
+interface TurnFolds {
+  readonly folds: ReadonlyMap<string, TurnFold>;
+  /** Quiet wake turns merged under one row, keyed by the first member's anchor. */
+  readonly mergedFolds: ReadonlyMap<string, TurnFold>;
 }
 
 interface SupersededAttemptFold {
@@ -1016,7 +1045,9 @@ function deriveTurnFolds(input: {
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
   completeSupersededReplyEntryIds: ReadonlySet<string>;
-}): ReadonlyMap<string, TurnFold> {
+  /** Set for a bot's home thread (docs/product/bots.md). */
+  botName?: string | undefined;
+}): TurnFolds {
   const interruptedRunIds = new Set<RunId>();
   const promptIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of input.timelineEntries.entries()) {
@@ -1049,6 +1080,7 @@ function deriveTurnFolds(input: {
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
+  const wakesByRunId = new Map<RunId, Extract<TimelineEntry, { kind: "work" }>>();
 
   // Key runless responses per prompt to prevent V2 runs unfolding imported turns.
   let runlessKey: RunId | null = null;
@@ -1063,6 +1095,14 @@ function deriveTurnFolds(input: {
       const boundaryRunId = responseBoundaryRunId(entry);
       runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
       responseKey = boundaryRunId ?? runlessKey;
+      if (
+        input.botName !== undefined &&
+        entry.kind === "work" &&
+        boundaryRunId !== null &&
+        !wakesByRunId.has(boundaryRunId)
+      ) {
+        wakesByRunId.set(boundaryRunId, entry);
+      }
       continue;
     }
     if (entry.kind === "message" && timelineEntryIsSteer(entry)) {
@@ -1091,12 +1131,14 @@ function deriveTurnFolds(input: {
     }
     let group = groupsByRunId.get(runId);
     if (!group) {
+      // A wake's fold row stands in its place, so the fold anchors on the wake itself.
+      const wake = wakesByRunId.get(runId);
       group = {
         entries: [],
         terminalEntry: null,
         hasStreamingMessage: false,
-        startBoundary: pendingBoundary?.createdAt ?? null,
-        anchorEntryId: pendingBoundary?.anchorEntryId ?? entry.id,
+        startBoundary: wake?.createdAt ?? pendingBoundary?.createdAt ?? null,
+        anchorEntryId: wake?.id ?? pendingBoundary?.anchorEntryId ?? entry.id,
         steerSegments: [],
       };
       pendingBoundary = null;
@@ -1126,7 +1168,9 @@ function deriveTurnFolds(input: {
     if (group.hasStreamingMessage) {
       continue;
     }
-    const hiddenEntryIds = new Set<string>();
+    const wake = wakesByRunId.get(runId);
+    const botTurn = input.botName === undefined ? null : summarizeBotTurn(group.entries);
+    const hiddenEntryIds = new Set<string>(wake ? [wake.id] : []);
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
@@ -1152,6 +1196,10 @@ function deriveTurnFolds(input: {
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
+      // A bot's question must stay readable even if it wrote more after it.
+      if (botTurn?.asked && entry.kind === "message" && entry.message.role === "assistant") {
+        continue;
+      }
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
@@ -1159,7 +1207,7 @@ function deriveTurnFolds(input: {
     }
     const hidesNonCompactionWork = (entries: ReadonlyArray<TimelineEntry>) =>
       entries.some((entry) => hiddenEntryIds.has(entry.id) && !timelineEntryIsCompaction(entry));
-    if (!hidesNonCompactionWork(group.entries)) {
+    if (!hidesNonCompactionWork(wake ? [wake, ...group.entries] : group.entries)) {
       continue;
     }
 
@@ -1196,14 +1244,29 @@ function deriveTurnFolds(input: {
     // so each segment opens on its own.
     const segmentHiddenIds = (entries: ReadonlyArray<TimelineEntry>) =>
       new Set(entries.flatMap((entry) => (hiddenEntryIds.has(entry.id) ? [entry.id] : [])));
-    const firstSegment = group.entries.slice(0, group.steerSegments[0]?.startIndex);
+    const firstSegment = [
+      ...(wake ? [wake] : []),
+      ...group.entries.slice(0, group.steerSegments[0]?.startIndex),
+    ];
     foldsByAnchorEntryId.set(group.anchorEntryId, {
       runId,
       anchorEntryId: group.anchorEntryId,
       createdAt: group.startBoundary ?? firstEntry.createdAt,
       hiddenEntryIds: segmentHiddenIds(firstSegment),
       entryIds: new Set(firstSegment.map((entry) => entry.id)),
-      label,
+      label: wake?.entry.label ?? label,
+      ...(wake && botTurn
+        ? {
+            wake: {
+              startedAt: wake.createdAt,
+              memoryAnswers: botTurn.memoryAnswers,
+              quiet:
+                !botTurn.decisive &&
+                group.steerSegments.length === 0 &&
+                firstSegment.every((entry) => hiddenEntryIds.has(entry.id)),
+            },
+          }
+        : {}),
     });
     for (const [index, { startIndex, steer }] of group.steerSegments.entries()) {
       const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
@@ -1224,7 +1287,79 @@ function deriveTurnFolds(input: {
       });
     }
   }
-  return foldsByAnchorEntryId;
+  if (input.botName === undefined) {
+    return { folds: foldsByAnchorEntryId, mergedFolds: new Map() };
+  }
+  // Every settled wake is one row, even one whose turn left nothing to fold.
+  for (const [runId, wake] of wakesByRunId) {
+    if (
+      groupsByRunId.has(runId) ||
+      input.unfoldedRunIds.has(runId) ||
+      interruptedRunIds.has(runId)
+    ) {
+      continue;
+    }
+    foldsByAnchorEntryId.set(wake.id, {
+      runId,
+      anchorEntryId: wake.id,
+      createdAt: wake.createdAt,
+      hiddenEntryIds: new Set([wake.id]),
+      entryIds: new Set([wake.id]),
+      label: wake.entry.label,
+      wake: { startedAt: wake.createdAt, memoryAnswers: 0, quiet: true },
+    });
+  }
+  return {
+    folds: foldsByAnchorEntryId,
+    mergedFolds: mergeQuietWakeFolds(input.timelineEntries, foldsByAnchorEntryId, input.botName),
+  };
+}
+
+/** Back-to-back quiet wake turns, with nothing visible between them, share one row. */
+function mergeQuietWakeFolds(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  folds: ReadonlyMap<string, TurnFold>,
+  botName: string,
+): ReadonlyMap<string, TurnFold> {
+  const quietFoldByEntryId = new Map<string, TurnFold>();
+  for (const fold of folds.values()) {
+    if (!fold.wake?.quiet) continue;
+    for (const entryId of fold.entryIds) quietFoldByEntryId.set(entryId, fold);
+  }
+  const merged = new Map<string, TurnFold>();
+  let members: TurnFold[] = [];
+  const flush = () => {
+    const first = members[0];
+    const last = members.at(-1);
+    if (members.length > 1 && first !== undefined && last !== undefined) {
+      merged.set(first.anchorEntryId, {
+        runId: RunId.make(`bot-updates:${first.runId}`),
+        anchorEntryId: first.anchorEntryId,
+        createdAt: first.createdAt,
+        hiddenEntryIds: new Set(members.flatMap((fold) => [...fold.hiddenEntryIds])),
+        entryIds: new Set(members.flatMap((fold) => [...fold.entryIds])),
+        label: `${botName} handled ${members.length} updates`,
+        wake: {
+          startedAt: first.createdAt,
+          endedAt: last.createdAt,
+          memoryAnswers: members.reduce((sum, fold) => sum + (fold.wake?.memoryAnswers ?? 0), 0),
+          quiet: true,
+          memberRunIds: members.map((fold) => fold.runId),
+        },
+      });
+    }
+    members = [];
+  };
+  for (const entry of timelineEntries) {
+    const fold = quietFoldByEntryId.get(entry.id);
+    if (fold === undefined) {
+      flush();
+    } else if (members.at(-1) !== fold) {
+      members.push(fold);
+    }
+  }
+  flush();
+  return merged;
 }
 
 function attachTrailingToolGroupsToAssistant(
@@ -1397,7 +1532,7 @@ function deriveTimelineTurnFolds(
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
     completeSupersededReplyEntryIds: completeSupersededReplyEntryIds(timelineEntries),
-  });
+  }).folds;
 }
 
 export function deriveMessagesTimelineRows(input: {
@@ -1419,6 +1554,8 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   /** Passed only where attribution shows, and by reference so the rows input stays comparable. */
   lastRollback?: OrchestrationV2AppThread["lastRollback"];
+  /** A bot's home thread: wakes label their folds and quiet ones merge. */
+  botName?: string | undefined;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
   const interruptActorByRunId = new Map<RunId, MemberId>();
@@ -1473,7 +1610,7 @@ export function deriveMessagesTimelineRows(input: {
     isWorking: input.isWorking,
   });
   const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
-  const foldsByAnchorEntryId = deriveTurnFolds({
+  const { folds: foldsByAnchorEntryId, mergedFolds: mergedFoldsByAnchorEntryId } = deriveTurnFolds({
     timelineEntries: timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
@@ -1481,11 +1618,14 @@ export function deriveMessagesTimelineRows(input: {
     runlessWorkActive,
     liveSubagentEntryIds,
     completeSupersededReplyEntryIds: completeSupersededReplyIds,
+    botName: input.botName,
   });
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const collapsedEntryIds = new Set<string>();
   const collapsedFoldMemberIds = new Set<string>();
-  for (const fold of foldsByAnchorEntryId.values()) {
+  // A collapsed merged fold also hides its members' own rows.
+  const coveredFoldRunIds = new Set<RunId>();
+  for (const fold of [...foldsByAnchorEntryId.values(), ...mergedFoldsByAnchorEntryId.values()]) {
     if (!input.expandedRunIds?.has(fold.runId)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
@@ -1493,8 +1633,43 @@ export function deriveMessagesTimelineRows(input: {
       for (const entryId of fold.entryIds) {
         collapsedFoldMemberIds.add(entryId);
       }
+      for (const runId of fold.wake?.memberRunIds ?? []) coveredFoldRunIds.add(runId);
     }
   }
+  const turnFoldRow = (fold: TurnFold): Extract<MessagesTimelineRow, { kind: "turn-fold" }> => {
+    const deferredWorkItemIds = [...fold.entryIds].flatMap((entryId) => {
+      const entry = timelineEntryById.get(entryId);
+      return entry?.kind === "work" &&
+        entry.entry.projectedItem?.item.deferredWork &&
+        !supersededWorkItemIds.has(String(entry.entry.projectedItem.sourceItemId))
+        ? [String(entry.entry.projectedItem.sourceItemId)]
+        : [];
+    });
+    const memoryNote = fold.wake
+      ? botMemoryNote(fold.wake.memoryAnswers, fold.wake.memberRunIds !== undefined)
+      : undefined;
+    return {
+      kind: "turn-fold",
+      id: `turn-fold:${fold.runId}`,
+      ...(deferredWorkItemIds.length > 0 ? { deferredWorkItemIds } : {}),
+      createdAt: fold.createdAt,
+      runId: fold.runId,
+      label: fold.label,
+      expanded: input.expandedRunIds?.has(fold.runId) ?? false,
+      ...(fold.wake
+        ? {
+            wake: {
+              startedAt: fold.wake.startedAt,
+              ...(fold.wake.endedAt === undefined ? {} : { endedAt: fold.wake.endedAt }),
+              ...(memoryNote === undefined ? {} : { memoryNote }),
+              ...(fold.wake.memberRunIds === undefined
+                ? {}
+                : { memberRunIds: fold.wake.memberRunIds }),
+            },
+          }
+        : {}),
+    };
+  };
   const collapsedSupersededEntryIds = new Set<string>();
   for (const fold of supersededFoldsByAnchorEntryId.values()) {
     if (!input.expandedAttemptIds?.has(fold.attemptId)) {
@@ -1726,25 +1901,11 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    const mergedFold = mergedFoldsByAnchorEntryId.get(timelineEntry.id);
+    if (mergedFold) nextRows.push(turnFoldRow(mergedFold));
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
-    if (turnFold) {
-      const deferredWorkItemIds = [...turnFold.entryIds].flatMap((entryId) => {
-        const entry = timelineEntryById.get(entryId);
-        return entry?.kind === "work" &&
-          entry.entry.projectedItem?.item.deferredWork &&
-          !supersededWorkItemIds.has(String(entry.entry.projectedItem.sourceItemId))
-          ? [String(entry.entry.projectedItem.sourceItemId)]
-          : [];
-      });
-      nextRows.push({
-        kind: "turn-fold",
-        id: `turn-fold:${turnFold.runId}`,
-        ...(deferredWorkItemIds.length > 0 ? { deferredWorkItemIds } : {}),
-        createdAt: turnFold.createdAt,
-        runId: turnFold.runId,
-        label: turnFold.label,
-        expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
-      });
+    if (turnFold && !coveredFoldRunIds.has(turnFold.runId)) {
+      nextRows.push(turnFoldRow(turnFold));
     }
 
     if (collapsedEntryIds.has(timelineEntry.id)) {
@@ -2417,6 +2578,36 @@ export function deriveMessagesTimelineRowsWithState(
   };
 }
 
+function sameTurnFoldWake(a: TurnFoldWake | undefined, b: TurnFoldWake | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  const members = a.memberRunIds ?? [];
+  const nextMembers = b.memberRunIds ?? [];
+  return (
+    a.startedAt === b.startedAt &&
+    a.endedAt === b.endedAt &&
+    a.memoryNote === b.memoryNote &&
+    members.length === nextMembers.length &&
+    members.every((runId, index) => runId === nextMembers[index])
+  );
+}
+
+/** A bot turn's last visible message, else the fold row that holds it. */
+export function resolveBotFocusRowIndex(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  runId: RunId,
+): number {
+  const message = rows.findLastIndex(
+    (row) =>
+      row.kind === "message" && row.message.role === "assistant" && row.message.runId === runId,
+  );
+  if (message >= 0) return message;
+  const fold = rows.findIndex((row) => row.kind === "turn-fold" && row.runId === runId);
+  if (fold >= 0) return fold;
+  return rows.findIndex(
+    (row) => row.kind === "turn-fold" && row.wake?.memberRunIds?.includes(runId) === true,
+  );
+}
+
 export function computeStableMessagesTimelineRows(
   rows: MessagesTimelineRow[],
   previous: StableMessagesTimelineRowsState,
@@ -2473,7 +2664,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.label === bf.label &&
         a.expanded === bf.expanded &&
         anchors.length === nextAnchors.length &&
-        anchors.every((id, index) => id === nextAnchors[index])
+        anchors.every((id, index) => id === nextAnchors[index]) &&
+        (a.kind === "attempt-fold" ||
+          sameTurnFoldWake(
+            a.wake,
+            (bf as Extract<MessagesTimelineRow, { kind: "turn-fold" }>).wake,
+          ))
       );
     }
 

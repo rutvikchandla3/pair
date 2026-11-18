@@ -1,5 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useSpaceThreadHeader } from "../spaces/SpaceTask";
+import { useBotHomeHeader } from "../bots/useBotHomeHeader";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -425,6 +426,10 @@ function ThreadRouteContent(
   } = useThreadSelection();
   useRememberThreadProject(selectedThreadProject);
   const spaceHeader = useSpaceThreadHeader(
+    selectedThread?.environmentId ?? null,
+    selectedThread?.id ?? null,
+  );
+  const botHomeHeader = useBotHomeHeader(
     selectedThread?.environmentId ?? null,
     selectedThread?.id ?? null,
   );
@@ -1140,8 +1145,8 @@ function ThreadRouteContent(
           header={
             props.inspectorPresentation ? null : (
               <ThreadHeader
-                title={selectedThread.title}
-                subtitle={headerSubtitle}
+                title={botHomeHeader?.name ?? selectedThread.title}
+                subtitle={botHomeHeader?.status ?? headerSubtitle}
                 headerColor={headerColor}
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}

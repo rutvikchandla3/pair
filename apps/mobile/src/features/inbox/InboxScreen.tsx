@@ -119,11 +119,13 @@ export function InboxScreen(props: StaticScreenProps<Params>) {
           StackActions.push("SpaceRoom", { environmentId, spaceId: target.spaceId }),
         );
         return;
-      case "bot-ask":
-        navigation.dispatch(StackActions.push("BotAsk", { environmentId, askId: target.askId }));
-        return;
-      case "bot-job":
-        navigation.dispatch(StackActions.push("BotJob", { environmentId, jobId: target.jobId }));
+      case "bot":
+        navigation.dispatch(
+          StackActions.push("BotHome", {
+            environmentId: String(environmentId),
+            botId: target.botId,
+          }),
+        );
         return;
     }
   };

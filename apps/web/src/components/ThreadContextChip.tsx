@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ThreadContextRecord } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
+import type * as React from "react";
 
 import { useProject, useThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
@@ -12,6 +13,8 @@ export function ThreadContextChip(props: {
   record: Pick<ThreadContextRecord, "environmentId" | "threadId" | "title">;
   copyMarkdown?: string;
   unreadable?: boolean;
+  /** A live-state glyph before the icon, e.g. a bot thread link's working spinner. */
+  leading?: React.ReactNode;
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
@@ -29,6 +32,7 @@ export function ThreadContextChip(props: {
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
+            {props.leading}
             {project ? (
               <ProjectFavicon project={project} className="size-[1em] self-center" />
             ) : (

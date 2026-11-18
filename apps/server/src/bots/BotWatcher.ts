@@ -254,8 +254,7 @@ const make = Effect.gen(function* () {
     const end = classifyRunEnd(event.payload.status, shell);
     if (end === null) return;
     const title = session.title;
-    const label = `J-${job.number}`;
-    const at = `Session "${title}" (thread ${event.threadId}, ${label})`;
+    const at = `Session "${title}" (thread ${event.threadId})`;
     switch (end.kind) {
       case "completed": {
         yield* bots.addEvent({
@@ -269,6 +268,7 @@ const make = Effect.gen(function* () {
           yield* bots.publishWake({
             botId: session.botId,
             reason: "session-finished",
+            label: `${title} finished`,
             text: `${at} finished. Read its report with t3_thread_read, then continue the job or finish it.`,
           });
         }
@@ -287,6 +287,7 @@ const make = Effect.gen(function* () {
           yield* bots.publishWake({
             botId: session.botId,
             reason: "session-usage-limit",
+            label: `${title} hit a usage limit`,
             text: `${at} hit a usage limit until ${resetAt}. Move the work to another model with a new session, or wait.`,
           });
         }
@@ -305,6 +306,7 @@ const make = Effect.gen(function* () {
           yield* bots.publishWake({
             botId: session.botId,
             reason: "session-failed",
+            label: `${title} failed`,
             text: `${at} failed: ${error}. Nudge it once with bot_session_message, or start a replacement.`,
           });
         }
@@ -323,6 +325,7 @@ const make = Effect.gen(function* () {
           yield* bots.publishWake({
             botId: session.botId,
             reason: "session-stopped",
+            label: `${title} stopped`,
             text: `${at} stopped.`,
           });
         }
@@ -352,7 +355,8 @@ const make = Effect.gen(function* () {
     yield* bots.publishWake({
       botId: session.botId,
       reason: "session-request",
-      text: `Session "${session.title}" (thread ${event.threadId}, J-${job.number}) is waiting: ${event.payload.kind} request ${event.payload.id}: "${question}". Answer with bot_session_respond if your playbook covers it and no limit applies; otherwise raise an Ask.`,
+      label: `${session.title} is waiting`,
+      text: `Session "${session.title}" (thread ${event.threadId}) is waiting: ${event.payload.kind} request ${event.payload.id}: "${question}". Answer with bot_session_respond if your playbook covers it and no limit applies; otherwise ask the user with bot_ask.`,
     });
     yield* Ref.update(pending, (entries) =>
       new Map(entries).set(key, {
@@ -370,12 +374,11 @@ const make = Effect.gen(function* () {
   ) {
     if (session.takenOver || !isTakeoverMessage(event, session)) return;
     yield* bots.setSessionTakenOver(event.threadId, true);
-    const job = Option.getOrNull(yield* bots.getJob(session.jobId));
-    const label = job === null ? "J-?" : `J-${job.number}`;
     yield* bots.publishWake({
       botId: session.botId,
       reason: "session-taken-over",
-      text: `The user took over session "${session.title}" (thread ${event.threadId}, ${label}). Leave it alone until they hand it back.`,
+      label: `You typed in ${session.title}`,
+      text: `The user took over session "${session.title}" (thread ${event.threadId}). Leave it alone until they hand it back.`,
     });
   });
 
@@ -443,14 +446,12 @@ const make = Effect.gen(function* () {
       BotEscalations.mark(due.threadId, due.requestId);
       const session = Option.getOrNull(yield* bots.sessionForThread(due.threadId));
       if (session === null) continue;
-      const job = Option.getOrNull(yield* bots.getJob(session.jobId));
-      const label = job === null ? "" : ` (J-${job.number})`;
       const waited = Math.max(1, Math.round((now - due.since) / 60_000));
       yield* bots.addEvent({
         botId: session.botId,
         jobId: session.jobId,
         kind: "info",
-        text: `${session.title} has waited ${waited}m; asked you${label}`,
+        text: `${session.title} has waited ${waited}m; asked you`,
         sessionThreadId: due.threadId,
       });
     }
@@ -492,7 +493,8 @@ const make = Effect.gen(function* () {
       yield* bots.publishWake({
         botId: entry.session.botId,
         reason: "session-quiet",
-        text: `Session "${entry.session.title}" (thread ${entry.session.threadId}, J-${entry.job.number}) has had no new output for ${minutes}m. Ask it for a status with bot_session_message.`,
+        label: `${entry.session.title} is quiet`,
+        text: `Session "${entry.session.title}" (thread ${entry.session.threadId}) has had no new output for ${minutes}m. Ask it for a status with bot_session_message.`,
       });
     }
   });

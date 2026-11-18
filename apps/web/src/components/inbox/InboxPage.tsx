@@ -24,7 +24,6 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { BotAvatar } from "../bots/BotAvatar";
-import { BotInboxAskActions } from "../bots/BotInboxAskActions";
 import {
   inboxEnvironment,
   useInboxPages,
@@ -370,10 +369,7 @@ function navigateTo(
       return navigate({
         to: "/bots/$environmentId/$botId",
         params: { environmentId, botId: target.botId },
-        search: {
-          tab: "briefing",
-          ...(target.jobId === undefined ? {} : { job: target.jobId }),
-        },
+        search: target.askId === undefined ? {} : { ask: target.askId },
       });
   }
 }
@@ -539,13 +535,6 @@ function InboxRow(props: {
         {copy.detail === "" ? null : (
           <p className="truncate text-muted-foreground text-xs">{copy.detail}</p>
         )}
-        {item.reason === "bot-ask" && item.botId !== undefined && item.askId !== undefined ? (
-          <BotInboxAskActions
-            environmentId={props.environmentId}
-            botId={item.botId}
-            askId={item.askId}
-          />
-        ) : null}
       </div>
     </div>
   );

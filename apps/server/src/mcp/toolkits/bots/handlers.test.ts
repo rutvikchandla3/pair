@@ -9,6 +9,7 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -64,6 +65,7 @@ interface Harness {
   readonly scope?: McpInvocationContext.McpInvocationScope;
   readonly bot?: Partial<BotService["Service"]>;
   readonly sessions?: Partial<BotSessions["Service"]>;
+  readonly projects?: Partial<ProjectService.ProjectService["Service"]>;
 }
 
 const callTool = (
@@ -79,7 +81,7 @@ const callTool = (
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
       }),
-      Layer.mock(ProjectService.ProjectService)({}),
+      Layer.mock(ProjectService.ProjectService)(harness.projects ?? {}),
     );
     return yield* Effect.gen(function* () {
       const toolkit = yield* BotsToolkit;
@@ -192,6 +194,127 @@ describe("bots tools", () => {
         { scope: scope(undefined) },
       );
       expect(result).toMatchObject({ code: "capability_denied" });
+    }),
+  );
+
+  it.effect("creates a job for the bot, with the title and request it gave", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ botId: BotId; input: unknown }> = [];
+      const projectId = ProjectId.make("project:one");
+      const result = yield* callTool(
+        "bot_job_create",
+        { title: "Sidebar drag flicker", request: "Fix the flicker", projectId },
+        {
+          bot: {
+            createJobForBot: (id, input) => {
+              calls.push({ botId: id, input });
+              return Effect.succeed({ id: jobId, title: input.title } as never);
+            },
+          },
+          projects: {
+            getById: () => Effect.succeedSome({ id: projectId } as never),
+          },
+        },
+      );
+      expect(result).toMatchObject({ jobId, title: "Sidebar drag flicker" });
+      expect(calls).toEqual([
+        {
+          botId,
+          input: { title: "Sidebar drag flicker", request: "Fix the flicker", projectId },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("refuses a project that does not exist", () =>
+    Effect.gen(function* () {
+      const result = yield* callTool(
+        "bot_job_create",
+        { title: "t", request: "r", projectId: ProjectId.make("project:gone") },
+        { projects: { getById: () => Effect.succeedNone } },
+      );
+      expect(result).toMatchObject({ code: "invalid_request" });
+    }),
+  );
+
+  it.effect("forgets the bot's own note and returns its text", () =>
+    Effect.gen(function* () {
+      const result = yield* callTool(
+        "bot_forget",
+        { noteId },
+        {
+          bot: {
+            forgetNote: () =>
+              Effect.succeed({ id: noteId, text: "Rate limits are per member" } as never),
+          },
+        },
+      );
+      expect(result).toMatchObject({ forgotten: true, text: "Rate limits are per member" });
+    }),
+  );
+
+  it.effect("refuses a note that is not the bot's", () =>
+    Effect.gen(function* () {
+      const result = yield* callTool(
+        "bot_forget",
+        { noteId },
+        {
+          bot: {
+            forgetNote: () =>
+              Effect.fail(new BotsError({ reason: "not-found", message: "That note is gone." })),
+          },
+        },
+      );
+      expect(result).toMatchObject({ code: "task_not_found" });
+    }),
+  );
+
+  it.effect("returns a labelled thread link from bot_start_session", () =>
+    Effect.gen(function* () {
+      const result = yield* callTool(
+        "bot_start_session",
+        {
+          jobId,
+          projectId: ProjectId.make("project:one"),
+          role: "worker",
+          title: "Upgrade server",
+          task: "Do it",
+        },
+        { sessions: { start: () => Effect.succeed(session(false)) } },
+      );
+      expect(result).toMatchObject({
+        threadId: sessionThreadId,
+        link: "[Upgrade server](t3-thread://v2/environment:bots/thread:session)",
+      });
+    }),
+  );
+
+  it.effect("stores the home thread's active run on an Ask", () =>
+    Effect.gen(function* () {
+      const asks: Array<unknown> = [];
+      const result = yield* callTool(
+        "bot_ask",
+        { question: "q", why: "w", options: [] },
+        {
+          bot: {
+            createAsk: (_id, input) => {
+              asks.push(input);
+              return Effect.succeed({ id: "ask:1" } as never);
+            },
+          },
+        },
+      );
+      expect(result).toMatchObject({ askId: "ask:1" });
+      expect(asks).toEqual([
+        {
+          jobId: null,
+          question: "q",
+          why: "w",
+          options: [],
+          pick: null,
+          homeRunId: RunId.make("run:mcp-test"),
+        },
+      ]);
     }),
   );
 });

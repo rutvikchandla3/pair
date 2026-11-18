@@ -10,6 +10,8 @@ import {
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
+import { BotStateGlyph } from "../bots/BotStateGlyph";
+import { threadChipState } from "../bots/bots.logic";
 import { UnresolvedChip } from "../contextChipParts";
 import { ThreadContextChip } from "../ThreadContextChip";
 
@@ -36,10 +38,16 @@ export function MarkdownThreadLink(props: {
   }
   const ref = { environmentId: thread.environmentId, threadId: thread.id };
   const title = thread.title.trim() || props.label || "Untitled thread";
+  const state = threadChipState(thread);
   return (
     <ThreadContextChip
       record={{ ...ref, title }}
       copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
+      leading={
+        state === null ? null : (
+          <BotStateGlyph glyph={state === "input" ? "needs-you" : state} className="size-[1em]" />
+        )
+      }
     />
   );
 }

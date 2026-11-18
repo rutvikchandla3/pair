@@ -187,6 +187,9 @@ import {
 import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStore";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
+import type { BotChatOptions } from "./chat/botChat";
+import { BotEmptyChat } from "./chat/BotEmptyChat";
+import { useSessionBotName } from "../state/bots";
 
 import {
   previewMiniPlayerSourceKey,
@@ -436,6 +439,8 @@ type ChatViewProps =
       forceExpandedMobileComposer?: boolean;
       /** A side chat in its parent's right panel; the parent keeps the keyboard and workspace UI. */
       embedded?: SideChatParentPanel;
+      /** Set when this is a bot's home thread on its bot page. */
+      bot?: BotChatOptions;
       routeKind: "server";
       draftId?: never;
     }
@@ -446,6 +451,7 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
       embedded?: never;
+      bot?: never;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -461,8 +467,18 @@ export default function ChatView(props: ChatViewProps) {
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
     embedded: parentPanel,
+    bot,
   } = props;
   const embedded = parentPanel !== undefined;
+  const sessionBotName = useSessionBotName(
+    bot === undefined && routeKind === "server" ? environmentId : null,
+    threadId,
+  );
+  const composerDefaultPlaceholder = bot
+    ? `Message ${bot.name}`
+    : sessionBotName === null
+      ? undefined
+      : `Message this session (${sessionBotName} steps back)`;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const isTeamMode = useIsTeamMode(environmentId);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
@@ -3762,6 +3778,13 @@ export default function ChatView(props: ChatViewProps) {
                   onFooterGrow={onTimelineFooterGrowStable}
                   hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                   emptyPlaceholderInset={composerReservedHeight}
+                  {...(bot
+                    ? {
+                        botName: bot.name,
+                        botFocus: bot.focus,
+                        emptyPlaceholder: <BotEmptyChat name={bot.name} />,
+                      }
+                    : {})}
                   topFadeEnabled={!hasTimelineTopBanner}
                   {...(threadHistoryControls === undefined
                     ? {}
@@ -3874,6 +3897,7 @@ export default function ChatView(props: ChatViewProps) {
                               onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
                               composerRef={composerRef}
                               composerDraftTarget={composerDraftTarget}
+                              defaultPlaceholder={composerDefaultPlaceholder}
                               environmentId={environmentId}
                               attachmentUploadsCapabilityKnown={attachmentUploadsCapabilityKnown}
                               supportsAttachmentUploads={supportsAttachmentUploads}
