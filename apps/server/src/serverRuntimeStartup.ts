@@ -38,6 +38,7 @@ import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeReco
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as PairBuilderHost from "./pairBuilder/PairBuilderHost.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -330,6 +331,12 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   } satisfies AutoBootstrapWelcomeTargets;
 });
 
+// The Builder's task workspace opens instead of a starter thread.
+const resolvePairBuilderWelcomeTargets = PairBuilderHost.PairBuilderHost.pipe(
+  Effect.flatMap((host) => host.bootstrapWorkspaceProject),
+  Effect.map((project): AutoBootstrapWelcomeTargets => ({ bootstrapProjectId: project.id })),
+);
+
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -554,15 +561,20 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
           workerFiberRef: effectWorkerFiber,
         }),
       ),
-      autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
-        ? runStartupPhase(
+      autoBootstrap: Effect.gen(function* () {
+        if (serverConfig.pairBuilder !== undefined) {
+          return yield* runStartupPhase("pair-builder.workspace", resolvePairBuilderWelcomeTargets);
+        }
+        if (serverConfig.autoBootstrapProjectFromCwd) {
+          return yield* runStartupPhase(
             "welcome.autobootstrap",
             resolveAutoBootstrapWelcomeTargets.pipe(
               Effect.provideService(SecureRandom.SecureRandom, random),
             ),
-          )
-        : Effect.succeed({})
-      ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
+          );
+        }
+        return {};
+      }).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
     });
     yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
     // Runs after activation: the status check fetches every enabled project's

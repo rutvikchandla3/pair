@@ -102,6 +102,9 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as MemberPushNotifier from "./notifications/MemberPushNotifier.ts";
+import * as PairBuilderHost from "./pairBuilder/PairBuilderHost.ts";
+import * as PairBuilderHttp from "./pairBuilder/http.ts";
+import * as SessionsSnapshotPublisher from "./pairBuilder/SessionsSnapshotPublisher.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -641,6 +644,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* notifier.start();
     }),
   ).pipe(Layer.provide(MemberPushNotifier.layer)),
+  Layer.effectDiscard(
+    SessionsSnapshotPublisher.SessionsSnapshotPublisher.pipe(
+      Effect.flatMap((publisher) => publisher.start),
+    ),
+  ).pipe(Layer.provide(SessionsSnapshotPublisher.layer)),
+  PairBuilderHost.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
@@ -788,9 +797,11 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(ProjectHttp.layer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
+      Layer.provide(PairBuilderHttp.layer),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
+    PairBuilderHttp.layerHealthRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,

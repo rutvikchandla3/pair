@@ -77,4 +77,43 @@ describe("environmentBootstrap", () => {
       "http://127.0.0.1:5733/.well-known/t3/environment",
     );
   });
+
+  it("targets the server under the sub-path the bundle is served from", () => {
+    vi.stubEnv("BASE_URL", "/t3/");
+    installTestBrowser("https://host.test/t3/settings");
+
+    expect(readPrimaryEnvironmentTarget()?.target).toEqual({
+      httpBaseUrl: "https://host.test/t3/",
+      wsBaseUrl: "wss://host.test/t3/",
+    });
+    expect(resolvePrimaryEnvironmentHttpUrl("/api/auth/session")).toBe(
+      "https://host.test/t3/api/auth/session",
+    );
+  });
+
+  it("targets the server path an embedding host names, never the page origin", async () => {
+    const readEmbedded = async (server: string) => {
+      vi.stubGlobal("window", {
+        location: new URL(
+          `https://host.test/builder/t3code/index.html?embed=1&server=${encodeURIComponent(server)}`,
+        ),
+        parent: {},
+        history: { replaceState: vi.fn() },
+      });
+      vi.resetModules();
+      return import(".");
+    };
+
+    const embedded = await readEmbedded("/sbx/abc");
+    expect(embedded.readPrimaryEnvironmentTarget()?.target).toEqual({
+      httpBaseUrl: "https://host.test/sbx/abc/",
+      wsBaseUrl: "wss://host.test/sbx/abc/",
+    });
+    expect(embedded.resolvePrimaryEnvironmentHttpUrl("/.well-known/t3/environment")).toBe(
+      "https://host.test/sbx/abc/.well-known/t3/environment",
+    );
+
+    const invalid = await readEmbedded("//evil.test/sbx");
+    expect(() => invalid.readPrimaryEnvironmentTarget()).toThrow(/could not be opened/);
+  });
 });

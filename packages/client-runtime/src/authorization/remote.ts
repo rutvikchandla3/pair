@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+import { environmentEndpointUrl, environmentSocketUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -316,14 +316,6 @@ export const issueRemoteDpopWebSocketTicket = Effect.fn(
   );
 });
 
-function rpcSocketUrl(wsBaseUrl: string): URL {
-  const url = new URL(wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
-  return url;
-}
-
 export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   "clientRuntime.authorization.resolveRemoteWebSocketConnectionUrl",
 )(function* (input: {
@@ -341,7 +333,7 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
 
-  const url = rpcSocketUrl(input.wsBaseUrl);
+  const url = environmentSocketUrl(input.wsBaseUrl);
   url.searchParams.set("wsTicket", Redacted.value(issued.ticket));
   appendClientConnectionParams(
     url,
@@ -391,7 +383,7 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
     ),
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
-  const url = rpcSocketUrl(input.wsBaseUrl);
+  const url = environmentSocketUrl(input.wsBaseUrl);
   const upgradeProof = yield* input.createProof({
     method: "GET",
     url: `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}${url.pathname}`,

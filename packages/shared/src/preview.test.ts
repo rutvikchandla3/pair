@@ -39,9 +39,23 @@ describe("previewPdfAssetUrl", () => {
     },
   );
 
-  it("keeps URLs from the connected environment", () => {
-    const source = "https://environment.test/api/assets/token/guide.pdf#page=2";
-    expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
+  it.each([
+    ["https://environment.test", "https://environment.test/api/assets/token/guide.pdf#page=2"],
+    [
+      "https://environment.test/sbx/abc/",
+      "https://environment.test/sbx/abc/api/assets/token/guide.pdf",
+    ],
+  ])("keeps URLs from the connected environment at %s", (base, source) => {
+    expect(previewPdfAssetUrl(source, base)).toBe(source);
+  });
+
+  it("remaps local assets under the connection's path prefix", () => {
+    expect(
+      previewPdfAssetUrl(
+        "http://127.0.0.1:14537/api/assets/token/guide.pdf#page=3",
+        "https://host.test/sbx/abc/",
+      ),
+    ).toBe("https://host.test/sbx/abc/api/assets/token/guide.pdf#page=3");
   });
 
   it.each(["127.0.0.2", "localhost.", "[::1]"])(

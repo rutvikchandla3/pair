@@ -72,6 +72,13 @@ export const GetAuthSessionByIdInput = Schema.Struct({
 });
 export type GetAuthSessionByIdInput = typeof GetAuthSessionByIdInput.Type;
 
+export const FindActiveMemberAuthSessionInput = Schema.Struct({
+  memberId: MemberId,
+  subject: Schema.String,
+  method: ServerAuthSessionMethod,
+});
+export type FindActiveMemberAuthSessionInput = typeof FindActiveMemberAuthSessionInput.Type;
+
 export const ListActiveAuthSessionsInput = Schema.Struct({
   now: Schema.DateTimeUtcFromString,
   connectedSessionIds: Schema.optionalKey(Schema.Array(AuthSessionId)),
@@ -119,6 +126,10 @@ export class AuthSessionRepository extends Context.Service<
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
     readonly getById: (
       input: GetAuthSessionByIdInput,
+    ) => Effect.Effect<Option.Option<AuthSessionRecord>, AuthSessionRepositoryError>;
+    /** The member's newest unrevoked session with this subject and method. */
+    readonly findActiveForMember: (
+      input: FindActiveMemberAuthSessionInput,
     ) => Effect.Effect<Option.Option<AuthSessionRecord>, AuthSessionRepositoryError>;
     readonly listActive: (
       input: ListActiveAuthSessionsInput,
@@ -290,6 +301,37 @@ export const make = Effect.gen(function* () {
           revoked_at AS "revokedAt"
         FROM auth_sessions
         WHERE session_id = ${sessionId}
+      `,
+  });
+
+  const findActiveMemberSessionRow = SqlSchema.findOneOption({
+    Request: FindActiveMemberAuthSessionInput,
+    Result: AuthSessionRawDbRow,
+    execute: ({ memberId, subject, method }) =>
+      sql`
+        SELECT
+          session_id AS "sessionId",
+          subject AS "subject",
+          member_id AS "memberId",
+          scopes AS "scopes",
+          method AS "method",
+          client_label AS "clientLabel",
+          client_ip_address AS "clientIpAddress",
+          client_user_agent AS "clientUserAgent",
+          client_device_type AS "clientDeviceType",
+          client_os AS "clientOs",
+          client_browser AS "clientBrowser",
+          issued_at AS "issuedAt",
+          expires_at AS "expiresAt",
+          last_connected_at AS "lastConnectedAt",
+          revoked_at AS "revokedAt"
+        FROM auth_sessions
+        WHERE member_id = ${memberId}
+          AND subject = ${subject}
+          AND method = ${method}
+          AND revoked_at IS NULL
+        ORDER BY issued_at DESC, session_id DESC
+        LIMIT 1
       `,
   });
 
@@ -501,6 +543,33 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const findActiveForMember: AuthSessionRepository["Service"]["findActiveForMember"] = (input) =>
+    findActiveMemberSessionRow(input).pipe(
+      NodeSqliteClient.readOnly,
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.findActiveForMember:query",
+          "AuthSessionRepository.findActiveForMember:decodeRow",
+        ),
+      ),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeedNone,
+          onSome: (row) =>
+            decodeAuthSessionDbRow(row).pipe(
+              Effect.mapError((cause) =>
+                PersistenceDecodeError.fromSchemaError(
+                  "AuthSessionRepository.findActiveForMember:decodeRow",
+                  cause,
+                  { sessionId: row.sessionId },
+                ),
+              ),
+              Effect.map((decodedRow) => Option.some(toAuthSessionRecord(decodedRow))),
+            ),
+        }),
+      ),
+    );
+
   const listActive: AuthSessionRepository["Service"]["listActive"] = (input) =>
     listActiveSessionRows(input).pipe(
       NodeSqliteClient.readOnly,
@@ -610,6 +679,7 @@ export const make = Effect.gen(function* () {
     createReplacingActive,
     createIfAbsent,
     getById,
+    findActiveForMember,
     listActive,
     revoke,
     revokeAllExcept,

@@ -55,6 +55,16 @@ export interface ServerDerivedPaths {
   readonly secretsDir: string;
 }
 
+/** Pair Builder host mode, on when the Builder sets `PAIR_BUILDER_INGRESS_TOKEN`. */
+export interface PairBuilderHostConfig {
+  readonly ingressToken: Redacted.Redacted<string>;
+  readonly sandboxId: string | undefined;
+  readonly workspaceRoot: string;
+  readonly workspaceTitle: string | undefined;
+  /** Where `sessions.snapshot` goes; unset sends none. */
+  readonly events: { readonly url: URL; readonly token: Redacted.Redacted<string> } | undefined;
+}
+
 export interface DeriveServerPathsOptions {
   readonly baseDirIsExplicit?: boolean;
 }
@@ -106,6 +116,7 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    readonly pairBuilder?: PairBuilderHostConfig | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (
