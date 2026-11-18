@@ -51,8 +51,6 @@ import * as Statement from "effect/sql/Statement";
 import * as AssetSigner from "./assets/AssetSigner.ts";
 import * as CloudOnly from "./environment/CloudOnly.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
-import * as ChiefOfStaffHome from "./chiefOfStaff/ChiefOfStaffHome.ts";
-import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceService from "./space/SpaceService.ts";
 import * as InboxService from "./inbox/InboxService.ts";
 import * as BranchLineageService from "./lineage/BranchLineageService.ts";
@@ -1129,8 +1127,6 @@ it.effect.each([
         Layer.mergeAll(
           Layer.fresh(layerConfigSources),
           Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
-          Layer.mock(ChiefOfStaffVoice.ChiefOfStaffVoice)({}),
-          Layer.mock(ChiefOfStaffHome.ChiefOfStaffHome)({}),
           Layer.mock(SpaceService.SpaceService)({}),
           Layer.mock(InboxService.InboxService)({}),
           Layer.mock(BranchLineageService.BranchLineageService)({}),
@@ -1256,8 +1252,6 @@ const configRpcServer = Effect.fn("test.configRpcServer")(function* (options: {
 const layerConfigRpcTest = Layer.mergeAll(
   Layer.fresh(layerConfigSources),
   Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
-  Layer.mock(ChiefOfStaffVoice.ChiefOfStaffVoice)({}),
-  Layer.mock(ChiefOfStaffHome.ChiefOfStaffHome)({}),
   Layer.mock(SpaceService.SpaceService)({}),
   Layer.mock(InboxService.InboxService)({}),
   Layer.mock(BranchLineageService.BranchLineageService)({}),
@@ -1664,8 +1658,6 @@ const callCloudOnly = <R extends Rpc.Any>(
       Layer.mergeAll(
         Layer.fresh(layerConfigSources),
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
-        Layer.mock(ChiefOfStaffVoice.ChiefOfStaffVoice)({}),
-        Layer.mock(ChiefOfStaffHome.ChiefOfStaffHome)({}),
         Layer.mock(SpaceService.SpaceService)({}),
         Layer.mock(InboxService.InboxService)({}),
         Layer.mock(BranchLineageService.BranchLineageService)({}),

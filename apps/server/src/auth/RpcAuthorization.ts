@@ -95,7 +95,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.peerLinksList]: AuthAccessReadScope,
   [WS_METHODS.threadMoveToLocal]: AuthOrchestrationOperateScope,
   [WS_METHODS.threadMovePreview]: AuthOrchestrationReadScope,
-  [WS_METHODS.chiefOfStaffSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.spacesList]: AuthOrchestrationReadScope,
   [WS_METHODS.spacesGet]: AuthOrchestrationReadScope,
   [WS_METHODS.spacesTaskGet]: AuthOrchestrationReadScope,

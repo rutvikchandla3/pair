@@ -9,7 +9,6 @@ import {
 } from "react";
 import { useLocation, useRouter, type AnyRouter } from "@tanstack/react-router";
 
-import { ChiefOfStaffShortcut } from "../chiefOfStaff/ChiefOfStaffShortcut";
 import { SpaceShortcuts } from "./spaces/SpaceShortcuts";
 import { TeamPlaceShortcuts } from "./inbox/TeamPlaceShortcuts";
 import { moveWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
@@ -454,7 +453,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-        <ChiefOfStaffShortcut />
         <SpaceShortcuts />
         <TeamPlaceShortcuts />
         <Sidebar

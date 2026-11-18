@@ -46,7 +46,6 @@ import { Route as ChatSettingsDiagnosticsRouteImport } from './routes/_chat.sett
 import { Route as ChatSettingsDevicesRouteImport } from './routes/_chat.settings.devices'
 import { Route as ChatSettingsConnectionsRouteImport } from './routes/_chat.settings.connections'
 import { Route as ChatSettingsCloudRouteImport } from './routes/_chat.settings.cloud'
-import { Route as ChatSettingsChiefOfStaffRouteImport } from './routes/_chat.settings.chief-of-staff'
 import { Route as ChatSettingsChatRouteImport } from './routes/_chat.settings.chat'
 import { Route as ChatSettingsBrowserRouteImport } from './routes/_chat.settings.browser'
 import { Route as ChatSettingsBetaRouteImport } from './routes/_chat.settings.beta'
@@ -249,12 +248,6 @@ const ChatSettingsCloudRoute = ChatSettingsCloudRouteImport.update({
   path: '/cloud',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
-const ChatSettingsChiefOfStaffRoute =
-  ChatSettingsChiefOfStaffRouteImport.update({
-    id: '/chief-of-staff',
-    path: '/chief-of-staff',
-    getParentRoute: () => ChatSettingsRoute,
-  } as any)
 const ChatSettingsChatRoute = ChatSettingsChatRouteImport.update({
   id: '/chat',
   path: '/chat',
@@ -344,7 +337,6 @@ export interface FileRoutesByFullPath {
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/browser': typeof ChatSettingsBrowserRoute
   '/settings/chat': typeof ChatSettingsChatRoute
-  '/settings/chief-of-staff': typeof ChatSettingsChiefOfStaffRoute
   '/settings/cloud': typeof ChatSettingsCloudRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
   '/settings/devices': typeof ChatSettingsDevicesRoute
@@ -395,7 +387,6 @@ export interface FileRoutesByTo {
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/browser': typeof ChatSettingsBrowserRoute
   '/settings/chat': typeof ChatSettingsChatRoute
-  '/settings/chief-of-staff': typeof ChatSettingsChiefOfStaffRoute
   '/settings/cloud': typeof ChatSettingsCloudRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
   '/settings/devices': typeof ChatSettingsDevicesRoute
@@ -448,7 +439,6 @@ export interface FileRoutesById {
   '/_chat/settings/beta': typeof ChatSettingsBetaRoute
   '/_chat/settings/browser': typeof ChatSettingsBrowserRoute
   '/_chat/settings/chat': typeof ChatSettingsChatRoute
-  '/_chat/settings/chief-of-staff': typeof ChatSettingsChiefOfStaffRoute
   '/_chat/settings/cloud': typeof ChatSettingsCloudRoute
   '/_chat/settings/connections': typeof ChatSettingsConnectionsRoute
   '/_chat/settings/devices': typeof ChatSettingsDevicesRoute
@@ -501,7 +491,6 @@ export interface FileRouteTypes {
     | '/settings/beta'
     | '/settings/browser'
     | '/settings/chat'
-    | '/settings/chief-of-staff'
     | '/settings/cloud'
     | '/settings/connections'
     | '/settings/devices'
@@ -552,7 +541,6 @@ export interface FileRouteTypes {
     | '/settings/beta'
     | '/settings/browser'
     | '/settings/chat'
-    | '/settings/chief-of-staff'
     | '/settings/cloud'
     | '/settings/connections'
     | '/settings/devices'
@@ -604,7 +592,6 @@ export interface FileRouteTypes {
     | '/_chat/settings/beta'
     | '/_chat/settings/browser'
     | '/_chat/settings/chat'
-    | '/_chat/settings/chief-of-staff'
     | '/_chat/settings/cloud'
     | '/_chat/settings/connections'
     | '/_chat/settings/devices'
@@ -904,13 +891,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsCloudRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
-    '/_chat/settings/chief-of-staff': {
-      id: '/_chat/settings/chief-of-staff'
-      path: '/chief-of-staff'
-      fullPath: '/settings/chief-of-staff'
-      preLoaderRoute: typeof ChatSettingsChiefOfStaffRouteImport
-      parentRoute: typeof ChatSettingsRoute
-    }
     '/_chat/settings/chat': {
       id: '/_chat/settings/chat'
       path: '/chat'
@@ -1006,7 +986,6 @@ interface ChatSettingsRouteChildren {
   ChatSettingsBetaRoute: typeof ChatSettingsBetaRoute
   ChatSettingsBrowserRoute: typeof ChatSettingsBrowserRoute
   ChatSettingsChatRoute: typeof ChatSettingsChatRoute
-  ChatSettingsChiefOfStaffRoute: typeof ChatSettingsChiefOfStaffRoute
   ChatSettingsCloudRoute: typeof ChatSettingsCloudRoute
   ChatSettingsConnectionsRoute: typeof ChatSettingsConnectionsRoute
   ChatSettingsDevicesRoute: typeof ChatSettingsDevicesRoute
@@ -1038,7 +1017,6 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsBetaRoute: ChatSettingsBetaRoute,
   ChatSettingsBrowserRoute: ChatSettingsBrowserRoute,
   ChatSettingsChatRoute: ChatSettingsChatRoute,
-  ChatSettingsChiefOfStaffRoute: ChatSettingsChiefOfStaffRoute,
   ChatSettingsCloudRoute: ChatSettingsCloudRoute,
   ChatSettingsConnectionsRoute: ChatSettingsConnectionsRoute,
   ChatSettingsDevicesRoute: ChatSettingsDevicesRoute,

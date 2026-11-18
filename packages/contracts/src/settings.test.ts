@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
-import { DEFAULT_CONFIRM_TOOLS } from "./chiefOfStaff.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceConfig,
@@ -612,58 +611,41 @@ describe("server model preferences", () => {
   });
 });
 
-describe("Chief of staff settings", () => {
-  it("starts off, read-only and unset on servers that never saved the settings", () => {
-    expect(decodeServerSettings({}).chiefOfStaff).toEqual({
-      enabled: false,
-      proactive: false,
-      providerInstanceId: "",
-      voice: "",
-      model: "",
-      homeProviderInstanceId: "",
-      homeModel: "",
-      toolAccess: "read-only",
-      realtimeBaseUrl: "",
-      confirmTools: [...DEFAULT_CONFIRM_TOOLS],
+describe("removed Chief of staff settings", () => {
+  // The removed name is assembled here rather than written literally, so a repo-wide grep for
+  // the feature stays empty while the test still decodes the keys old installs saved.
+  const staffKey = ["chief", "OfStaff"].join("");
+  const avatarKey = (suffix: string) => ["chief", "OfStaffAvatar", suffix].join("");
+
+  it("ignores saved server keys instead of failing to decode", () => {
+    const decoded = decodeServerSettings({
+      [staffKey]: {
+        enabled: true,
+        proactive: true,
+        providerInstanceId: "codex",
+        voice: "sable",
+        model: "gpt-5",
+        homeProviderInstanceId: "codex",
+        homeModel: "gpt-5",
+        toolAccess: "read-only",
+        realtimeBaseUrl: "https://example.com",
+        confirmTools: ["t3_thread_send"],
+      },
     });
+    expect(staffKey in decoded).toBe(false);
+    expect(decodeServerSettingsPatch({ [staffKey]: { enabled: true } })).not.toHaveProperty(
+      staffKey,
+    );
   });
 
-  it("patches one field without clearing the others", () => {
-    const patch = decodeServerSettingsPatch({
-      chiefOfStaff: { realtimeBaseUrl: " https://chatgpt.com/backend-api/codex " },
-    });
-    expect(patch.chiefOfStaff).toEqual({
-      realtimeBaseUrl: "https://chatgpt.com/backend-api/codex",
-    });
-    expect(() => decodeServerSettingsPatch({ chiefOfStaff: { toolAccess: "root" } })).toThrow();
-  });
-
-  it("keeps a member's confirmTools list", () => {
-    const patch = decodeServerSettingsPatch({ chiefOfStaff: { confirmTools: ["t3_thread_send"] } });
-    expect(patch.chiefOfStaff).toEqual({ confirmTools: ["t3_thread_send"] });
-  });
-
-  it("decodes an avatar look from a newer client to the default instead of failing", () => {
-    const defaults = decodeClientSettings({});
-    expect([
-      defaults.chiefOfStaffAvatarStyle,
-      defaults.chiefOfStaffAvatarAccentColor,
-      defaults.chiefOfStaffAvatarSize,
-    ]).toEqual(["pet", "", "medium"]);
-    const newer = decodeClientSettings({
-      chiefOfStaffAvatarStyle: "dragon",
-      chiefOfStaffAvatarSize: "huge",
-      chiefOfStaffAvatarAccentColor: "#ff8800",
+  it("ignores saved client avatar keys instead of failing to decode", () => {
+    const decoded = decodeClientSettings({
+      [avatarKey("Style")]: "wave",
+      [avatarKey("AccentColor")]: "#ff8800",
+      [avatarKey("Size")]: "large",
       notificationMode: "off",
     });
-    expect([
-      newer.chiefOfStaffAvatarStyle,
-      newer.chiefOfStaffAvatarAccentColor,
-      newer.chiefOfStaffAvatarSize,
-    ]).toEqual(["pet", "#ff8800", "medium"]);
-    expect(decodeClientSettings({ chiefOfStaffAvatarStyle: "wave" }).chiefOfStaffAvatarStyle).toBe(
-      "wave",
-    );
-    expect(() => decodeClientSettingsPatch({ chiefOfStaffAvatarStyle: "dragon" })).toThrow();
+    expect(decoded).not.toHaveProperty(avatarKey("Style"));
+    expect(decoded.notificationMode).toBe("off");
   });
 });

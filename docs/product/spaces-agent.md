@@ -399,10 +399,8 @@ Every tool call runs inside an `McpInvocationScope`
   - It carries the tagger's member id and access. No credential is minted, because Pair runs in the
     server process.
   - For a process the server spawns, `McpSessionRegistry.issueClient` mints one instead
-    ([McpSessionRegistry.ts:174](../../apps/server/src/mcp/McpSessionRegistry.ts)). Chief of staff
-    works that way.
-  - Access is the tagger's and never wider. Chief of staff follows the same lending rule
-    (`effectiveToolAccess`, [ChiefOfStaffVoice.ts:91](../../apps/server/src/chiefOfStaff/ChiefOfStaffVoice.ts)).
+    ([McpSessionRegistry.ts:174](../../apps/server/src/mcp/McpSessionRegistry.ts)).
+  - Access is the tagger's and never wider.
 - **`reach` is the space's tasks, and the threads attached to them.**
   - It is not every thread the tagger can open. Pair's reply is read by the whole room.
   - `sessionReaches` already holds that a prompt can't reach past its readers
@@ -990,8 +988,7 @@ Docs to change when M1 lands:
   - `apps/server/src/mcp/`: McpInvocationContext.ts, McpSessionRegistry.ts, threadAccess.ts, and
     the toolkits in `toolkits/thread` and `toolkits/orchestrator`.
   - `apps/server/src/team/`: ThreadAccess.ts, MemberProviderAccounts.ts and TeamUsage.ts.
-  - `apps/server/src/chiefOfStaff/ChiefOfStaffVoice.ts` and
-    `apps/server/src/textGeneration/TextGeneration.ts`.
+  - `apps/server/src/textGeneration/TextGeneration.ts`.
   - `packages/contracts/src/orchestrationV2.ts` and
     `packages/provider-core/src/server/ProviderAdapter.ts`.
 - **Outside patterns we borrowed:**

@@ -14,9 +14,7 @@ import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
-  DEFAULT_CONFIRM_TOOLS,
   DeviceToolError,
-  MemberId,
   OrchestratorMcpFailure,
   PreviewAutomationError,
   ProviderInteractionMode,
@@ -27,12 +25,6 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
-import * as ChiefOfStaffAudit from "../chiefOfStaff/ChiefOfStaffAudit.ts";
-import type { AuditConfirmation } from "../chiefOfStaff/ChiefOfStaffAudit.ts";
-import * as ChiefOfStaffConfirmation from "../chiefOfStaff/ChiefOfStaffConfirmation.ts";
-import { chiefOfStaffCaller } from "../chiefOfStaff/caller.ts";
-import * as ChiefOfStaffHomeThreads from "../chiefOfStaff/homeThreads.ts";
-import { isRiskyCall, summarizeCallArgs } from "../chiefOfStaff/policy.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
@@ -59,10 +51,6 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
-import * as ChiefOfStaffAuditHandlers from "./toolkits/chiefOfStaffAudit/handlers.ts";
-import { ChiefOfStaffAuditToolkit } from "./toolkits/chiefOfStaffAudit/tools.ts";
-import * as ChiefOfStaffMemoryHandlers from "./toolkits/chiefOfStaffMemory/handlers.ts";
-import { ChiefOfStaffMemoryToolkit } from "./toolkits/chiefOfStaffMemory/tools.ts";
 import * as SandboxImageHandlers from "./toolkits/sandboxImage/handlers.ts";
 import { SandboxImageToolkit } from "./toolkits/sandboxImage/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
@@ -268,12 +256,6 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     // A cloud-only server takes links without the beta: each is a member's agent link.
     if (limited.client?.linked === true && !labs && !cloudOnly) return linkedEnvironmentsOff;
     const linkedEnvironments = labs || (yield* hasAgentLinks);
-    // One read and one label check per request, so the cos_* tools and the audit hook
-    // never re-derive "is Chief of staff" and see the same answer.
-    const chiefOfStaff = chiefOfStaffCaller(
-      limited,
-      yield* ChiefOfStaffHomeThreads.readHomeThreads,
-    );
     const reachOf = (scope: typeof limited) => {
       const reach = access === undefined ? undefined : threadReachOf(access, scope);
       return reach === undefined ? {} : { reach };
@@ -283,16 +265,6 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         ...limited,
         linkedEnvironments,
         teamImages: cloudOnly,
-        ...(chiefOfStaff === undefined
-          ? {}
-          : {
-              chiefOfStaff: {
-                via: chiefOfStaff.via,
-                ...(chiefOfStaff.memberId === undefined
-                  ? {}
-                  : { memberId: MemberId.make(chiefOfStaff.memberId) }),
-              },
-            }),
         ...reachOf(limited),
       }),
       Effect.map(normalizeMcpHttpResponse),
@@ -934,51 +906,16 @@ const handoffTargetIds = (
   return typeof threadId === "string" ? [threadId] : [];
 };
 
-/** Declared tool failures carry their code only in the text content; recover it for the audit. */
-const auditErrorCode = (
-  result: McpSchema.CallToolResult | undefined,
-  fallback: string | undefined,
-): string => {
-  if (fallback !== undefined && fallback !== "unknown") return fallback;
-  const block = result?.content?.find((part) => part.type === "text");
-  const text = block?.type === "text" ? block.text : undefined;
-  if (typeof text !== "string") return fallback ?? "unknown";
-  try {
-    const parsed: unknown = JSON.parse(text);
-    const code =
-      typeof parsed === "object" && parsed !== null
-        ? (parsed as { readonly code?: unknown }).code
-        : undefined;
-    return typeof code === "string" ? code : (fallback ?? "unknown");
-  } catch {
-    return fallback ?? "unknown";
-  }
-};
-
-/** What the risky-tool gate decides for one call. */
-type GateDecision =
-  | { readonly kind: "not-gated" }
-  | { readonly kind: "allowed" }
-  | {
-      readonly kind: "denied";
-      readonly message: string;
-      readonly confirmation?: AuditConfirmation;
-    };
-
 /**
- * Records every tool call after it returns: analytics without IDs, prompts or free text,
- * and a Chief of staff audit entry. Both run detached from the response.
+ * Records every tool call after it returns: analytics without IDs, prompts or free text.
+ * Runs detached from the response.
  */
 const withToolRecording =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
     const server = yield* McpServer.McpServer;
     const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
-    const audit = yield* Effect.serviceOption(ChiefOfStaffAudit.ChiefOfStaffAudit);
-    const confirmation = yield* Effect.serviceOption(
-      ChiefOfStaffConfirmation.ChiefOfStaffConfirmation,
-    );
-    if (Option.isNone(analytics) && Option.isNone(audit) && Option.isNone(confirmation)) {
+    if (Option.isNone(analytics)) {
       return yield* registration;
     }
     const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
@@ -1025,74 +962,6 @@ const withToolRecording =
               }),
               Effect.orElseSucceed(() => false),
             );
-    // The risky-tool gate. Every other caller pays one `chiefOfStaff` field check and stops.
-    const gateDecision: (tool: string, args: unknown) => Effect.Effect<GateDecision> =
-      Effect.fnUntraced(function* (tool, args) {
-        const scope = Option.getOrUndefined(
-          yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
-        );
-        const caller = scope?.chiefOfStaff;
-        if (caller === undefined) return { kind: "not-gated" } as const;
-        const settings = Option.getOrUndefined(
-          yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
-        );
-        const configured =
-          settings === undefined
-            ? undefined
-            : (yield* settings.getSettings.pipe(Effect.orElseSucceed(() => undefined)))
-                ?.chiefOfStaff.confirmTools;
-        if (!isRiskyCall(tool, args, configured ?? DEFAULT_CONFIRM_TOOLS)) {
-          return { kind: "not-gated" } as const;
-        }
-        if (Option.isNone(confirmation)) {
-          return {
-            kind: "denied",
-            message: "The server cannot ask you to approve that action, so nothing ran.",
-          } as const;
-        }
-        const outcome = yield* confirmation.value
-          .confirm({
-            via: caller.via,
-            ...(caller.memberId === undefined ? {} : { memberId: caller.memberId }),
-            ...(scope?.thread === undefined ? {} : { threadId: scope.thread.threadId }),
-            tool,
-            summary: summarizeCallArgs(args),
-          })
-          .pipe(
-            Effect.map((value) => ({ ok: true as const, value })),
-            Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
-          );
-        if (!outcome.ok) return { kind: "denied", message: outcome.error.message } as const;
-        if (outcome.value === "allowed") return { kind: "allowed" } as const;
-        return {
-          kind: "denied",
-          confirmation: outcome.value,
-          message:
-            outcome.value === "denied"
-              ? "The user declined. Nothing ran."
-              : "No answer in time, so nothing ran.",
-        } as const;
-      });
-
-    const capabilityDeniedResult = (message: string) =>
-      new McpSchema.CallToolResult({
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              _tag: "OrchestratorMcpFailure",
-              code: "capability_denied",
-              message,
-            }),
-          },
-        ],
-        structuredContent: {
-          _tag: "OrchestratorMcpFailure",
-          code: "capability_denied",
-          message,
-        },
-        isError: true,
-      });
 
     const record =
       /* Request instrumentation already owns the span; keep this helper in that context. */
@@ -1102,31 +971,7 @@ const withToolRecording =
           args: unknown,
           result: McpSchema.CallToolResult | undefined,
           durationMs: number,
-          confirmationOutcome: AuditConfirmation | undefined,
         ) {
-          if (Option.isSome(audit)) {
-            const scope = Option.getOrUndefined(
-              yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
-            );
-            const caller = scope?.chiefOfStaff;
-            if (caller !== undefined) {
-              const outcome = toolOutcome(result);
-              const status = outcome.outcome === "ok" ? "ok" : "error";
-              yield* audit.value.record({
-                ...(caller.memberId === undefined ? {} : { memberId: caller.memberId }),
-                via: caller.via,
-                ...(scope?.thread === undefined ? {} : { threadId: scope.thread.threadId }),
-                tool,
-                args,
-                outcome: status,
-                ...(status === "error"
-                  ? { errorCode: auditErrorCode(result, outcome.errorCode) }
-                  : {}),
-                ...(confirmationOutcome === undefined ? {} : { confirmation: confirmationOutcome }),
-                durationMs,
-              });
-            }
-          }
           if (Option.isNone(analytics)) return;
           const handoff =
             HANDOFF_TOOLS.has(tool) ||
@@ -1189,12 +1034,6 @@ const withToolRecording =
           handle:
             /* Request instrumentation already owns the span; keep this helper in that context. */
             Effect.fnUntraced(function* (payload) {
-              const decision = yield* gateDecision(options.tool.name, payload);
-              if (decision.kind === "denied") {
-                const denial = capabilityDeniedResult(decision.message);
-                yield* record(options.tool.name, payload, denial, 0, decision.confirmation);
-                return denial;
-              }
               const startedAt = yield* Clock.currentTimeMillis;
               return yield* options.handle(payload).pipe(
                 Effect.onExit((exit) => {
@@ -1204,13 +1043,7 @@ const withToolRecording =
                   // Handoff tools look up threads to record; the response must not wait on them.
                   return Clock.currentTimeMillis.pipe(
                     Effect.flatMap((endedAt) =>
-                      record(
-                        options.tool.name,
-                        payload,
-                        result,
-                        endedAt - startedAt,
-                        decision.kind === "allowed" ? "allowed" : undefined,
-                      ),
+                      record(options.tool.name, payload, result, endedAt - startedAt),
                     ),
                     Effect.forkDetach,
                     Effect.asVoid,
@@ -1338,21 +1171,11 @@ const layerEnvironmentToolkit = toolkitRegistration(
   EnvironmentHandlers.layer,
 ).pipe(Layer.provide(ThreadCommandExecutor.layer));
 
-const layerChiefOfStaffMemoryToolkit = toolkitRegistration(
-  ChiefOfStaffMemoryToolkit,
-  ChiefOfStaffMemoryHandlers.layer,
-);
-
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
 const layerSpaceToolkit = toolkitRegistration(SpaceToolkit, SpaceHandlers.layer);
 
 const layerLineageToolkit = toolkitRegistration(LineageToolkit, LineageHandlers.layer);
-
-const layerChiefOfStaffAuditToolkit = toolkitRegistration(
-  ChiefOfStaffAuditToolkit,
-  ChiefOfStaffAuditHandlers.layer,
-);
 
 const layerSandboxImageToolkit = toolkitRegistration(
   SandboxImageToolkit,
@@ -1429,8 +1252,6 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
   layerSpaceToolkit,
   layerLineageToolkit,
-  layerChiefOfStaffMemoryToolkit,
-  layerChiefOfStaffAuditToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

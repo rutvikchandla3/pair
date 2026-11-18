@@ -157,13 +157,6 @@ import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
 import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
 import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
-import * as ChiefOfStaffAudit from "./chiefOfStaff/ChiefOfStaffAudit.ts";
-import * as ChiefOfStaffConfirmation from "./chiefOfStaff/ChiefOfStaffConfirmation.ts";
-import * as ChiefOfStaffHome from "./chiefOfStaff/ChiefOfStaffHome.ts";
-import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
-import * as ChiefOfStaffMemory from "./chiefOfStaff/ChiefOfStaffMemory.ts";
-import * as ChiefOfStaffTriggers from "./chiefOfStaff/ChiefOfStaffTriggers.ts";
-import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceAgentAdapter from "./space/SpaceAgentAdapter.ts";
 import * as SpaceAgentAdapterSlot from "./space/SpaceAgentAdapterSlot.ts";
 import * as SpaceAgentTools from "./space/SpaceAgentTools.ts";
@@ -1030,20 +1023,12 @@ const layerMakeRoutes = Layer.mergeAll(
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
-    Layer.provide(ChiefOfStaffAudit.layer),
     Layer.provide(SandboxFork.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   ),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
-  // Wakes each member's home thread as their threads finish, fail or need them.
-  Layer.effectDiscard(
-    Effect.gen(function* () {
-      const triggers = yield* ChiefOfStaffTriggers.ChiefOfStaffTriggers;
-      yield* triggers.start();
-    }),
-  ).pipe(Layer.provide(ChiefOfStaffTriggers.layer.pipe(Layer.provide(ChiefOfStaffHost.layer)))),
   // @pair, the in-process room agent, joins the provider adapter registry.
   SpaceAgentAdapter.layerRegister.pipe(
     Layer.provide(
@@ -1079,25 +1064,6 @@ const layerMakeRoutes = Layer.mergeAll(
       CloudMoves.layer.pipe(Layer.provide(CloudMoveClient.layer)),
     ).pipe(Layer.provideMerge(PeerMcpClient.layer), Layer.provideMerge(PeerLinks.layer)),
   ),
-  // Voice requires Home, so provide Home into Voice; merging them would leave Home unsatisfied.
-  Layer.provide(
-    ChiefOfStaffVoice.layer.pipe(
-      Layer.provide(ChiefOfStaffHome.layer),
-      Layer.provide(ChiefOfStaffHost.layer),
-    ),
-  ),
-  // Risky Chief of staff calls wait on an approval card in the member's home thread.
-  Layer.provide(
-    Layer.merge(
-      ChiefOfStaffHome.layer.pipe(Layer.provide(ChiefOfStaffHost.layer)),
-      ChiefOfStaffConfirmation.layer.pipe(
-        Layer.provide(ChiefOfStaffHome.layer),
-        Layer.provide(ChiefOfStaffHost.layer),
-      ),
-    ),
-  ),
-  // Bounded memory blocks and their MEMORY.md mirror, for the home thread and cos_memory tools.
-  Layer.provide(ChiefOfStaffMemory.layer),
   // Spaces for WebSocket clients and /mcp agents.
   Layer.provide(
     SpaceService.layer.pipe(

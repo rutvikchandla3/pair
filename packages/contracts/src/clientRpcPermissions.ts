@@ -47,13 +47,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.threadMoveToLocal]: AuthOrchestrationOperateScope,
   // A move starts a thread on Pair Cloud through this server's link.
   [WS_METHODS.threadMoveToCloud]: AuthOrchestrationOperateScope,
-  // A voice session runs the Chief of staff's provider and lends it MCP tools.
-  [WS_METHODS.chiefOfStaffStart]: AuthOrchestrationOperateScope,
-  [WS_METHODS.chiefOfStaffStop]: AuthOrchestrationOperateScope,
-  // Listing boots a provider process for the settings page.
-  [WS_METHODS.chiefOfStaffListVoices]: AuthSettingsWriteScope,
-  // Opening the chat creates the member's home project and thread.
-  [WS_METHODS.chiefOfStaffOpenHome]: AuthOrchestrationOperateScope,
   // Space writes dispatch orchestration commands; a task start runs a provider turn.
   [WS_METHODS.spacesMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.spacesPost]: AuthOrchestrationOperateScope,

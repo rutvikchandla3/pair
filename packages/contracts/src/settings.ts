@@ -55,14 +55,6 @@ import {
 } from "./providerInstance.ts";
 import { ComputeDriverId, SandboxSize } from "./sandbox.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
-import {
-  ChiefOfStaffAvatarAccentColor,
-  ChiefOfStaffAvatarSize,
-  ChiefOfStaffAvatarClientSettings,
-  ChiefOfStaffAvatarStyle,
-  ChiefOfStaffSettings,
-  ChiefOfStaffSettingsPatch,
-} from "./chiefOfStaff.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -536,7 +528,6 @@ export const ClientSettingsSchema = Schema.Struct({
   // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
   // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  ...ChiefOfStaffAvatarClientSettings,
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1525,7 +1516,6 @@ export const ServerSettings = Schema.Struct({
 
   /** Sent by the Usage tab with each summary request to this environment; edit in settings.json. Invalid values are ignored. */
   usageModelFilter: ForwardCompatibleOptional(UsageModelFilter),
-  chiefOfStaff: ChiefOfStaffSettings,
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1899,7 +1889,6 @@ export const ServerSettingsPatch = Schema.Struct({
   usageModelAliases: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
   ),
-  chiefOfStaff: Schema.optionalKey(ChiefOfStaffSettingsPatch),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
@@ -2017,8 +2006,5 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
   mathRenderingEnabled: Schema.optionalKey(Schema.Boolean),
-  chiefOfStaffAvatarStyle: Schema.optionalKey(ChiefOfStaffAvatarStyle),
-  chiefOfStaffAvatarAccentColor: Schema.optionalKey(ChiefOfStaffAvatarAccentColor),
-  chiefOfStaffAvatarSize: Schema.optionalKey(ChiefOfStaffAvatarSize),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

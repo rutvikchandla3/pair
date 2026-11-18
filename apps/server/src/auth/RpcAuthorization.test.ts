@@ -151,23 +151,6 @@ describe("RPC authorization scopes", () => {
     ]);
   });
 
-  it("lets members talk to the Chief of staff and keeps listing its voices, which boots a provider, admin only", () => {
-    for (const method of [WS_METHODS.chiefOfStaffStart, WS_METHODS.chiefOfStaffStop]) {
-      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
-      expect(clientRpcRequiredScopes(method, {})).toEqual([AuthOrchestrationOperateScope]);
-    }
-    expect(requiredScopeForRpcMethod(WS_METHODS.chiefOfStaffSubscribe)).toBe(
-      AuthOrchestrationReadScope,
-    );
-    expect(requiredScopeForRpcMethod(WS_METHODS.chiefOfStaffListVoices)).toBe(
-      AuthSettingsWriteScope,
-    );
-    expect(requiredScopeForRpcMethod(WS_METHODS.chiefOfStaffOpenHome)).toBe(
-      AuthOrchestrationOperateScope,
-    );
-    expect(MEMBER_SCOPES).not.toContain(AuthSettingsWriteScope);
-  });
-
   it("lets members read spaces and write to them with orchestration operate", () => {
     for (const method of [WS_METHODS.spacesList, WS_METHODS.spacesGet]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);

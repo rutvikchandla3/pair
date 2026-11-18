@@ -326,8 +326,6 @@ export const RPC_OUTPUT_EXEMPT: { readonly [M in WsMethod]?: string } = {
   [WS_METHODS.cloudGetRelayClientStatus]: ownBinary,
   [WS_METHODS.cloudInstallRelayClient]: ownBinary,
   [WS_METHODS.threadMoveToLocal]: "`threadId` is the thread this server just made for the caller.",
-  [WS_METHODS.chiefOfStaffOpenHome]:
-    "`threadId` is the member's own home thread, created for the caller when absent.",
   [WS_METHODS.spacesPost]:
     "The caller's own post, in a room they are a member of; only system lines name tasks.",
   [WS_METHODS.spacesAction]:

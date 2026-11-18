@@ -385,7 +385,6 @@ export function commandLabel(command: KeybindingCommand): string {
   if (usagePeriod) return `Usage: Period: ${usagePeriod.label}`;
   if (command === "view.reopenClosed") return "Reopen Closed Tab";
   if (command === "preview.focusUrl") return "Preview: Focus URL";
-  if (command === "chiefOfStaff.toggle") return "Chief of Staff: Start or Stop";
   if (command === "space.new") return "Spaces: New Space";
   if (command === "space.newTask") return "Spaces: New Task";
   if (command === "inbox.open") return "Go to Inbox";

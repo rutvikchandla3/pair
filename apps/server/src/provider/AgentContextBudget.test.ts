@@ -11,8 +11,6 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
-import { ChiefOfStaffAudit } from "../chiefOfStaff/ChiefOfStaffAudit.ts";
-import { ChiefOfStaffMemory } from "../chiefOfStaff/ChiefOfStaffMemory.ts";
 import { ServerConfig } from "../config.ts";
 import { CloudMoves } from "../cloudMove/CloudMoves.ts";
 import { SandboxFork } from "../sandbox/lifecycle/SandboxFork.ts";
@@ -60,8 +58,6 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AssetSigner)({}),
-  Layer.mock(ChiefOfStaffAudit)({}),
-  Layer.mock(ChiefOfStaffMemory)({}),
   Layer.mock(CloudMoves)({}),
   Layer.mock(SandboxFork)({}),
   Layer.mock(DeviceService)({}),
@@ -105,8 +101,7 @@ const toolHandlerServices = Layer.mergeAll(
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
 /**
- * An ordinary caller's view: `EnabledWhen` as the protocol evaluates it. The cos_* tools
- * are hidden for anyone but Chief of staff, so they are not in the advertised list.
+ * An ordinary caller's view: `EnabledWhen` as the protocol evaluates it.
  */
 const advertisedToOrdinaryThread = (annotations: Context.Context<never>): boolean => {
   const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);

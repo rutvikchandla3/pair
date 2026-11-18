@@ -14,7 +14,6 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
-import { ChiefOfStaffSidebarItem } from "../chiefOfStaff/ChiefOfStaffButton";
 import { PairMark } from "../PairMark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -287,7 +286,6 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
-      <ChiefOfStaffSidebarItem />
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
     </SidebarMenu>

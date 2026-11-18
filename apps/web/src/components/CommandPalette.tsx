@@ -1,10 +1,6 @@
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
-import { isChiefOfStaffLive } from "../chiefOfStaff/chiefOfStaff.logic";
-import { openChiefOfStaffChat } from "../chiefOfStaff/openChat";
-import { startChiefOfStaff, stopChiefOfStaff, useChiefOfStaffStore } from "../chiefOfStaff/session";
-import { useChiefOfStaffTarget } from "../chiefOfStaff/useChiefOfStaffTarget";
 import { openSpaceDialog } from "../spaceDialogStore";
 import { useSpaceShortcutTarget } from "./spaces/SpaceShortcuts";
 import { useBranchOffPaletteItems } from "./branchOff/BranchOffShortcuts";
@@ -101,8 +97,6 @@ import {
   UsersIcon,
   EyeIcon,
   EyeOffIcon,
-  MicIcon,
-  MicOffIcon,
   UsersRoundIcon,
   ListPlusIcon,
   InboxIcon,
@@ -141,7 +135,6 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
-import { chiefOfStaffCommands } from "../state/chiefOfStaff";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
@@ -530,10 +523,6 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
-  const chiefOfStaffTarget = useChiefOfStaffTarget();
-  const canOpenChiefOfStaffChat = useAtomValue(
-    chiefOfStaffCommands.openHome.permissionAtom(chiefOfStaffTarget.environmentId),
-  );
   const spaceTarget = useSpaceShortcutTarget();
   const teamMode = useTeamEnvironmentIds().length > 0;
   const spaceThread = useSpaceThreadActions(
@@ -543,7 +532,6 @@ function OpenCommandPaletteDialog(props: {
   const setSpaceTaskStatus = useSetSpaceTaskStatus(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
-  const chiefOfStaffLive = isChiefOfStaffLive(useChiefOfStaffStore((view) => view.phase));
   const projects = useProjects();
   const referenceThreadRef =
     pathname === "/pull-requests"
@@ -1891,40 +1879,6 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
-
-  if (chiefOfStaffLive || chiefOfStaffTarget.available) {
-    const startIn = chiefOfStaffTarget.environmentId;
-    actionItems.push({
-      kind: "action",
-      value: "action:chief-of-staff",
-      searchTerms: ["chief of staff", "voice", "talk", "speak", "assistant", "microphone"],
-      title: chiefOfStaffLive ? "Stop Chief of staff" : "Start Chief of staff",
-      shortcutCommand: "chiefOfStaff.toggle",
-      icon: chiefOfStaffLive ? (
-        <MicOffIcon className={ITEM_ICON_CLASS} />
-      ) : (
-        <MicIcon className={ITEM_ICON_CLASS} />
-      ),
-      run: async () => {
-        if (chiefOfStaffLive) stopChiefOfStaff();
-        else if (startIn !== null) startChiefOfStaff(startIn);
-      },
-    });
-  }
-
-  if (chiefOfStaffTarget.environmentId !== null && canOpenChiefOfStaffChat) {
-    const chatEnvironmentId = chiefOfStaffTarget.environmentId;
-    actionItems.push({
-      kind: "action",
-      value: "action:chief-of-staff-chat",
-      searchTerms: ["chief of staff", "chat", "text", "assistant", "message"],
-      title: "Chat with Chief of staff",
-      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-      run: async () => {
-        await openChiefOfStaffChat(chatEnvironmentId, navigate);
-      },
-    });
-  }
 
   if (teamMode) {
     actionItems.push(

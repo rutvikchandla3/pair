@@ -45,7 +45,7 @@ export function LinkAccessPicker({
 }
 
 /** The access choice alone, for a settings row that explains the choice in its description. */
-export function AccessSelect({
+function AccessSelect({
   value,
   onChange,
   disabled = false,

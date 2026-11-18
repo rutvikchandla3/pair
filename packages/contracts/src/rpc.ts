@@ -72,15 +72,6 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import {
-  ChiefOfStaffError,
-  ChiefOfStaffEvent,
-  ChiefOfStaffHomeInfo,
-  ChiefOfStaffSessionInput,
-  ChiefOfStaffStartInput,
-  ChiefOfStaffStartResult,
-  ChiefOfStaffVoiceList,
-} from "./chiefOfStaff.ts";
-import {
   SpaceActionInput,
   SpaceActionResult,
   SpaceError,
@@ -656,11 +647,6 @@ export const WS_METHODS = {
   threadMoveToLocal: "threadMove.toLocal",
   threadMovePreview: "threadMove.preview",
   threadMoveToCloud: "threadMove.toCloud",
-  chiefOfStaffStart: "chiefOfStaff.start",
-  chiefOfStaffStop: "chiefOfStaff.stop",
-  chiefOfStaffSubscribe: "chiefOfStaff.subscribe",
-  chiefOfStaffListVoices: "chiefOfStaff.listVoices",
-  chiefOfStaffOpenHome: "chiefOfStaff.openHome",
   spacesList: "spaces.list",
   spacesGet: "spaces.get",
   spacesTaskGet: "spaces.taskGet",
@@ -1042,36 +1028,6 @@ const WsThreadMoveToCloudRpc = Rpc.make(WS_METHODS.threadMoveToCloud, {
   payload: ThreadMoveToCloudInput,
   success: ThreadMoveToCloudResult,
   error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
-});
-
-const WsChiefOfStaffStartRpc = Rpc.make(WS_METHODS.chiefOfStaffStart, {
-  payload: ChiefOfStaffStartInput,
-  success: ChiefOfStaffStartResult,
-  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
-});
-
-const WsChiefOfStaffStopRpc = Rpc.make(WS_METHODS.chiefOfStaffStop, {
-  payload: ChiefOfStaffSessionInput,
-  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
-});
-
-/** Replays the current state first; ends after the `closed` state. */
-const WsChiefOfStaffSubscribeRpc = Rpc.make(WS_METHODS.chiefOfStaffSubscribe, {
-  payload: ChiefOfStaffSessionInput,
-  success: ChiefOfStaffEvent,
-  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
-  stream: true,
-});
-
-const WsChiefOfStaffListVoicesRpc = Rpc.make(WS_METHODS.chiefOfStaffListVoices, {
-  success: ChiefOfStaffVoiceList,
-  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
-});
-
-/** Ensures the member's persistent Chief of staff chat thread exists and returns it. */
-const WsChiefOfStaffOpenHomeRpc = Rpc.make(WS_METHODS.chiefOfStaffOpenHome, {
-  success: ChiefOfStaffHomeInfo,
-  error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
 });
 
 const spaceRpcError = Schema.Union([SpaceError, EnvironmentAuthorizationError]);
@@ -2828,11 +2784,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsThreadMoveToLocalRpc,
   WsThreadMovePreviewRpc,
   WsThreadMoveToCloudRpc,
-  WsChiefOfStaffStartRpc,
-  WsChiefOfStaffStopRpc,
-  WsChiefOfStaffSubscribeRpc,
-  WsChiefOfStaffListVoicesRpc,
-  WsChiefOfStaffOpenHomeRpc,
   WsSpacesListRpc,
   WsSpacesGetRpc,
   WsSpacesMutateRpc,

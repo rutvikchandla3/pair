@@ -5,8 +5,6 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
-import * as ChiefOfStaffHome from "./chiefOfStaff/ChiefOfStaffHome.ts";
-import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
 import * as SpaceService from "./space/SpaceService.ts";
 import * as BranchOffService from "./lineage/BranchOffService.ts";
 import * as BranchLineageService from "./lineage/BranchLineageService.ts";
@@ -1711,8 +1709,6 @@ export const layerWsRpc = (
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const cloudMoves = yield* CloudMoves.CloudMoves;
-      const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
-      const chiefOfStaffHome = yield* ChiefOfStaffHome.ChiefOfStaffHome;
       const spaces = yield* SpaceService.SpaceService;
       const inbox = yield* InboxService.InboxService;
       const branchOffService = yield* BranchOffService.BranchOffService;
@@ -1722,10 +1718,6 @@ export const layerWsRpc = (
         memberId: currentSession.memberId,
         authorKind: "user" as const,
         mayOpen: (threadId: ThreadId) => viewerMayOpen(threadViewer, threadId),
-      };
-      const chiefOfStaffCaller = {
-        memberId: currentSession.memberId,
-        scopes: currentSession.scopes,
       };
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -3141,12 +3133,6 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.threadMoveToLocal]: (input) =>
           cloudMoves.continueLocally({ ...input, actorId: currentSession.memberId }),
-        [WS_METHODS.chiefOfStaffStart]: (input) => chiefOfStaff.start(chiefOfStaffCaller, input),
-        [WS_METHODS.chiefOfStaffStop]: (input) => chiefOfStaff.stop(chiefOfStaffCaller, input),
-        [WS_METHODS.chiefOfStaffSubscribe]: (input) =>
-          chiefOfStaff.subscribe(chiefOfStaffCaller, input),
-        [WS_METHODS.chiefOfStaffListVoices]: () => chiefOfStaff.listVoices,
-        [WS_METHODS.chiefOfStaffOpenHome]: () => chiefOfStaffHome.ensureHome(chiefOfStaffCaller),
         [WS_METHODS.spacesList]: () => spaces.list(spaceCaller),
         [WS_METHODS.spacesGet]: (input) => spaces.get(spaceCaller, input),
         [WS_METHODS.spacesMutate]: (input) => spaces.mutate(spaceCaller, input),
@@ -4147,8 +4133,6 @@ export const layer = Layer.unwrap(
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const cloudMoves = yield* CloudMoves.CloudMoves;
-    const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
-    const chiefOfStaffHome = yield* ChiefOfStaffHome.ChiefOfStaffHome;
     const spaces = yield* SpaceService.SpaceService;
     const inbox = yield* InboxService.InboxService;
     const branchOff = yield* BranchOffService.BranchOffService;
@@ -4263,12 +4247,6 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(CloudMoves.CloudMoves, cloudMoves)),
-              Layer.provide(
-                Layer.mergeAll(
-                  Layer.succeed(ChiefOfStaffVoice.ChiefOfStaffVoice, chiefOfStaff),
-                  Layer.succeed(ChiefOfStaffHome.ChiefOfStaffHome, chiefOfStaffHome),
-                ),
-              ),
               Layer.provide(
                 Layer.mergeAll(
                   Layer.succeed(SpaceService.SpaceService, spaces),

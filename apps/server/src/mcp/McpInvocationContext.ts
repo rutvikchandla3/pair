@@ -141,12 +141,6 @@ export interface McpInvocationScope {
   readonly linkedEnvironments?: boolean;
   /** False on a server without team images (not Pair Cloud). `/mcp` sets it per request. */
   readonly teamImages?: boolean;
-  /**
-   * Set when this call is Chief of staff's own: the voice relay's client label, or a
-   * thread that is one of this server's `home:*` threads. `/mcp` computes it once per
-   * request; the cos_* tools and the audit hook read it instead of re-deriving it.
-   */
-  readonly chiefOfStaff?: { readonly memberId?: MemberId; readonly via: "voice" | "home-thread" };
   /** Which threads this caller may name, on a cloud-only server. `/mcp` sets it per request. */
   readonly reach?: McpThreadReach;
 }
@@ -202,16 +196,6 @@ export const hiddenWithoutTeamImages = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.teamImages !== false;
-};
-
-/**
- * `McpSchema.EnabledWhen` for the Chief of staff tools: hidden from every other caller.
- * The scope carries the decision, so this is one lookup rather than a re-derivation.
- */
-export const onlyForChiefOfStaff = (): boolean => {
-  const fiber = Fiber.getCurrent();
-  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.chiefOfStaff !== undefined;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

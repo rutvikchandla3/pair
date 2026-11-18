@@ -51,7 +51,6 @@ export * from "./spaceAgent.ts";
 export * from "./inbox.ts";
 export * from "./teamClaudeKey.ts";
 export * from "./cloudMove.ts";
-export * from "./chiefOfStaff.ts";
 export * from "./guestShare.ts";
 export * from "./guestStream.ts";
 export * from "./applicationEvent.ts";
