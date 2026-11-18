@@ -27,6 +27,7 @@ import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
+const BOT_FOCUS_HIGHLIGHT_MS = 1500;
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
 const EMPTY_RESPONDING_REQUEST_IDS: TimelineRowSharedState["respondingRequestIds"] = [];
 
@@ -84,11 +85,13 @@ import {
   isTimelineMinimapRowVisible,
   resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHitStripWidth,
+  resolveBotFocusRowIndex,
   timelineTurnFoldRunIdsByEntryId,
   type MessagesTimelineRow,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
+import type { BotChatOptions } from "./botChat";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
 import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
@@ -96,6 +99,7 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { formatShortTimestamp } from "../../timestampFormat";
 import { RollbackDivider, type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
@@ -312,6 +316,12 @@ interface MessagesTimelineProps {
   hideEmptyPlaceholder?: boolean;
   /** Composer space to center the empty state against; held steady through collapse. */
   emptyPlaceholderInset: number;
+  /** Replaces "Send a message to start the conversation." */
+  emptyPlaceholder?: ReactNode;
+  /** A bot's home thread: wakes label their folds and quiet ones merge. */
+  botName?: string | undefined;
+  /** Scroll to this bot turn's last message and highlight it; a new nonce scrolls again. */
+  botFocus?: BotChatOptions["focus"];
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
   findExpanded?: boolean;
@@ -408,6 +418,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onFooterGrow,
   hideEmptyPlaceholder = false,
   emptyPlaceholderInset,
+  emptyPlaceholder,
+  botName,
+  botFocus = null,
   topFadeEnabled = false,
   historyControls,
 }: MessagesTimelineProps) {
@@ -687,6 +700,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     availableRevertTurnCounts,
     worktreeSetup,
     lastRollback,
+    botName,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();
@@ -786,6 +800,34 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onCitationListLoad();
     setFindListReady(true);
   };
+  const [handledBotFocusNonce, setHandledBotFocusNonce] = useState<number | null>(null);
+  const [botFocusHighlight, setBotFocusHighlight] = useState<{
+    readonly rowId: string;
+    readonly nonce: number;
+  } | null>(null);
+  const botFocusRowIndex =
+    botFocus !== null && botFocus.nonce !== handledBotFocusNonce
+      ? resolveBotFocusRowIndex(rows, botFocus.runId)
+      : -1;
+  const botFocusRow =
+    findListReady && !restoringThreadPosition ? rows[botFocusRowIndex] : undefined;
+  if (botFocus !== null && botFocusRow !== undefined) {
+    setHandledBotFocusNonce(botFocus.nonce);
+    setBotFocusHighlight({ rowId: botFocusRow.id, nonce: botFocus.nonce });
+  }
+  const scrollToBotFocus = useEffectEvent((rowId: string) => {
+    const index = rows.findIndex((row) => row.id === rowId);
+    if (index < 0) return;
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({ index, animated: !prefersReducedMotion, viewOffset: 24 });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the virtualized list to the focused bot turn, then clears its highlight after a timer
+  useEffect(() => {
+    if (botFocusHighlight === null) return;
+    scrollToBotFocus(botFocusHighlight.rowId);
+    const timer = window.setTimeout(() => setBotFocusHighlight(null), BOT_FOCUS_HIGHLIGHT_MS);
+    return () => window.clearTimeout(timer);
+  }, [botFocusHighlight]);
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   // Every full-screen viewer reports false when it unmounts, so a row that leaves the list
   // while full screen releases its pin too.
@@ -1237,7 +1279,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       >
         <div
           ref={observeLaneWidth}
-          className="chat-content-lane overflow-x-clip"
+          className={cn(
+            "chat-content-lane overflow-x-clip rounded-lg transition-colors duration-500",
+            botFocusHighlight?.rowId === item.id && "bg-accent/60",
+          )}
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
@@ -1247,7 +1292,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
       </div>
     </TimelineRowCtx>
   );
-  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  const listExtraData = {
+    identity: listIdentityKey,
+    rowCount: rows.length,
+    sharedState,
+    focusedRowId: botFocusHighlight?.rowId ?? null,
+  };
   const timelineListFooter = (
     <TimelineListFooter
       composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
@@ -1291,7 +1341,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
           className="flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
           style={{ paddingBottom: emptyPlaceholderInset }}
         >
-          <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>
+          {emptyPlaceholder ?? (
+            <p className="text-sm text-muted-foreground">
+              Send a message to start the conversation.
+            </p>
+          )}
         </div>
       </>
     );
@@ -1670,15 +1724,29 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         >
           <span>
             {row.label}
+            {row.wake?.memoryNote ? (
+              <span className="font-medium"> · {row.wake.memoryNote}</span>
+            ) : null}
+            {row.wake ? (
+              <span className="text-muted-foreground/70">
+                {" · "}
+                {formatShortTimestamp(row.wake.startedAt, ctx.timestampFormat)}
+                {row.wake.endedAt
+                  ? `–${formatShortTimestamp(row.wake.endedAt, ctx.timestampFormat)}`
+                  : ""}
+              </span>
+            ) : null}
             {error ? ` · ${error}` : ""}
           </span>
           <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
         </button>
-        <TimelineRowTimestamp
-          createdAt={row.createdAt}
-          timestampFormat={ctx.timestampFormat}
-          className="ms-auto"
-        />
+        {row.wake ? null : (
+          <TimelineRowTimestamp
+            createdAt={row.createdAt}
+            timestampFormat={ctx.timestampFormat}
+            className="ms-auto"
+          />
+        )}
       </div>
       {loading ? <WorkHistorySkeleton /> : null}
     </div>

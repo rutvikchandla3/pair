@@ -61,6 +61,40 @@ export function useBotHomeProjectIds(environmentId: EnvironmentId | null): Reado
   );
 }
 
+const sessionBotNamesFamily = Atom.family((environmentId: EnvironmentId) => {
+  let previousKey = "";
+  let previous: ReadonlyMap<string, string> = new Map();
+  return Atom.make((get) => {
+    const snapshot = AsyncResult.getOrElse(get(snapshotAtom(environmentId)), () => null);
+    const botNames = new Map(snapshot?.bots.map((bot) => [bot.id, bot.name]) ?? []);
+    const names = new Map<string, string>();
+    for (const session of snapshot?.sessions ?? []) {
+      const name = botNames.get(session.botId);
+      if (name !== undefined) names.set(session.threadId, name);
+    }
+    const key = [...names].map((pair) => pair.join("\t")).join("\n");
+    if (key === previousKey) return previous;
+    previousKey = key;
+    previous = names;
+    return previous;
+  }).pipe(Atom.withLabel(`web-bot-session-names:${environmentId}`));
+});
+
+const NO_SESSION_NAMES_ATOM = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(
+  Atom.withLabel("web-bot-session-names:none"),
+);
+
+/** The name of the bot running this thread as one of its sessions, else null. */
+export function useSessionBotName(
+  environmentId: EnvironmentId | null,
+  threadId: string | null,
+): string | null {
+  const names = useAtomValue(
+    environmentId === null ? NO_SESSION_NAMES_ATOM : sessionBotNamesFamily(environmentId),
+  );
+  return threadId === null ? null : (names.get(threadId) ?? null);
+}
+
 /** The app registry's current bot thread ids for one environment, for imperative watchers. */
 export function readBotThreadIds(environmentId: EnvironmentId | null): ReadonlySet<string> {
   return environmentId === null
