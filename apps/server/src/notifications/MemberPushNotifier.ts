@@ -44,6 +44,7 @@ import * as MemberPushDevices from "../team/MemberPushDevices.ts";
 import * as Presence from "../team/Presence.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
+import { BotThreads } from "../bots/botThreads.ts";
 
 const EXPO_PUSH_SEND_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -565,6 +566,8 @@ export const make = Effect.gen(function* () {
       return;
     }
     const event = item.event;
+    // A bot's home thread and sessions never notify the user; only its Asks and finished jobs do.
+    if (BotThreads.isBotThread(event.threadId)) return;
     if (isMemberThreadEvent(event)) return;
     if (!(yield* pushes)) {
       // Holders go stale while solo; reseed if a second member joins.

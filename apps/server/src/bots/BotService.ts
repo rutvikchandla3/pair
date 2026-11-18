@@ -169,6 +169,10 @@ export class BotService extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<Option.Option<BotSession>, BotsError>;
     readonly snapshotForBot: (botId: BotId) => Effect.Effect<BotsSnapshot, BotsError>;
+    readonly getJob: (jobId: BotJobId) => Effect.Effect<Option.Option<BotJob>, BotsError>;
+    readonly listJobs: (botId: BotId) => Effect.Effect<ReadonlyArray<BotJob>, BotsError>;
+    readonly listSessions: (botId: BotId) => Effect.Effect<ReadonlyArray<BotSession>, BotsError>;
+    readonly listAsks: (botId: BotId) => Effect.Effect<ReadonlyArray<BotAsk>, BotsError>;
     readonly setHome: (
       botId: BotId,
       input: { readonly homeThreadId: ThreadId; readonly homeProjectId: Bot["homeProjectId"] },
@@ -905,6 +909,25 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     return yield* snapshotOf([bot]);
   });
 
+  const getJob: BotService["Service"]["getJob"] = Effect.fn("BotService.getJob")(function* (jobId) {
+    return yield* db(store.getJob(jobId));
+  });
+  const listJobs: BotService["Service"]["listJobs"] = Effect.fn("BotService.listJobs")(
+    function* (botId) {
+      return yield* db(store.listJobs(botId));
+    },
+  );
+  const listSessions: BotService["Service"]["listSessions"] = Effect.fn("BotService.listSessions")(
+    function* (botId) {
+      return yield* db(store.listSessions(botId));
+    },
+  );
+  const listAsks: BotService["Service"]["listAsks"] = Effect.fn("BotService.listAsks")(
+    function* (botId) {
+      return yield* db(store.listAsks(botId));
+    },
+  );
+
   const setHome: BotService["Service"]["setHome"] = Effect.fn("BotService.setHome")(
     function* (id, input) {
       return yield* withLock(
@@ -1131,6 +1154,10 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     botForHomeThread,
     sessionForThread,
     snapshotForBot,
+    getJob,
+    listJobs,
+    listSessions,
+    listAsks,
     setHome,
     updateJob,
     addSession,

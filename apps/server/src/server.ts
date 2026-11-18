@@ -168,6 +168,7 @@ import * as BotService from "./bots/BotService.ts";
 import * as BotStore from "./bots/BotStore.ts";
 import * as BotHome from "./bots/BotHome.ts";
 import * as BotSessions from "./bots/BotSessions.ts";
+import * as BotWatcher from "./bots/BotWatcher.ts";
 import * as BranchOffServiceLive from "./lineage/BranchOffServiceLive.ts";
 import * as BranchLineageReactor from "./lineage/BranchLineageReactor.ts";
 import * as BranchLineageService from "./lineage/BranchLineageService.ts";
@@ -786,6 +787,18 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 // One instance: SandboxActivity reads the access the EventSink's index keeps.
 const layerThreadAccess = ThreadAccess.layer.pipe(Layer.provide(ProjectionStoreV2.layer));
 
+/**
+ * The one BotService. Every consumer (WebSocket routes, MCP tools, home-thread delivery, the
+ * watcher, the Inbox) provides this same constant: Effect memoizes a layer by reference, so they
+ * share one service, one wake PubSub and one change stream.
+ */
+const layerBotService = Layer.unwrap(
+  Effect.gen(function* () {
+    const { cloudOnly } = yield* ServerConfig.ServerConfig;
+    return BotService.layer({ cloudOnly }).pipe(Layer.provide(BotStore.layer));
+  }),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   Layer.effectDiscard(
@@ -827,6 +840,17 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  // Watches every bot session and wakes the bot when one finishes, fails, asks or goes quiet.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const watcher = yield* BotWatcher.BotWatcher;
+      yield* watcher.start();
+    }),
+  ).pipe(
+    Layer.provide(BotWatcher.layer),
+    Layer.provide(layerBotService),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
@@ -995,18 +1019,6 @@ const layerCommandReadiness = HttpRouter.middleware(
   { global: true },
 );
 
-/**
- * The one BotService. Every consumer (WebSocket routes, MCP tools, home-thread delivery, the
- * watcher) provides this same constant: Effect memoizes a layer by reference, so they share one
- * service, one wake PubSub and one change stream.
- */
-const layerBotService = Layer.unwrap(
-  Effect.gen(function* () {
-    const { cloudOnly } = yield* ServerConfig.ServerConfig;
-    return BotService.layer({ cloudOnly }).pipe(Layer.provide(BotStore.layer));
-  }),
-);
-
 const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -1096,7 +1108,9 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   // Each member's Inbox and Shared with you, for WebSocket clients.
-  Layer.provide(InboxService.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  Layer.provide(
+    InboxService.layer.pipe(Layer.provide(ProjectionStoreV2.layer), Layer.provide(layerBotService)),
+  ),
   // Bots: storage and the wake queue, for WebSocket clients and the bot home thread.
   // One `layerBotService` reference: the wake loop and BotSessions share it.
   Layer.provide(

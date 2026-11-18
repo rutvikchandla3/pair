@@ -29,6 +29,11 @@ import { TestClock } from "effect/testing";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
+import * as BotService from "../bots/BotService.ts";
+import * as BotStore from "../bots/BotStore.ts";
+import { BotEscalations, BotThreads } from "../bots/botThreads.ts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -80,7 +85,21 @@ const layerOrchestration = Layer.mergeAll(
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ).pipe(Layer.provide(layerTeam)),
 );
-const layer = Layer.provideMerge(InboxService.layer, layerOrchestration);
+
+// The bot store shares the one in-memory database, so a bot write and a projection read see each
+// other; the thread-management stub is enough, since the Inbox never stops a thread.
+const threadStub = {
+  dispatch: () => Effect.succeed({ sequence: 0, storedEvents: [] }),
+} as unknown as ThreadManagementService.ThreadManagementService["Service"];
+const layerBotService = BotService.layer({ cloudOnly: false }).pipe(
+  Layer.provide(BotStore.layer.pipe(Layer.provide(layerDatabase))),
+  Layer.provide(Layer.succeed(ThreadManagementService.ThreadManagementService, threadStub)),
+  Layer.provide(SecureRandom.layerWebCrypto),
+);
+const layer = Layer.provideMerge(
+  InboxService.layer,
+  Layer.merge(layerOrchestration, layerBotService),
+);
 
 const spaceId = SpaceId.make("spc_0123456789abcdef0123");
 const roomThreadId = ThreadId.make("thread:room");
@@ -643,11 +662,144 @@ it.effect("shares a teammate's local thread with the team only where access isn'
       assert.deepStrictEqual(
         yield* sharedWithHanad.pipe(
           Effect.provide(
-            Layer.provideMerge(InboxService.layer, Layer.merge(layerOrchestration, access)),
+            Layer.provideMerge(
+              InboxService.layer,
+              Layer.merge(Layer.merge(layerOrchestration, layerBotService), access),
+            ),
           ),
         ),
         expected,
       );
     }
   }),
+);
+
+const owner = { memberId: rutvik };
+
+/** A real thread with a pending runtime request, so the Inbox's request source finds it. */
+const requestOn = (
+  threadId: ThreadId,
+  ownerId: MemberId,
+  kind: "user_input" | "command" = "user_input",
+) =>
+  Effect.gen(function* () {
+    yield* dispatch({
+      type: "thread.create",
+      commandId: commandId("thread"),
+      actorId: ownerId,
+      threadId,
+      projectId,
+      title: "Upgrade server",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      ownerId,
+    });
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const requestId = RuntimeRequestId.make(`request:${threadId}`);
+    const nodeId = NodeId.make(`node:${threadId}`);
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:request`),
+      type: "runtime-request.updated",
+      threadId,
+      nodeId,
+      occurredAt: now,
+      payload: {
+        id: requestId,
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind,
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    });
+    return requestId;
+  });
+
+it.effect("shows a bot's open ask to its owner, and never to another member", () =>
+  Effect.gen(function* () {
+    BotThreads.reset();
+    BotEscalations.reset();
+    const bots = yield* BotService.BotService;
+    const bot = yield* bots.create(owner, { name: "Atlas", charter: "", starter: "blank" });
+    const ask = yield* bots.createAsk(bot.id, {
+      jobId: null,
+      question: "Per member or per token?",
+      why: "It changes the model.",
+      options: [],
+      pick: null,
+    });
+    const mine = (yield* inbox(rutvik)).items.filter((item) => item.reason === "bot-ask");
+    assert.deepStrictEqual(
+      mine.map((item) => [item.botName, item.botColor, item.askId, item.excerpt, item.group]),
+      [["Atlas", bot.color, ask.id, "Per member or per token?", "needs-you"]],
+    );
+    assert.notInclude(reasons((yield* inbox(kousik)).items), "bot-ask");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("hides a bot session's request until it escalates, then shows the bot and job", () =>
+  Effect.gen(function* () {
+    BotThreads.reset();
+    BotEscalations.reset();
+    const bots = yield* BotService.BotService;
+    const bot = yield* bots.create(owner, { name: "Atlas", charter: "", starter: "blank" });
+    const job = yield* bots.createJob(owner, { botId: bot.id, request: "Upgrade server" });
+    const threadId = ThreadId.make("thread:bot-session");
+    yield* bots.addSession({
+      threadId,
+      botId: bot.id,
+      jobId: job.id,
+      role: "worker",
+      title: "Upgrade server",
+      projectId,
+      takenOver: false,
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+    });
+    const requestId = yield* requestOn(threadId, rutvik);
+    assert.notInclude(reasons((yield* inbox(rutvik)).items), "question");
+
+    BotEscalations.mark(threadId, requestId);
+    const escalated = (yield* inbox(rutvik)).items.filter((item) => item.threadId === threadId);
+    assert.deepStrictEqual(
+      escalated.map((item) => [
+        item.reason,
+        item.botName,
+        item.botColor,
+        item.jobId,
+        item.jobNumber,
+        item.jobTitle,
+      ]),
+      [["question", "Atlas", bot.color, job.id, 1, "Upgrade server"]],
+    );
+
+    // Handing it back keeps its requests out of the Inbox until the bot leaves one unanswered again.
+    BotEscalations.clear(threadId, requestId);
+    assert.notInclude(reasons((yield* inbox(rutvik)).items), "question");
+    yield* bots.setSessionTakenOver(threadId, true);
+    assert.include(reasons((yield* inbox(rutvik)).items), "question");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("never lists a bot home thread's request, escalated or not", () =>
+  Effect.gen(function* () {
+    BotThreads.reset();
+    BotEscalations.reset();
+    const bots = yield* BotService.BotService;
+    const bot = yield* bots.create(owner, { name: "Atlas", charter: "", starter: "blank" });
+    const homeThreadId = ThreadId.make("thread:bot-home");
+    yield* bots.setHome(bot.id, { homeThreadId, homeProjectId: projectId });
+    const requestId = yield* requestOn(homeThreadId, rutvik);
+    assert.notInclude(reasons((yield* inbox(rutvik)).items), "question");
+    BotEscalations.mark(homeThreadId, requestId);
+    assert.notInclude(reasons((yield* inbox(rutvik)).items), "question");
+  }).pipe(Effect.provide(layer)),
 );

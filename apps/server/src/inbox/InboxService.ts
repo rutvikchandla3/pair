@@ -1,4 +1,5 @@
 import {
+  type BotsError,
   INBOX_NEEDS_YOU_REASONS,
   InboxError,
   type InboxItem,
@@ -11,6 +12,7 @@ import {
   MY_TASKS_CLOSED_LIMIT,
   type MyTasksClosedResult,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2PendingRuntimeRequestSummary,
   type OrchestrationV2ThreadShell,
   type SharedWithYouItem,
   type SharedWithYouListInput,
@@ -43,6 +45,8 @@ import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { spaceReplyTrigger } from "../space/SpaceAgentDecisions.ts";
 import * as TeamState from "../team/TeamState.ts";
 import { ThreadAccess } from "../team/ThreadAccess.ts";
+import { BotService } from "../bots/BotService.ts";
+import { BotEscalations, BotThreads } from "../bots/botThreads.ts";
 import * as InboxProjection from "./InboxProjection.ts";
 
 /** Who is reading, and which threads they may open; absent, every thread. */
@@ -181,11 +185,15 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStoreV2;
   const orchestrator = yield* OrchestratorV2;
   const sql = yield* SqlClient.SqlClient;
+  const bots = yield* BotService;
   const read = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
     effect.pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
       Effect.mapError((cause) => (isInboxError(cause) ? cause : failed(cause))),
     );
+  /** Bot reads map to the one Inbox error, so every source has the same error type. */
+  const botsRead = <A>(effect: Effect.Effect<A, BotsError>) =>
+    effect.pipe(Effect.mapError((cause) => failed(cause)));
   const team = yield* Effect.serviceOption(TeamState.TeamState);
   const serverOwnerId = Option.match(team, { onNone: () => null, onSome: (t) => t.ownerId });
   // Off cloud-only servers every member sees every local thread, so a teammate's is shared too.
@@ -222,6 +230,30 @@ const make = Effect.gen(function* () {
       : { ...spaceFields(context, task.spaceId), ...taskFields(task) };
   });
 
+  /**
+   * Bot fields for a session's request. Null means the item is hidden: the bot still owns the
+   * session and hasn't left the request unanswered long enough. Non-bot threads get `{}`.
+   */
+  const botRequestFields = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    requestId: OrchestrationV2PendingRuntimeRequestSummary["id"],
+  ) {
+    if (BotThreads.sessionBotId(threadId) === undefined) return {};
+    const session = Option.getOrNull(yield* botsRead(bots.sessionForThread(threadId)));
+    if (session === null) return {};
+    if (!session.takenOver && !BotEscalations.isEscalated(threadId, requestId)) return null;
+    const bot = Option.getOrNull(yield* botsRead(bots.getBot(session.botId)));
+    if (bot === null) return null;
+    const job = Option.getOrNull(yield* botsRead(bots.getJob(session.jobId)));
+    return {
+      botId: bot.id,
+      botName: bot.name,
+      botColor: bot.color,
+      jobId: session.jobId,
+      ...(job === null ? {} : { jobNumber: job.number, jobTitle: job.title }),
+    };
+  });
+
   const requestItems: InboxSource = Effect.fnUntraced(function* (context) {
     const memberId = context.caller.memberId;
     const threadIds = yield* read(InboxProjection.pendingRequestThreadIds());
@@ -229,6 +261,8 @@ const make = Effect.gen(function* () {
     const items: Array<InboxItem> = [];
     for (const threadId of threadIds) {
       if (!mayOpen(context.caller, threadId)) continue;
+      // A bot's home thread never lists its requests; sessions list only what the bot left to you.
+      if (BotThreads.homeBotId(threadId) !== undefined) continue;
       const shell = yield* read(projections.getThreadShell(threadId));
       const request = shell?.pendingRuntimeRequest ?? null;
       if (shell == null || request === null || shell.deletedAt !== null) continue;
@@ -236,6 +270,8 @@ const make = Effect.gen(function* () {
       const holder = serverOwnerId === null ? shell.ownerId : holderOf(shell, serverOwnerId);
       // Only the holder and the latest prompter are asked; no one else is.
       if (memberId !== holder && memberId !== (shell.latestRunAuthorId ?? holder)) continue;
+      const botFields = yield* botRequestFields(threadId, request.id);
+      if (botFields === null) continue;
       const question = request.kind === "user_input" || request.kind === "mcp-elicitation";
       const where = yield* shellTaskFields(context, shell, tasks);
       const reason = question ? "question" : "approval";
@@ -250,6 +286,7 @@ const make = Effect.gen(function* () {
         ...(holder == null ? {} : { threadOwnerId: holder }),
         ...where,
         requestId: request.id,
+        ...botFields,
         ...excerpt(yield* read(InboxProjection.requestExcerpt(threadId, request.id))),
       });
     }
@@ -451,6 +488,69 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  /** Every open Ask of every bot the caller owns. */
+  const botAskItems: InboxSource = Effect.fnUntraced(function* (context) {
+    const mine = (yield* botsRead(bots.listAllBots())).filter(
+      (bot) => bot.ownerId === context.caller.memberId,
+    );
+    if (mine.length === 0) return [];
+    const items: Array<InboxItem> = [];
+    for (const bot of mine) {
+      const jobs = new Map((yield* botsRead(bots.listJobs(bot.id))).map((job) => [job.id, job]));
+      for (const ask of yield* botsRead(bots.listAsks(bot.id))) {
+        if (ask.status !== "open") continue;
+        const job = ask.jobId === null ? undefined : jobs.get(ask.jobId);
+        items.push({
+          id: `bot-ask:${ask.id}`,
+          group: "needs-you",
+          reason: "bot-ask",
+          at: ask.createdAt,
+          actorId: null,
+          botId: bot.id,
+          botName: bot.name,
+          botColor: bot.color,
+          askId: ask.id,
+          excerpt: ask.question,
+          ...(job === undefined
+            ? {}
+            : { jobId: job.id, jobNumber: job.number, jobTitle: job.title }),
+        });
+      }
+    }
+    return items;
+  });
+
+  /** Jobs the caller's bots finished or stopped in the last week. Dismissable, like For you. */
+  const botJobDoneItems: InboxSource = Effect.fnUntraced(function* (context) {
+    const mine = (yield* botsRead(bots.listAllBots())).filter(
+      (bot) => bot.ownerId === context.caller.memberId,
+    );
+    if (mine.length === 0) return [];
+    const since = isoMs(DateTime.formatIso(yield* DateTime.now)) - 7 * 24 * 60 * 60_000;
+    const items: Array<InboxItem> = [];
+    for (const bot of mine) {
+      for (const job of yield* botsRead(bots.listJobs(bot.id))) {
+        if (job.status !== "done" && job.status !== "stopped") continue;
+        if (job.finishedAt === null || isoMs(job.finishedAt) < since) continue;
+        items.push({
+          id: `bot-job-done:${job.id}:${job.finishedAt}`,
+          group: "for-you",
+          reason: "bot-job-done",
+          at: job.finishedAt,
+          actorId: null,
+          botId: bot.id,
+          botName: bot.name,
+          botColor: bot.color,
+          jobId: job.id,
+          jobNumber: job.number,
+          jobTitle: job.title,
+          excerpt: job.headline,
+        });
+      }
+    }
+    return items;
+  });
+
   const SOURCES: ReadonlyArray<InboxSource> = [
     requestItems,
     offerItems,
@@ -459,6 +559,8 @@ const make = Effect.gen(function* () {
     pairReplyItems,
     sharedItems,
     addedItems,
+    botAskItems,
+    botJobDoneItems,
   ];
 
   /** The caller's spaces that count: not archived, and they're still in them. */
@@ -502,6 +604,10 @@ const make = Effect.gen(function* () {
     const snoozed: Array<InboxItem> = [];
     let wakeAt: number | null = null;
     for (const item of found) {
+      // A bot's home thread is quiet: never list it, from any source.
+      if (item.threadId !== undefined && BotThreads.homeBotId(item.threadId) !== undefined) {
+        continue;
+      }
       const until = snoozedUntil(item);
       if (until !== null) {
         snoozed.push({ ...item, snoozedUntil: until });
@@ -586,6 +692,11 @@ const make = Effect.gen(function* () {
             ),
             Stream.fromPubSub(writes).pipe(
               Stream.filter((memberId) => memberId === caller.memberId),
+              Stream.as(undefined),
+            ),
+            // Every bots write bumps its owner's Inbox revision (new Ask, job finished, escalation).
+            bots.changes.pipe(
+              Stream.filter((botOwnerId) => botOwnerId === caller.memberId),
               Stream.as(undefined),
             ),
             Stream.fromQueue(wakes),

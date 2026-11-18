@@ -51,6 +51,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as TeamMembers from "../team/TeamMembers.ts";
 import * as TeamState from "../team/TeamState.ts";
+import { BotThreads } from "../bots/botThreads.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -552,10 +553,10 @@ export const make = Effect.gen(function* () {
     const threadShell = (yield* threads.getAgentAwarenessSnapshot(threadId)).threads[0] ?? null;
     if (
       threadShell !== null &&
-      !isListedThreadLineage(threadShell.lineage) &&
+      (!isListedThreadLineage(threadShell.lineage) || BotThreads.isBotThread(threadId)) &&
       !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
-      // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
+      // Subagents, side chats and bot threads have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
     const thread =

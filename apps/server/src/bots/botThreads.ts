@@ -33,3 +33,26 @@ export const BotThreads = {
     sessionThreads.clear();
   },
 };
+
+/**
+ * Session requests the bot has left unanswered long enough (or can't answer while paused) that
+ * they go to the owner's Inbox. Synchronous, like the thread index above, so an Inbox read can ask
+ * without resolving a service.
+ */
+const escalations = new Set<string>();
+const escalationKey = (threadId: string, requestId: string) => `${threadId}:${requestId}`;
+
+export const BotEscalations = {
+  mark(threadId: string, requestId: string): void {
+    escalations.add(escalationKey(threadId, requestId));
+  },
+  clear(threadId: string, requestId: string): void {
+    escalations.delete(escalationKey(threadId, requestId));
+  },
+  isEscalated(threadId: string, requestId: string): boolean {
+    return escalations.has(escalationKey(threadId, requestId));
+  },
+  reset(): void {
+    escalations.clear();
+  },
+};
