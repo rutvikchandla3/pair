@@ -218,6 +218,14 @@ describe("botStatusLine", () => {
     });
     expect(botStatusLine(snapshot(), bot(), undefined, NOW).label).toBe("Nothing running");
   });
+
+  it("says working while the bot's own turn runs", () => {
+    const home = ThreadId.make("home");
+    const shells = new Map([[home, shell({ runtime: { status: "running" } as never })]]);
+    expect(botStatusLine(snapshot(), bot({ homeThreadId: home }), shells, NOW).label).toBe(
+      "Working…",
+    );
+  });
 });
 
 describe("botSidebarSessions", () => {

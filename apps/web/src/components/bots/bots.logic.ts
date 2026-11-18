@@ -155,7 +155,9 @@ export function botStatusLine(
   }
   if (bot.paused) return { kind: "text", label: "Paused" };
   const working = workingSessionCount(snapshot, bot.id, shells, now);
-  if (working === 0) return { kind: "text", label: "Nothing running" };
+  if (working === 0) {
+    return { kind: "text", label: homeThreadWorking(bot, shells) ? "Working…" : "Nothing running" };
+  }
   return {
     kind: "text",
     label: `${working} ${working === 1 ? "session" : "sessions"} working · nothing needs you`,

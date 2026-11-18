@@ -277,6 +277,13 @@ const make = Effect.gen(function* () {
   });
 
   const handleWake = Effect.fn("BotHome.handleWake")(function* (wake: BotWake) {
+    // A new bot gets its home thread but no turn: its chat opens empty, on "What should it take on?".
+    if (wake.reason === "created") {
+      yield* ensureHome(wake.botId).pipe(
+        Effect.catchCause((cause) => Effect.logWarning("bot home setup failed", { cause })),
+      );
+      return;
+    }
     const bot = Option.getOrNull(yield* botService.getBot(wake.botId));
     const arrival = yield* SynchronizedRef.modify(slots, (map) => {
       const current = map.get(wake.botId) ?? initialWakeState;

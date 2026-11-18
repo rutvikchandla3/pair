@@ -499,7 +499,8 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             botId: bot.id,
             reason: "created",
             label: "Bot created",
-            text: "You were just created. Call bot_brief, then say hello in one line and wait for a job.",
+            // BotHome only sets up the home thread for this one; the bot takes no turn.
+            text: "Bot created",
           });
           return bot;
         }),
