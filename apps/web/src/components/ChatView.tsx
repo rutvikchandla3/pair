@@ -3761,7 +3761,7 @@ export default function ChatView(props: ChatViewProps) {
                   lastRollback={isTeamMode ? serverProjection?.thread.lastRollback : undefined}
                   onRevertToTurnCount={onRevertTimelineTurnStable}
                   onUseArtifactTemplate={insertArtifactTemplateStable}
-                  onSendAppMessage={sendAppMessageStable}
+                  {...(isArchivedThread ? {} : { onSendAppMessage: sendAppMessageStable })}
                   isRevertingCheckpoint={isRevertingCheckpoint}
                   onImageExpand={onExpandTimelineImageStable}
                   onFileOpen={openFileAttachmentStable}
