@@ -168,6 +168,16 @@ export const checkModelSelection = Effect.fn("modelSelectionCheck.checkModelSele
   },
 );
 
-/** Whether a refusal, possibly prefixed by a forwarder, came from `modelSelectionProblem`. */
+/**
+ * Whether a refusal, possibly prefixed by a forwarder, is about the model: from
+ * `modelSelectionProblem`, or from a launch that refuses its instance, which is all a
+ * 0.1.7-pair.36 server checks.
+ */
 export const isModelSelectionRefusal = (message: string): boolean =>
-  /No provider instance "| can't run here: | has no model "| rejected options: /.test(message);
+  [
+    /No provider instance "| can't run here: | has no model "| rejected options: /,
+    // ThreadManagementProviderInstanceDisabledError, plain and for another member's instance.
+    /Provider instance "[^"]+" is disabled for project | belongs to .+\. Pick another provider\./,
+    // ProviderCloudUnsupportedError and ProviderCloudLocalOnlyError, on a cloud launch.
+    / is not supported in cloud yet\. | signs in on this server only\. /,
+  ].some((pattern) => pattern.test(message));

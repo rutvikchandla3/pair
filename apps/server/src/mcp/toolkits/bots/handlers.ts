@@ -41,8 +41,8 @@ const botsFailure = (error: BotsError): OrchestratorMcpFailure => {
       return new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
     case "cloud-only":
       return new OrchestratorMcpFailure({ code: "capability_denied", message: error.message });
-    default:
-      return unavailable();
+    case "unavailable":
+      return new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
   }
 };
 

@@ -28,6 +28,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import { ProviderCloudUnsupportedError } from "../provider/Errors.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { modelSelectionProblem } from "../provider/modelSelectionCheck.ts";
@@ -117,8 +118,8 @@ const sessionsHarness = (input: {
   readonly refreshedProviders?: ReadonlyArray<ServerProvider>;
   /** The local launch fails with this. */
   readonly launchFails?: ThreadManagementService.ThreadManagementProviderInstanceDisabledError;
-  /** The cloud's t3_thread_launch refuses with this message. */
-  readonly cloudRefuses?: string;
+  /** The cloud's t3_thread_launch fails with this. */
+  readonly cloudRefuses?: OrchestratorMcpFailure;
 }) => {
   const launches: Array<ThreadLaunch.ThreadLaunchRequest> = [];
   const forwarded: Array<Forwarded> = [];
@@ -200,13 +201,7 @@ const sessionsHarness = (input: {
               environmentId,
               params: params as Record<string, unknown>,
             });
-            if (input.cloudRefuses !== undefined)
-              return Effect.fail(
-                new OrchestratorMcpFailure({
-                  code: "invalid_request",
-                  message: input.cloudRefuses,
-                }),
-              );
+            if (input.cloudRefuses !== undefined) return Effect.fail(input.cloudRefuses);
             // The cloud answers with what the thread runs on.
             return Effect.succeed({
               threadId: cloudThreadId,
@@ -258,6 +253,21 @@ const startSession = (input: {
     assert.isDefined(launch);
     return launch;
   });
+
+/** Starts one cloud session whose launch fails there with `failure`, and returns the error. */
+const startRefused = (
+  failure: OrchestratorMcpFailure,
+  modelSelection: BotSessions.BotSessionStartInput["modelSelection"],
+) =>
+  Effect.gen(function* () {
+    const sessions = yield* BotSessions.BotSessions;
+    return yield* sessions.start(bot.id, startInput({ cloud: {}, modelSelection }));
+  }).pipe(
+    Effect.provide(
+      sessionsHarness({ jobProjectId: repoId, clouds: [cloudId], cloudRefuses: failure }).layer,
+    ),
+    Effect.flip,
+  );
 
 describe("BotSessions.start", () => {
   it.effect("runs work outside any project in the scratch project, in place", () =>
@@ -459,28 +469,44 @@ describe("BotSessions cloud sessions", () => {
       }
 
       // The cloud's own refusal reaches the bot with its words, plus whose model it was.
-      // What a cloud without this instance answers, worded by the shared check.
-      const refusal = `${modelSelectionProblem({
-        providers: [],
-        adapterInstanceIds: new Set(),
-        selection: model,
-      })} No thread was created.`;
-      for (const modelSelection of [undefined, model]) {
-        const harness = sessionsHarness({
-          jobProjectId: repoId,
-          clouds: [cloudId],
-          cloudRefuses: refusal,
-        });
-        const error = yield* Effect.gen(function* () {
-          const sessions = yield* BotSessions.BotSessions;
-          return yield* sessions.start(bot.id, startInput({ cloud: {}, modelSelection }));
-        }).pipe(Effect.provide(harness.layer), Effect.flip);
-        assert.strictEqual(error.reason, "invalid-request");
-        assert.include(error.message, `on Cloud ${cloudId}: ${refusal}`);
-        assert.strictEqual(
-          error.message.includes("That is your worker model"),
-          modelSelection === undefined,
+      const refusals = [
+        // What a cloud without this instance answers, worded by the shared check.
+        `${modelSelectionProblem({
+          providers: [],
+          adapterInstanceIds: new Set(),
+          selection: model,
+        })} No thread was created.`,
+        // What Pair Cloud 0.1.7-pair.36 answered a bot whose worker default is pi (19 Nov).
+        `${new ProviderCloudUnsupportedError({ threadId: "", driver: "pi" }).message} No thread was created.`,
+      ];
+      for (const refusal of refusals) {
+        for (const modelSelection of [undefined, model]) {
+          const error = yield* startRefused(
+            new OrchestratorMcpFailure({ code: "invalid_request", message: refusal }),
+            modelSelection,
+          );
+          assert.strictEqual(error.reason, "invalid-request");
+          assert.include(error.message, `on Cloud ${cloudId}: ${refusal}`);
+          assert.strictEqual(
+            error.message.includes(
+              `That is your worker model, from this machine: pass modelSelection with one that runs there (orchestrator_capabilities with environmentId ${cloudId} lists them).`,
+            ),
+            modelSelection === undefined,
+          );
+          assert.notInclude(error.message, "Models…");
+        }
+      }
+      // Only a failure to answer may pass with time; any other code is a refusal to act on.
+      for (const [code, reason] of [
+        ["runtime_mode_escalation_denied", "invalid-request"],
+        ["orchestration_error", "unavailable"],
+      ] as const) {
+        const error = yield* startRefused(
+          new OrchestratorMcpFailure({ code, message: "The cloud says why." }),
+          model,
         );
+        assert.strictEqual(error.reason, reason);
+        assert.include(error.message, "The cloud says why.");
       }
     }),
   );

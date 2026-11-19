@@ -450,6 +450,7 @@ export type BotsUpdateNoteInput = typeof BotsUpdateNoteInput.Type;
 export const BotsNoteInput = Schema.Struct({ noteId: BotNoteId });
 export type BotsNoteInput = typeof BotsNoteInput.Type;
 
+/** `message` reaches users and the bot verbatim: never put an unvetted cause in it. */
 export class BotsError extends Schema.TaggedError<BotsError>()("BotsError", {
   reason: Schema.Literals(["not-found", "invalid-request", "unavailable", "cloud-only"]),
   message: Schema.String,
