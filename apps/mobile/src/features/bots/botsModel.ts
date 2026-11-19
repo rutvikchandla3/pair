@@ -2,9 +2,11 @@ import {
   BOT_QUIET_AFTER_MS,
   type Bot,
   type BotAsk,
+  type BotCloudSessionState,
   type BotJob,
   botJobFinished,
   type BotSession,
+  botSessionArchived,
   type BotsSnapshot,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -70,16 +72,17 @@ function sessionState(
   return { kind, label, trouble, updatedAt };
 }
 
-function cloudSessionState(
+/** A session's state as its bot's server last recorded it, for a client without its shell. */
+function recordedSessionState(
   session: BotSession,
-  cloud: NonNullable<BotSession["cloud"]>,
+  state: BotCloudSessionState,
+  at: string | null,
   botName: string,
   nowMs: number,
 ): BotSessionState {
-  const at = cloud.lastOutputAt;
-  switch (cloud.state) {
+  switch (state) {
     case "unreachable":
-      return sessionState("unreachable", `Can't reach ${cloud.label}`, true, at);
+      return sessionState("unreachable", `Can't reach ${session.cloud?.label}`, true, at);
     case "waiting":
       return sessionState("waiting", `Waiting on ${botName}`, false, at);
     case "failed":
@@ -89,8 +92,7 @@ function cloudSessionState(
     case "done":
       return sessionState("done", "", false, at);
     case "working": {
-      const updatedAt = Date.parse(at);
-      if (Number.isFinite(updatedAt) && nowMs - updatedAt >= BOT_QUIET_AFTER_MS) {
+      if (at !== null && nowMs - Date.parse(at) >= BOT_QUIET_AFTER_MS) {
         return sessionState("quiet", `${session.title} quiet ${relativeTime(at, nowMs)}`, true, at);
       }
       return sessionState("working", "", false, at);
@@ -123,9 +125,19 @@ export function botSessionState(input: {
     );
   }
   if (session.takenOver) return sessionState("taken-over", "You took over", true, null);
-  // A cloud session's shell is on the cloud; without it, the bot's server's last read stands.
+  // A cloud session's shell is on the cloud, and no client holds an archived thread's; without
+  // it, the state the bot's server recorded stands.
   if (shell === null && session.cloud !== undefined) {
-    return cloudSessionState(session, session.cloud, botName, nowMs);
+    return recordedSessionState(
+      session,
+      session.cloud.state,
+      session.cloud.lastOutputAt,
+      botName,
+      nowMs,
+    );
+  }
+  if (shell === null && session.archived !== undefined) {
+    return recordedSessionState(session, session.archived, null, botName, nowMs);
   }
   if (shell === null) return sessionState("working", "", false, null);
   const resetAt = shell.usageLimitResetAt;
@@ -261,7 +273,7 @@ export interface BotSessionRows {
   readonly rows: ReadonlyArray<BotSessionRow>;
   /** Finished longer ago than a day, newest first; behind "N earlier". */
   readonly earlier: ReadonlyArray<BotSessionRow>;
-  /** Sessions of archived jobs, and sessions archived on their cloud; behind the same disclosure. */
+  /** Sessions of archived jobs, and sessions whose thread is archived; behind the same disclosure. */
   readonly archived: ReadonlyArray<BotSessionRow>;
 }
 
@@ -273,8 +285,10 @@ function sessionBucket(hasOpenAsk: boolean, state: BotSessionState): BotSessionB
   return "working";
 }
 
+/** An archived thread's session has no finish time; it only stays listed for an open question. */
 function finishedInLastDay(row: BotSessionRow, nowMs: number): boolean {
-  const updatedAt = row.state.updatedAt === null ? Number.NaN : Date.parse(row.state.updatedAt);
+  if (row.state.updatedAt === null) return true;
+  const updatedAt = Date.parse(row.state.updatedAt);
   return Number.isFinite(updatedAt) && nowMs - updatedAt <= DAY_MS;
 }
 
@@ -304,7 +318,7 @@ export function botSessionRows(input: {
       jobArchived: job !== undefined && job.archivedAt !== null,
     };
     // A question on the job keeps it in the list.
-    if ((row.jobArchived || session.cloud?.archived === true) && !hasOpenAsk) archived.push(row);
+    if ((row.jobArchived || botSessionArchived(session)) && !hasOpenAsk) archived.push(row);
     else listed.push(row);
   });
   const ordered = listed.sort((left, right) => {

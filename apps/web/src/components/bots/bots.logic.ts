@@ -2,9 +2,11 @@ import {
   BOT_QUIET_AFTER_MS,
   type Bot,
   type BotAsk,
+  type BotCloudSessionState,
   type BotJob,
   botJobFinished,
   type BotSession,
+  botSessionArchived,
   type BotsSnapshot,
   type RunId,
   type ThreadId,
@@ -43,11 +45,15 @@ function shellFor(
   return shells?.get(threadId);
 }
 
-/** A cloud session's state as its bot's server last read it, for a client without its shell. */
-function cloudSessionState(cloud: NonNullable<BotSession["cloud"]>, now: number): BotSessionState {
-  switch (cloud.state) {
+/** A session's state as its bot's server last recorded it, for a client without its shell. */
+function recordedSessionState(
+  state: BotCloudSessionState,
+  lastOutputAt: string | null,
+  now: number,
+): BotSessionState {
+  switch (state) {
     case "working": {
-      const quietMs = now - Date.parse(cloud.lastOutputAt);
+      const quietMs = lastOutputAt === null ? Number.NaN : now - Date.parse(lastOutputAt);
       return Number.isFinite(quietMs) && quietMs >= BOT_QUIET_AFTER_MS
         ? { kind: "quiet", quietMs }
         : { kind: "working" };
@@ -68,7 +74,8 @@ function cloudSessionState(cloud: NonNullable<BotSession["cloud"]>, now: number)
 /**
  * The session's live state. `shell` is the ordinary thread shell the client already holds; a
  * missing shell means the thread has not loaded yet, which reads as working. A cloud session's
- * shell is held only by a client connected to that cloud; without it, its last-read state stands.
+ * shell is held only by a client connected to that cloud, and no client holds an archived
+ * thread's; without it, the state the bot's server recorded stands.
  */
 export function sessionState(
   session: BotSession,
@@ -76,10 +83,13 @@ export function sessionState(
   now: number = Date.now(),
 ): BotSessionState {
   if (session.takenOver) return { kind: "taken-over" };
-  if (session.cloud !== undefined && (shell === null || shell === undefined)) {
-    return cloudSessionState(session.cloud, now);
+  if (shell === null || shell === undefined) {
+    if (session.cloud !== undefined) {
+      return recordedSessionState(session.cloud.state, session.cloud.lastOutputAt, now);
+    }
+    if (session.archived !== undefined) return recordedSessionState(session.archived, null, now);
+    return { kind: "working" };
   }
-  if (shell === null || shell === undefined) return { kind: "working" };
   if (
     shell.hasPendingApprovals ||
     shell.hasPendingUserInput ||
@@ -307,7 +317,7 @@ export interface BotSidebarSessions {
   /** Finished longer ago than 24 hours, newest first; behind "N earlier". */
   readonly earlier: ReadonlyArray<BotSidebarSession>;
   /**
-   * Sessions of archived jobs, and sessions archived on their cloud, newest first; after the
+   * Sessions of archived jobs, and sessions whose thread is archived, newest first; after the
    * earlier ones, behind the same disclosure.
    */
   readonly archived: ReadonlyArray<BotSidebarSession>;
@@ -352,8 +362,7 @@ export function botSidebarSessions(
   });
   // A question on the job keeps it in the list.
   const isArchived = (row: BotSidebarSession): boolean =>
-    (row.jobArchived || row.session.cloud?.archived === true) &&
-    !openAskJobIds.has(row.session.jobId);
+    (row.jobArchived || botSessionArchived(row.session)) && !openAskJobIds.has(row.session.jobId);
   const byGlyphThenNewest = (left: BotSidebarSession, right: BotSidebarSession): number =>
     GLYPH_ORDER[left.glyph] - GLYPH_ORDER[right.glyph] ||
     right.session.createdAt.localeCompare(left.session.createdAt);
@@ -366,7 +375,9 @@ export function botSidebarSessions(
   const active = listed.filter((row) => row.glyph !== "done").sort(byGlyphThenNewest);
   const finished = listed.filter((row) => row.glyph === "done").sort(newestFirst);
   const recent = finished.filter((row) => {
-    const finishedAt = row.finishedAt === null ? Number.NaN : Date.parse(row.finishedAt);
+    // An archived thread's session has no finish time; it only stays listed for an open question.
+    if (row.finishedAt === null) return true;
+    const finishedAt = Date.parse(row.finishedAt);
     return Number.isFinite(finishedAt) && now - finishedAt <= DAY_MS;
   });
   const earlier = finished.filter((row) => !recent.includes(row));
