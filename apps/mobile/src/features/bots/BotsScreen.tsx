@@ -15,6 +15,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { Menu } from "../../components/ui/Menu";
 import { useNowMinuteMs } from "../../lib/clock";
 import { relativeTime } from "../../lib/time";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { retryBotsSnapshot, useBotsCommands, useBotsEnvironments } from "../../state/bots";
 import { startOpeningEnvironmentThread } from "../../state/threads";
@@ -49,7 +50,14 @@ export function BotsScreen() {
   const workspace = useWorkspaceTabs();
   const navigation = useNavigation();
   const { create } = useBotsCommands();
-  const bottom = (workspace?.bottomClearance ?? insets.bottom) + 24;
+  // UIKit insets the list by its column's safe area, which this context can report as 0.
+  const columnSafeBottom = useNativeColumnLayoutMetrics()?.safeArea.bottom;
+  const bottomSafeArea =
+    Platform.OS === "ios" ? (columnSafeBottom ?? insets.bottom) : insets.bottom;
+  const listBottomPadding =
+    Math.max(bottomSafeArea, workspace?.bottomClearance ?? insets.bottom) +
+    24 -
+    (Platform.OS === "ios" ? bottomSafeArea : 0);
 
   const createBot = async (environmentId: EnvironmentId) => {
     const result = await create({
@@ -166,7 +174,7 @@ export function BotsScreen() {
         renderScrollComponent={Platform.OS === "ios" ? renderBotsScrollView : undefined}
         // The workspace header is transparent on iOS; UIKit insets the list below it.
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{ flexGrow: 1, paddingBottom: bottom }}
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: listBottomPadding }}
         ListHeaderComponent={titleRow}
         ListEmptyComponent={
           <View className="flex-1 items-center justify-center p-8">
