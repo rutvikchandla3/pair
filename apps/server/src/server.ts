@@ -73,6 +73,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
+import * as ChiefOfStaffCleanup from "./project/ChiefOfStaffCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as SandboxFork from "./sandbox/lifecycle/SandboxFork.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
@@ -1510,8 +1511,22 @@ const layerMakeServer = Layer.unwrap(
       withUntracedRequests,
       Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)),
     );
+    // After command readiness, so the deletes never race recovery or hold up startup.
+    const layerChiefOfStaffCleanup = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+        yield* startup.awaitCommandReady.pipe(
+          Effect.andThen(ChiefOfStaffCleanup.run()),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to remove leftover Chief of staff data", { cause }),
+          ),
+          Effect.forkScoped,
+        );
+      }),
+    );
     const layerServerApplication = Layer.mergeAll(
       layerRoutes,
+      layerChiefOfStaffCleanup,
       layerHttpListening,
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
       layerTailscaleServe,

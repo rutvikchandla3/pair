@@ -20,18 +20,10 @@ export const layer = Layer.succeed(
           browserToolsAvailable: true,
         },
       }),
-    issueClient: () =>
-      Effect.succeed({
-        sessionId: "mcp-test:client",
-        endpoint: "http://127.0.0.1/mcp",
-        authorizationHeader: "Bearer mcp-test:client",
-      }),
     resolve: () => Effect.undefined,
-    resolveClient: () => Effect.undefined,
     touch: () => Effect.void,
     revokeProviderSession: () => Effect.void,
     revokeThread: () => Effect.void,
-    revokeClient: () => Effect.void,
     revokeAll: Effect.void,
   }),
 );

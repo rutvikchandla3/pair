@@ -1,6 +1,6 @@
 # Bots
 
-Status: design v4 (chat-first), 2026-11-18. Replaces v3's Briefing design and Chief of staff.
+Status: design v4 (chat-first), 2026-11-18. Replaces v3's Briefing design.
 Screens: [bots-chat-prototype](./bots-chat-prototype/README.md).
 
 > "It is a single chat where someone can continuously write stuff and the bot handles everything
