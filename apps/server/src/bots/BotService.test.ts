@@ -79,6 +79,31 @@ it.effect("creates a Default bot and shows it in the caller's snapshot", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("gives each new bot an unused name and face, unless the caller picks them", () =>
+  Effect.gen(function* () {
+    const bots = yield* BotService.BotService;
+    const first = yield* bots.create(caller, { charter: "", starter: "default" });
+    const second = yield* bots.create(caller, { charter: "", starter: "default" });
+    const picked = yield* bots.create(caller, {
+      charter: "",
+      starter: "default",
+      color: "#6366f1",
+      shape: "hex",
+      voice: "candid",
+    });
+    assert.deepStrictEqual(
+      [first, second, picked].map((bot) => [bot.name, bot.color, bot.shape, bot.voice]),
+      [
+        ["Atlas", "#6366f1", "round", "crisp"],
+        ["Nova", "#0d9488", "square", "crisp"],
+        ["Echo", "#6366f1", "hex", "candid"],
+      ],
+    );
+    const edited = yield* bots.update(caller, { botId: first.id, shape: "tall", voice: "candid" });
+    assert.deepStrictEqual([edited.shape, edited.voice], ["tall", "candid"]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("numbers and titles jobs, and wakes the home thread", () =>
   Effect.gen(function* () {
     const bots = yield* BotService.BotService;

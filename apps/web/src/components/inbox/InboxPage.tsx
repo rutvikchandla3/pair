@@ -518,7 +518,7 @@ function InboxRow(props: {
       {isBot ? (
         <span className="mt-0.5 shrink-0">
           <BotAvatar
-            bot={{ name: item.botName ?? "Bot", color: item.botColor ?? "#4f46e5" }}
+            bot={{ color: item.botColor ?? "", shape: item.botShape ?? "round" }}
             size="sm"
           />
         </span>

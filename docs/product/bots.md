@@ -1,6 +1,7 @@
 # Bots
 
-Status: design v4 (chat-first), 2026-11-18. Replaces v3's Briefing design.
+Status: design v4 (chat-first), 2026-11-18, with character and a chat that never waits,
+2026-11-19. Replaces v3's Briefing design.
 Screens: [bots-chat-prototype](./bots-chat-prototype/README.md).
 
 > "It is a single chat where someone can continuously write stuff and the bot handles everything
@@ -27,12 +28,16 @@ It is single-user. It is not a Space, a provider, or a voice assistant.
    the bot in the sidebar.
 5. **Memory is visible.** What it learned is listed in a Memory panel, and talking to it edits the
    same list.
+6. **The chat never waits on the bot.** The bot never does work in its own turn, however small.
+   Every product we looked at (OpenBot, Grok Bot, Capy, Claude Projects) runs one front-agent turn
+   at a time; they feel responsive because that turn is short. So is this one: plan, start
+   sessions, reply.
 
 ## What the user sees
 
 ### Sidebar
 
-**Bots** sits above Threads. Each bot row: avatar, name, and on the right a count of the bot's open
+**Bots** sits above Threads. Each bot row: face, name, and on the right a count of the bot's open
 questions for you, else a working glyph while the bot or any of its sessions is working, else
 nothing. Paused bots say
 "Paused".
@@ -45,8 +50,8 @@ Bot sessions don't also appear under Threads.
 
 ### Bot page
 
-**Header**: avatar, name, a live status line, **Memory**, and ⋯ (**Pause**, **Models…**,
-**Rename…**, **Delete bot…**). The status line names sessions, never job ids: "1 session working ·
+**Header**, one line: face, name (its role as a tooltip), a live status line, **Memory**, and ⋯
+(**Pause**, **Models…**, **Edit bot…**, **Delete bot…**). The status line names sessions, never job ids: "1 session working ·
 nothing needs you", "Rate limit threads API needs you", "2 questions for you". When something needs
 you it is a button that scrolls the chat to the oldest open question.
 
@@ -73,7 +78,8 @@ What the chat holds:
 - **The bot's replies**, in plain prose:
   - Starting work: "On it, both in **pair**: [Sidebar drag flicker] and [Rate limit threads API]."
     The bracketed names are `t3-thread://` links, which T3 renders as live thread chips with the
-    session's state.
+    session's state. Work outside any project: "On it, on this machine: [Add pgAdmin login to
+    .zshrc]."
   - Needing you: "**Rate limit threads API needs you:** per member or per API token? … I'd pick per
     member." One question per message, named by session. You answer in the composer, in your own
     words.
@@ -96,14 +102,35 @@ so these are instructions, not locks, and the panel says so.
 
 ### A new bot
 
-**+** in the Bots header creates a bot named Atlas (or the next free name), with the default limits
-and models, and opens its empty chat: "What should Atlas take on?" above T3's composer. Your first
-message is its first job. Rename from ⋯.
+**+** in the Bots header (also the Bots page, the empty sidebar row and the command palette) opens
+**New bot**, prefilled: the next free name (Atlas, Nova, …) selected, an unused face, no role,
+Crisp. Enter creates it and opens its empty chat: its face, a one-line greeting in its voice ("Atlas
+here. What should I take on?"), its role, then T3's composer. Your first message is its first job.
+⋯ → **Edit bot…** opens the same dialog. On mobile, **+** creates at once with the same defaults.
+
+### Character
+
+Capy's Captains and Grok Bot give their agents character with a face, a name and a role line,
+not a personality form. Bots do the same, and keep tone small.
+
+- **Face**: a static, non-human SVG, one of four shapes (each with its own eyes) in one of five
+  colours. Pair assigns the least-used colour, then the least-used shape, so a few bots never look
+  alike; Edit bot changes it. No mouth, no expressions, no animation, and it never shows state.
+  Shape and colour carry identity at 16px.
+- **Role**: one line under its name (the charter). The bot reads it as its job, so it describes
+  the bot, never "I" or "my".
+- **Voice**: **Crisp** (default: results first, fewest words) or **Candid** (the same, plus its
+  own call in one sentence). Tone only: questions, fold labels, status lines, job reports and
+  session tasks are plain in both, and neither voice writes longer, uses emoji or flatters.
+  Anything more personal goes in Memory → Instructions. We cut warmer and joking voices: Codex and
+  Claude retired similar presets, and warm modes drift into filler and sycophancy.
 
 ### Sessions
 
-A session is a normal top-level thread you own, in the job's project and its own worktree, on the
-Worker model (implementation) or Reviewer model (review), rendered by the unchanged thread screen.
+A session is a normal top-level thread you own, on the Worker model (doing the work) or Reviewer
+model (review), rendered by the unchanged thread screen. A git project gives it its own worktree; a
+folder that isn't a git repository runs in place; work outside any project (this machine's
+dotfiles, a database, a website) runs in a scratch folder under **No project**.
 Its composer placeholder reads "Message this session (Atlas steps back)". There is no Take over
 button: sending a message there takes it over, and the bot posts once in its chat. Answering the
 session's pending approval or question inside the thread does not take it over.
@@ -126,10 +153,11 @@ Threads.
 
 ### Mobile
 
-The Bots tab lists bots with their sessions nested. Tapping a bot opens its chat in the normal
+The Bots tab lists bots with their faces and sessions nested; a bot's second line is its status,
+or its role when nothing is running. Tapping a bot opens its chat in the normal
 mobile thread screen and composer, with the status line under the name in the header (tapping it
 jumps to the open question); tapping a session opens that thread. No Memory button: Memory is on
-desktop and web in v1.
+desktop and web in v1, and so is Edit bot.
 
 ## How it behaves
 
@@ -140,13 +168,16 @@ the next one waits for the following turn, which starts right after. So a turn c
 question, and that question is the visible message.
 
 1. **You write.** The message lands in the home thread like any message.
-2. **The bot plans** with `bot_brief` (memory, limits, projects, open jobs and their sessions' live
-   state, open questions). It calls `bot_brief` every turn, so its state comes from the server, not
-   from chat history, and survives context compaction. For new work it calls `bot_job_create` (title, request, project) and
-   `bot_start_session` for each independent piece, then replies with the session links.
-3. **Sessions run.** The server launches each through `ThreadLaunchService`: the project, a new
-   worktree, the Worker or Reviewer model, full access, owner = you, and a task text carrying the
-   relevant instructions, limits and the closing-report format.
+2. **The bot plans** with `bot_brief` (memory, voice, limits, projects, open jobs and their
+   sessions' live state, open questions). It calls `bot_brief` every turn, so its state comes from
+   the server, not from chat history, and survives context compaction. For new work it calls
+   `bot_job_create` (title, request, and a project unless the work is outside one) and
+   `bot_start_session` for each independent piece, replies with the session links, and ends the
+   turn. It never waits on a session in its turn.
+3. **Sessions run.** The server launches each through `ThreadLaunchService`: the project (or the
+   scratch project), a new worktree for a git project, the Worker or Reviewer model, full access,
+   owner = you, and a task text carrying the relevant instructions, limits and the closing-report
+   format.
 4. **The server wakes the bot** when a session finishes, fails, hits a usage limit, raises a
    question or approval, or goes quiet for 30 minutes, and on resume and hand-back. Wakes within 3
    seconds are batched into one message, with at most one wake that needs a decision from you per
@@ -172,8 +203,14 @@ Unchanged from v3 except where noted.
   `bot_job_update`, `bot_start_session` (now also returns the session's `t3-thread://` link),
   `bot_session_message`, `bot_session_respond`, `bot_ask`, `bot_ask_resolve`, `bot_learn`, and
   **`bot_forget` (new)**.
-- **Persona** rewritten for chat-first: the chat is the only screen; turn requests into jobs; link
-  sessions; ask in chat; short replies; nothing on routine wakes.
+- **Persona** rewritten for chat-first: the chat is the only screen; never do the work yourself
+  (anything that runs a command, edits a file, browses or logs in is a session, sorted by the kind
+  of work, not its size, since models judge "small" differently); turn requests into jobs; link
+  sessions; ask in chat; short replies in the bot's voice; nothing on routine wakes.
+- **Enforcement**: `BotHome` writes `.claude/settings.json` into the bot's home folder, denying
+  Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch and subagents. Claude applies deny rules
+  even in bypassPermissions, so a Claude brain can't work in its own turn. Other providers' brains
+  have only the persona's rule.
 - **Guard**: in a home-thread turn that called `bot_ask`, `deriveTurnFolds` never hides the
   assistant message containing the question, even if the model wrote it before more tool calls.
 - **Web**: the bot route renders header + `ChatView` + Memory panel. Removed: Briefing, job panel,
@@ -186,5 +223,5 @@ Unchanged from v3 except where noted.
 
 ## Not in v1
 
-Several bots working as a team, schedules and standing duties ("keep CI green"), voice,
+Several bots working as a team, schedules and standing duties ("keep CI green"), speech,
 harness-enforced limits, Memory on mobile.

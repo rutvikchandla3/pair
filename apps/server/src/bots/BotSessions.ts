@@ -22,6 +22,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { BotService } from "./BotService.ts";
 import { sessionTaskFooter } from "./botPersona.ts";
@@ -47,7 +48,8 @@ const launchFailure = (error: unknown, projectTitle: string, role: BotSessionRol
 
 export interface BotSessionStartInput {
   readonly jobId: BotJobId;
-  readonly projectId: BotSession["projectId"];
+  /** Defaults to the job's project; a job without one runs in a scratch folder ("No project"). */
+  readonly projectId?: BotSession["projectId"] | undefined;
   readonly role: BotSessionRole;
   readonly title: BotSession["title"];
   readonly task: string;
@@ -124,6 +126,7 @@ const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const random = yield* SecureRandom.SecureRandom;
 
   const loadBot = Effect.fn("BotSessions.loadBot")(function* (botId: BotId) {
@@ -160,17 +163,27 @@ const make = Effect.gen(function* () {
           "This job is not working; reopen it before starting sessions.",
         );
       }
+      const projectId =
+        input.projectId ??
+        job.projectId ??
+        (yield* folders.ensureScratchProject.pipe(
+          Effect.mapError((error) => unavailable(`Could not start the session: ${error.message}`)),
+        )).projectId;
       const project = Option.getOrNull(
         yield* projects
-          .getById(input.projectId)
+          .getById(projectId)
           .pipe(Effect.mapError(() => unavailable("Could not read the project."))),
       );
       if (project === null) return yield* invalidRequest("That project was not found.");
       const root = project.workspaceRoot;
-      const baseRef =
-        (yield* git.defaultBranch(root).pipe(Effect.orElseSucceed(() => null))) ??
-        (yield* git.currentBranch(root).pipe(Effect.orElseSucceed(() => null))) ??
-        "main";
+      // Only a git project can give a session its own worktree. Anything else, the scratch
+      // project included, runs in place; the scratch project gives each thread its own folder.
+      const inWorktree = yield* git.isRepository(root).pipe(Effect.orElseSucceed(() => false));
+      const baseRef = inWorktree
+        ? ((yield* git.defaultBranch(root).pipe(Effect.orElseSucceed(() => null))) ??
+          (yield* git.currentBranch(root).pipe(Effect.orElseSucceed(() => null))) ??
+          "main")
+        : null;
       const launched = yield* launches
         .launch({
           commandId: CommandId.make(`server:bot-session:${yield* random.uuidV4()}`),
@@ -179,9 +192,12 @@ const make = Effect.gen(function* () {
           modelSelection: input.role === "worker" ? bot.models.worker : bot.models.reviewer,
           runtimeMode: "full-access",
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin: false },
+          workspaceStrategy:
+            baseRef === null
+              ? { type: "root" }
+              : { type: "worktree", baseRef, startFromOrigin: false },
           initialMessage: {
-            text: `${input.task}${sessionTaskFooter({ bot, job })}`,
+            text: `${input.task}${sessionTaskFooter({ bot, job, inWorktree })}`,
             attachments: [],
           },
           createdBy: "agent",

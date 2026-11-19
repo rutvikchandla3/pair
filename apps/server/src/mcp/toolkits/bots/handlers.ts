@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 
 import * as BotSessions from "../../../bots/BotSessions.ts";
 import * as BotService from "../../../bots/BotService.ts";
+import { voiceGuide } from "../../../bots/botPersona.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -112,7 +113,12 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
         }),
       );
       return {
-        bot: { name: bot.name, charter: bot.charter, paused: bot.paused },
+        bot: {
+          name: bot.name,
+          charter: bot.charter,
+          voice: voiceGuide(bot.voice),
+          paused: bot.paused,
+        },
         playbook: {
           instructions: bot.instructions,
           checkWithMeBefore: bot.limits.map((limit) => BOT_LIMIT_LABELS[limit]),
@@ -147,20 +153,23 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
       const botId = yield* resolveBotId();
       const bots = yield* BotService.BotService;
       const projects = yield* ProjectService.ProjectService;
-      const project = Option.getOrNull(
-        yield* projects.getById(params.projectId).pipe(Effect.mapError(() => unavailable())),
-      );
-      if (project === null) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "That project was not found.",
-        });
+      if (params.projectId !== undefined) {
+        const project = yield* projects
+          .getById(params.projectId)
+          .pipe(Effect.mapError(() => unavailable()));
+        if (Option.isNone(project)) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "That project was not found. Leave out projectId for work outside any project.",
+          });
+        }
       }
       const job = yield* mapError(
         bots.createJobForBot(botId, {
           title: params.title,
           request: params.request,
-          projectId: project.id,
+          ...(params.projectId === undefined ? {} : { projectId: params.projectId }),
         }),
       );
       return { jobId: job.id, title: job.title };

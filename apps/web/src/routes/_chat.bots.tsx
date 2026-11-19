@@ -1,7 +1,7 @@
 import { Navigate, Outlet, createFileRoute, useLocation } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
 
-import { useCreateBot } from "../components/bots/useCreateBot";
+import { openBotDialog } from "../components/bots/botDialogStore";
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
 import { useBotsSnapshot } from "../state/bots";
@@ -11,7 +11,6 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 function BotsIndex() {
   const environmentId = usePrimaryEnvironmentId();
   const snapshot = useBotsSnapshot(environmentId);
-  const createBot = useCreateBot();
 
   if (environmentId === null) {
     return (
@@ -45,7 +44,7 @@ function BotsIndex() {
       <p className="max-w-[420px] text-muted-foreground text-sm">
         A bot is one chat. Give it work; it runs sessions and reports back here.
       </p>
-      <Button onClick={() => void createBot(environmentId)}>New bot</Button>
+      <Button onClick={() => openBotDialog({ type: "new", environmentId })}>New bot</Button>
     </div>
   );
 }

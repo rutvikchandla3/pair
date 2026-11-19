@@ -125,12 +125,14 @@ function BotSection(props: {
   const status = botStatusLine({ bot, asks, jobs, sessions, sessionStates: states });
   const rows = botSessionRows({ sessions, states, asks, nowMs });
   const needsYou = needsYouCount(asks);
+  const role = bot.charter.trim();
+  const subtitle = status.tone === "idle" && role !== "" ? role : status.text;
 
   return (
     <View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${bot.name}, ${status.text}`}
+        accessibilityLabel={`${bot.name}, ${subtitle}`}
         onPress={props.onOpenBot}
         className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
       >
@@ -147,7 +149,7 @@ function BotSection(props: {
                 : "text-sm text-foreground-muted"
             }
           >
-            {status.text}
+            {subtitle}
           </Text>
         </View>
         {needsYou > 0 ? (

@@ -475,7 +475,7 @@ export default function ChatView(props: ChatViewProps) {
     threadId,
   );
   const composerDefaultPlaceholder = bot
-    ? `Message ${bot.name}`
+    ? `Message ${bot.identity.name}`
     : sessionBotName === null
       ? undefined
       : `Message this session (${sessionBotName} steps back)`;
@@ -3780,9 +3780,9 @@ export default function ChatView(props: ChatViewProps) {
                   emptyPlaceholderInset={composerReservedHeight}
                   {...(bot
                     ? {
-                        botName: bot.name,
+                        botName: bot.identity.name,
                         botFocus: bot.focus,
-                        emptyPlaceholder: <BotEmptyChat name={bot.name} />,
+                        emptyPlaceholder: <BotEmptyChat bot={bot.identity} />,
                       }
                     : {})}
                   topFadeEnabled={!hasTimelineTopBanner}

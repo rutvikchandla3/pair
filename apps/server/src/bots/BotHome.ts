@@ -34,6 +34,20 @@ import { botPersona } from "./botPersona.ts";
 const notFound = (message: string) => new BotsError({ reason: "not-found", message });
 const unavailable = (message: string) => new BotsError({ reason: "unavailable", message });
 
+/**
+ * A Claude brain can't do the work in its own turn, which would keep the user waiting: deny rules
+ * hold even in bypassPermissions. Other providers' brains get only the persona's rule.
+ */
+const BOT_HOME_CLAUDE_SETTINGS = `${JSON.stringify(
+  {
+    permissions: {
+      deny: ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task"],
+    },
+  },
+  null,
+  2,
+)}\n`;
+
 /** Every character outside this set becomes `_`, so the folder name is safe on every filesystem. */
 const botFolderName = (botId: string): string => botId.replace(/[^A-Za-z0-9_-]/g, "_");
 
@@ -157,9 +171,13 @@ const make = Effect.gen(function* () {
   const homeDir = (botId: BotId) => path.join(config.stateDir, "bots", botFolderName(botId));
 
   const writePersona = Effect.fn("BotHome.writePersona")(function* (bot: Bot, directory: string) {
-    yield* fileSystem.makeDirectory(directory, { recursive: true });
+    yield* fileSystem.makeDirectory(path.join(directory, ".claude"), { recursive: true });
     yield* fileSystem.writeFileString(path.join(directory, "AGENTS.md"), botPersona(bot));
     yield* fileSystem.writeFileString(path.join(directory, "CLAUDE.md"), "@AGENTS.md\n");
+    yield* fileSystem.writeFileString(
+      path.join(directory, ".claude", "settings.json"),
+      BOT_HOME_CLAUDE_SETTINGS,
+    );
   });
 
   const ensureHomeUnlocked = Effect.fn("BotHome.ensureHomeUnlocked")(function* (botId: BotId) {

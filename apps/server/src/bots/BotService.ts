@@ -39,6 +39,8 @@ import {
   CommandId,
   type MemberId,
   type ModelSelection,
+  nextBotFace,
+  nextBotName,
   type ProjectId,
   ProviderInstanceId,
   type RunId,
@@ -73,20 +75,6 @@ export interface BotWake {
   readonly label: string;
   readonly text: string;
 }
-
-const BOT_NAMES = ["Atlas", "Nova", "Echo", "Juno", "Orion", "Vega", "Iris", "Kai"] as const;
-
-/** "+" names new bots without asking: the first unused name, then "Atlas 2", "Atlas 3"… */
-const nextBotName = (existing: ReadonlyArray<Pick<Bot, "name">>): string => {
-  const taken = new Set(existing.map((bot) => bot.name.toLowerCase()));
-  const free = BOT_NAMES.find((name) => !taken.has(name.toLowerCase()));
-  if (free !== undefined) return free;
-  let n = 2;
-  while (taken.has(`atlas ${n}`)) n += 1;
-  return `Atlas ${n}`;
-};
-
-const BOT_COLORS = ["#4f46e5", "#0d9488", "#db2777", "#ea580c", "#2563eb", "#7c3aed"] as const;
 
 const BRAIN_MODEL: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -149,7 +137,7 @@ export class BotService extends Context.Service<
       input: {
         readonly title: BotJob["title"];
         readonly request: string;
-        readonly projectId: ProjectId;
+        readonly projectId?: ProjectId;
       },
     ) => Effect.Effect<BotJob, BotsError>;
     readonly stopJob: (caller: BotCaller, input: BotsJobInput) => Effect.Effect<BotJob, BotsError>;
@@ -472,11 +460,14 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             (bot) => bot.ownerId === caller.memberId,
           );
           const at = DateTime.formatIso(yield* DateTime.now);
+          const face = nextBotFace(mine);
           const bot: Bot = {
             id: yield* newBotId(random),
             ownerId: caller.memberId,
             name: input.name ?? nextBotName(mine),
-            color: BOT_COLORS[mine.length % BOT_COLORS.length]!,
+            color: input.color ?? face.color,
+            shape: input.shape ?? face.shape,
+            voice: input.voice ?? "crisp",
             charter: input.charter,
             instructions: input.starter === "default" ? BOT_DEFAULT_INSTRUCTIONS : "",
             limits: input.starter === "default" ? [...BOT_DEFAULT_LIMITS] : [],
@@ -519,6 +510,9 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           const updated: Bot = {
             ...bot,
             ...(input.name === undefined ? {} : { name: input.name }),
+            ...(input.color === undefined ? {} : { color: input.color }),
+            ...(input.shape === undefined ? {} : { shape: input.shape }),
+            ...(input.voice === undefined ? {} : { voice: input.voice }),
             ...(input.charter === undefined ? {} : { charter: input.charter }),
             ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
             ...(input.limits === undefined ? {} : { limits: input.limits }),

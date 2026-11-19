@@ -10,7 +10,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { BotAskId, BotId, BotJobId } from "./bots.ts";
+import { BotAskId, BotId, BotJobId, BotShape } from "./bots.ts";
 import { SpaceId, SpaceTask, SpaceTaskId, SpaceTaskStatus } from "./space.ts";
 
 export const INBOX_PAGE_LIMIT = 100;
@@ -76,6 +76,7 @@ export const InboxItem = Schema.Struct({
   botId: Schema.optionalKey(BotId),
   botName: Schema.optionalKey(Schema.String),
   botColor: Schema.optionalKey(Schema.String),
+  botShape: Schema.optionalKey(BotShape),
   askId: Schema.optionalKey(BotAskId),
   jobId: Schema.optionalKey(BotJobId),
   jobNumber: Schema.optionalKey(PositiveInt),

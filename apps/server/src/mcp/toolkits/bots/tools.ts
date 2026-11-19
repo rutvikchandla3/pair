@@ -68,6 +68,8 @@ const BriefResult = Schema.Struct({
   bot: Schema.Struct({
     name: Schema.String,
     charter: Schema.String,
+    /** How to sound in this chat, e.g. "Crisp: results first, in the fewest words." */
+    voice: Schema.String,
     paused: Schema.Boolean,
   }),
   playbook: Schema.Struct({
@@ -143,11 +145,11 @@ const JobUpdateTool = Tool.make("bot_job_update", {
 const JobCreateTool = Tool.make("bot_job_create", {
   ...shared,
   description:
-    "Create a job for one independent piece of the user's request. Give it a short title, the request in full, and the project it should run in.",
+    "Create a job for one independent piece of the user's request. Give it a short title, the request in full, and the project it should run in. Leave out projectId for work outside any project, such as this machine's config files, a database, or a website.",
   parameters: Schema.Struct({
     title: TrimmedNonEmptyString,
     request: Schema.String,
-    projectId: ProjectId,
+    projectId: Schema.optional(ProjectId),
   }),
   success: Schema.Struct({ jobId: BotJob.fields.id, title: Schema.String }),
 })
@@ -157,10 +159,10 @@ const JobCreateTool = Tool.make("bot_job_create", {
 const StartSessionTool = Tool.make("bot_start_session", {
   ...shared,
   description:
-    "Start a coding session for a job in one of its projects, in a new worktree. Use role worker for implementation and reviewer for review. Put the returned link in your reply exactly as given.",
+    "Start a session that does a job's work. It runs in the job's project unless you give projectId: a git project gets a new worktree; a job with no project runs in a scratch folder on this machine, with full access. Use role worker for doing the work and reviewer for review. Put the returned link in your reply exactly as given.",
   parameters: Schema.Struct({
     jobId: BotJob.fields.id,
-    projectId: ProjectId,
+    projectId: Schema.optional(ProjectId),
     role: BotSessionRole,
     title: TrimmedNonEmptyString,
     task: Schema.String,

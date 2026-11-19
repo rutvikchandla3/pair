@@ -18,9 +18,14 @@ question. `day` shows a whole busy day instead.
 | `sessions` | A session opened from the sidebar, nested under the bot                         |
 | `states`   | Bot row states and the Inbox items                                              |
 | `mobile`   | Bots tab with nested sessions; the bot's chat                                   |
+| `faces`    | The face system: four shapes in five colours, at every size                     |
+| `create`   | **+** opens New bot, prefilled; Enter creates                                   |
+| `profile`  | ⋯ → Edit bot…: face, name, role, voice                                          |
+| `voices`   | Crisp and Candid on the same moments; questions and fold labels stay plain      |
+| `machine`  | Work outside a project gets a session, so the chat is free seconds later        |
 
 ```sh
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ./render.sh out chat:1440:1000 day:1440:1180 busy first memory menu sessions states:1440:760 mobile:1400:980
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ./render.sh out chat:1440:1000 day:1440:1180 busy first memory menu sessions states:1440:760 mobile:1400:980 faces:1440:640 create profile voices:1440:760 machine
 ```
 
 `proto.css` and `app.js` are copied from the spaces prototype so the boards match the app's tokens.

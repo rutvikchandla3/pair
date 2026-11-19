@@ -65,6 +65,56 @@ export const BOT_DEFAULT_INSTRUCTIONS =
 export const BotStarter = Schema.Literals(["default", "blank"]);
 export type BotStarter = typeof BotStarter.Type;
 
+/** The palette Pair assigns from: each clears 3:1 on both themes and under the face's white eyes. */
+export const BOT_COLORS = ["#6366f1", "#0d9488", "#db2777", "#ea580c", "#2563eb"] as const;
+export const BotColor = Schema.Literals(BOT_COLORS);
+export type BotColor = typeof BotColor.Type;
+
+/** A bot's face shape; each shape has its own eyes. Static and non-human by design. */
+export const BotShape = Schema.Literals(["round", "square", "tall", "hex"]);
+export type BotShape = typeof BotShape.Type;
+
+/** How the bot sounds in its chat. Tone only: questions, reports and session tasks stay plain. */
+export const BotVoice = Schema.Literals(["crisp", "candid"]);
+export type BotVoice = typeof BotVoice.Type;
+
+/** Bots made before the palette changed keep their colour, except the old indigo, lifted for dark mode. */
+export const botDisplayColor = (color: string): string =>
+  color === "#4f46e5" ? "#6366f1" : color.trim() === "" ? BOT_COLORS[0] : color;
+
+const BOT_NAMES = ["Atlas", "Nova", "Echo", "Juno", "Orion", "Vega", "Iris", "Kai"] as const;
+
+/** A new bot's name: the first unused one, then "Atlas 2", "Atlas 3"… */
+export const nextBotName = (existing: ReadonlyArray<{ readonly name: string }>): string => {
+  const taken = new Set(existing.map((bot) => bot.name.toLowerCase()));
+  const free = BOT_NAMES.find((name) => !taken.has(name.toLowerCase()));
+  if (free !== undefined) return free;
+  let n = 2;
+  while (taken.has(`atlas ${n}`)) n += 1;
+  return `Atlas ${n}`;
+};
+
+const leastUsed = <A extends string>(options: ReadonlyArray<A>, used: ReadonlyArray<string>): A =>
+  options.reduce((best, option) =>
+    used.filter((value) => value === option).length < used.filter((value) => value === best).length
+      ? option
+      : best,
+  );
+
+/** A new bot's face: the least-used colour, then the least-used shape, so a few bots never look alike. */
+export const nextBotFace = (
+  existing: ReadonlyArray<{ readonly color: string; readonly shape: BotShape }>,
+): { readonly color: BotColor; readonly shape: BotShape } => ({
+  color: leastUsed(
+    BOT_COLORS,
+    existing.map((bot) => botDisplayColor(bot.color)),
+  ),
+  shape: leastUsed(
+    BotShape.literals,
+    existing.map((bot) => bot.shape),
+  ),
+});
+
 /** Brain thinks in the home thread; Worker runs implementation sessions; Reviewer runs review sessions. */
 export const BotModels = Schema.Struct({
   brain: ModelSelection,
@@ -77,9 +127,11 @@ export const Bot = Schema.Struct({
   id: BotId,
   ownerId: MemberId,
   name: TrimmedNonEmptyString,
-  /** A hex colour the server assigns, e.g. `#4f46e5`. */
+  /** A hex colour, assigned from `BOT_COLORS` on create. Render it through `botDisplayColor`. */
   color: TrimmedNonEmptyString,
-  /** One line: what it's for. May be empty. */
+  shape: BotShape.pipe(Schema.withDecodingDefaultKey(Effect.succeed("round"))),
+  voice: BotVoice.pipe(Schema.withDecodingDefaultKey(Effect.succeed("crisp"))),
+  /** One line: what it's for, shown under its name. May be empty. */
   charter: Schema.String,
   /** Prose the user writes: taste and standing orders. */
   instructions: Schema.String,
@@ -279,8 +331,11 @@ export const BOT_QUIET_AFTER_MS = 30 * 60_000;
 export const BOT_WAKE_BATCH_MS = 3_000;
 
 export const BotsCreateInput = Schema.Struct({
-  /** Omitted by "+": the server picks Atlas, or the next free name. */
+  /** Omitted fields are picked by the server: `nextBotName`, `nextBotFace`, Crisp. */
   name: Schema.optionalKey(TrimmedNonEmptyString),
+  color: Schema.optionalKey(BotColor),
+  shape: Schema.optionalKey(BotShape),
+  voice: Schema.optionalKey(BotVoice),
   charter: Schema.String,
   starter: BotStarter,
   models: Schema.optionalKey(BotModels),
@@ -290,6 +345,9 @@ export type BotsCreateInput = typeof BotsCreateInput.Type;
 export const BotsUpdateInput = Schema.Struct({
   botId: BotId,
   name: Schema.optionalKey(TrimmedNonEmptyString),
+  color: Schema.optionalKey(BotColor),
+  shape: Schema.optionalKey(BotShape),
+  voice: Schema.optionalKey(BotVoice),
   charter: Schema.optionalKey(Schema.String),
   instructions: Schema.optionalKey(Schema.String),
   limits: Schema.optionalKey(Schema.Array(BotLimit)),

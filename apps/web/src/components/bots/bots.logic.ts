@@ -290,7 +290,3 @@ export function threadChipState(
   }
   return "working";
 }
-
-export function botColor(bot: Bot): string {
-  return bot.color.trim() === "" ? "#4f46e5" : bot.color;
-}

@@ -12,7 +12,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { BotAvatar } from "../bots/BotAvatar";
 import { BotStateGlyph } from "../bots/BotStateGlyph";
-import { useCreateBot } from "../bots/useCreateBot";
+import { openBotDialog } from "../bots/botDialogStore";
 import {
   botSidebarSessions,
   botWorking,
@@ -41,7 +41,6 @@ function SessionTime(props: { readonly timestamp: string }) {
 
 function NewBotButton() {
   const environmentId = usePrimaryEnvironmentId();
-  const createBot = useCreateBot();
   return (
     <Button
       size="icon-micro"
@@ -49,7 +48,7 @@ function NewBotButton() {
       aria-label="New bot"
       disabled={environmentId === null}
       onClick={() => {
-        if (environmentId !== null) void createBot(environmentId);
+        if (environmentId !== null) openBotDialog({ type: "new", environmentId });
       }}
     >
       <PlusIcon />
@@ -168,7 +167,6 @@ export function SidebarBots() {
   const shells = useQuietThreadShells();
   const params = useParams({ strict: false });
   const now = useBotsNow();
-  const createBot = useCreateBot();
 
   if (environmentId === null || snapshot === null) return null;
 
@@ -195,7 +193,7 @@ export function SidebarBots() {
         <button
           type="button"
           className={cn(rowClass, "w-full text-left text-sidebar-muted-foreground")}
-          onClick={() => void createBot(environmentId)}
+          onClick={() => openBotDialog({ type: "new", environmentId })}
         >
           <PlusIcon className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate">New bot</span>

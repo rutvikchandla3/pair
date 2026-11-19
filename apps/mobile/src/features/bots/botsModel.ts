@@ -14,12 +14,6 @@ const ACTIVE_SESSION_STATUSES = new Set(["preparing", "queued", "starting", "run
 const FAILED_SESSION_STATUSES = new Set(["failed", "rolled_back"]);
 const STOPPED_SESSION_STATUSES = new Set(["interrupted", "cancelled"]);
 
-/** The avatar's initial: the first letter of the name, upper-cased. */
-export function botInitial(name: string): string {
-  const first = [...name.trim()][0];
-  return first === undefined ? "?" : first.toUpperCase();
-}
-
 export type BotSessionStateKind =
   | "working"
   | "waiting"
@@ -119,7 +113,8 @@ export function needsYouCount(asks: ReadonlyArray<BotAsk>): number {
   return asks.filter((ask) => ask.status === "open").length;
 }
 
-export type BotStatusTone = "input" | "muted" | "paused";
+/** `idle` is "Nothing running": the list shows the bot's role there instead, when it has one. */
+export type BotStatusTone = "input" | "muted" | "paused" | "idle";
 
 export interface BotStatusLine {
   readonly text: string;
@@ -170,7 +165,7 @@ export function botStatusLine(input: {
   if (working > 0) {
     return { text: `${working} ${working === 1 ? "session" : "sessions"} working`, tone: "muted" };
   }
-  return { text: "Nothing running", tone: "muted" };
+  return { text: "Nothing running", tone: "idle" };
 }
 
 /** Needs you, then failed sessions, then the bot's running work, then the last day's finished. */

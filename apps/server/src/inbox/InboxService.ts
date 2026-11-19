@@ -249,6 +249,7 @@ const make = Effect.gen(function* () {
       botId: bot.id,
       botName: bot.name,
       botColor: bot.color,
+      botShape: bot.shape,
       jobId: session.jobId,
       ...(job === null ? {} : { jobNumber: job.number, jobTitle: job.title }),
     };
@@ -509,6 +510,7 @@ const make = Effect.gen(function* () {
           botId: bot.id,
           botName: bot.name,
           botColor: bot.color,
+          botShape: bot.shape,
           askId: ask.id,
           excerpt: ask.question,
           ...(job === undefined
@@ -541,6 +543,7 @@ const make = Effect.gen(function* () {
           botId: bot.id,
           botName: bot.name,
           botColor: bot.color,
+          botShape: bot.shape,
           jobId: job.id,
           jobNumber: job.number,
           jobTitle: job.title,

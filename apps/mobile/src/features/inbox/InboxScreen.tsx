@@ -273,8 +273,8 @@ export function InboxScreen(props: StaticScreenProps<Params>) {
 /** The bot's avatar when the item carries one; the reason's glyph otherwise. */
 function InboxRowIcon(props: { readonly item: InboxItem }) {
   const { item } = props;
-  if (item.botName !== undefined && item.botColor !== undefined) {
-    return <BotAvatar bot={{ name: item.botName, color: item.botColor }} size={16} />;
+  if (item.botColor !== undefined) {
+    return <BotAvatar bot={{ color: item.botColor, shape: item.botShape ?? "round" }} size={16} />;
   }
   return (
     <SymbolView

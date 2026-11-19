@@ -14,7 +14,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type BotSessionShell,
   type BotSessionState,
-  botInitial,
   botSessionRows,
   botSessionState,
   botStatusLine,
@@ -104,14 +103,6 @@ const stateFor = (overrides: Parameters<typeof botSessionState>[0]["shell"], tak
     botName: "Atlas",
     nowMs,
   });
-
-describe("botInitial", () => {
-  it("uses the first letter, upper-cased", () => {
-    expect(botInitial("Atlas")).toBe("A");
-    expect(botInitial("  zed")).toBe("Z");
-    expect(botInitial("")).toBe("?");
-  });
-});
 
 describe("botSessionState", () => {
   it("taken over wins over a failed shell", () => {
@@ -241,7 +232,7 @@ describe("botStatusLine", () => {
   });
 
   it("says nothing is running, and Paused when paused", () => {
-    expect(botStatusLine(base)).toEqual({ text: "Nothing running", tone: "muted" });
+    expect(botStatusLine(base)).toEqual({ text: "Nothing running", tone: "idle" });
     expect(botStatusLine({ ...base, bot: { paused: true } })).toEqual({
       text: "Paused",
       tone: "paused",

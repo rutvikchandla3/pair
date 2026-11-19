@@ -1,40 +1,54 @@
-import type { Bot } from "@t3tools/contracts";
+import { type Bot, botDisplayColor } from "@t3tools/contracts";
+import { BOT_FACES, type BotFaceMark, botFaceMarkKey } from "@t3tools/client-runtime/bot-identity";
 
-import { cn } from "~/lib/utils";
-import { botColor } from "./bots.logic";
-
-const SIZES = {
-  sm: { px: 16, font: 9, radius: 5 },
-  md: { px: 24, font: 11, radius: 8 },
-  lg: { px: 32, font: 15, radius: 10 },
-} as const;
+const SIZES = { sm: 16, md: 20, lg: 24, xl: 56 } as const;
 
 export type BotAvatarSize = keyof typeof SIZES;
 
-/** A bot's coloured rounded square with its initial. */
+function Mark(props: { readonly mark: BotFaceMark; readonly fill: string }) {
+  const { mark, fill } = props;
+  switch (mark.kind) {
+    case "circle":
+      return <circle cx={mark.cx} cy={mark.cy} r={mark.r} fill={fill} />;
+    case "rect":
+      return (
+        <rect
+          x={mark.x}
+          y={mark.y}
+          width={mark.width}
+          height={mark.height}
+          rx={mark.rx}
+          fill={fill}
+        />
+      );
+    case "path":
+      return (
+        <path
+          d={mark.d}
+          fill={fill}
+          stroke={fill}
+          strokeWidth={mark.strokeWidth}
+          strokeLinejoin="round"
+        />
+      );
+  }
+}
+
+/** A bot's face: its shape in its colour, with white eyes. Static; it never shows state. */
 export function BotAvatar(props: {
-  readonly bot: Pick<Bot, "name" | "color">;
+  readonly bot: Pick<Bot, "color" | "shape">;
   readonly size?: BotAvatarSize;
-  readonly className?: string;
 }) {
   const size = SIZES[props.size ?? "md"];
-  const initial = props.bot.name.trim().charAt(0).toUpperCase() || "?";
+  const face = BOT_FACES[props.bot.shape];
+  const color = botDisplayColor(props.bot.color);
   return (
-    <span
-      aria-hidden
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center font-medium text-white",
-        props.className,
-      )}
-      style={{
-        width: size.px,
-        height: size.px,
-        fontSize: size.font,
-        borderRadius: size.radius,
-        backgroundColor: botColor(props.bot as Bot),
-      }}
-    >
-      {initial}
-    </span>
+    <svg aria-hidden width={size} height={size} viewBox="0 0 32 32" className="shrink-0">
+      <Mark mark={face.body} fill={color} />
+      {face.eyes.map((eye) => (
+        <Mark key={botFaceMarkKey(eye)} mark={eye} fill="#fff" />
+      ))}
+      {face.pupil === null ? null : <Mark mark={face.pupil} fill={color} />}
+    </svg>
   );
 }

@@ -34,10 +34,11 @@ import {
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Toggle } from "../ui/toggle";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { BotAvatar } from "./BotAvatar";
+import { openBotDialog } from "./botDialogStore";
 import { BotMemoryPanel } from "./BotMemoryPanel";
-import { BotRenameDialog } from "./BotRenameDialog";
 import { BotSettingsDialog } from "./BotSettingsDialog";
 import { botSessions, botStatusLine, sessionState, type ShellLookup } from "./bots.logic";
 
@@ -62,7 +63,6 @@ export function BotPage(props: {
   );
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [focusState, setFocusState] = useState<{
     readonly runId: RunId;
@@ -148,7 +148,14 @@ export function BotPage(props: {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2.5 border-b border-border p-3">
         <BotAvatar bot={bot} size="lg" />
-        <h1 className="font-medium text-base">{bot.name}</h1>
+        {bot.charter.trim() === "" ? (
+          <h1 className="font-medium text-base">{bot.name}</h1>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger render={<h1 className="font-medium text-base">{bot.name}</h1>} />
+            <TooltipPopup side="bottom">{bot.charter}</TooltipPopup>
+          </Tooltip>
+        )}
         {status.kind === "needs" ? (
           <button
             type="button"
@@ -188,9 +195,13 @@ export function BotPage(props: {
               <CpuIcon />
               Models…
             </MenuItem>
-            <MenuItem onClick={() => setRenameOpen(true)}>
+            <MenuItem
+              onClick={() =>
+                openBotDialog({ type: "edit", environmentId: props.environmentId, botId: bot.id })
+              }
+            >
               <PencilIcon />
-              Rename…
+              Edit bot…
             </MenuItem>
             <MenuSeparator />
             <MenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
@@ -226,7 +237,7 @@ export function BotPage(props: {
                   threadId={bot.homeThreadId}
                   routeKind="server"
                   embedded={EMBEDDED_PANEL}
-                  bot={{ name: bot.name, focus }}
+                  bot={{ identity: bot, focus }}
                 />
               </ComposerHandleContext>
             </BackgroundThreadContext>
@@ -252,14 +263,6 @@ export function BotPage(props: {
         bot={bot}
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-      />
-
-      <BotRenameDialog
-        key={`rename:${bot.id}:${renameOpen}`}
-        environmentId={props.environmentId}
-        bot={bot}
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
       />
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>

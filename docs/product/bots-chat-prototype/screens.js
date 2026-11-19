@@ -3,12 +3,63 @@
 
 const S = {};
 
-const BOT = { n: "Atlas", c: "#4f46e5" };
+const BOT = {
+  n: "Atlas",
+  c: "#6366f1",
+  shape: "round",
+  role: "Runs the work in pair",
+  voice: "crisp",
+};
+const NOVA = {
+  n: "Nova",
+  c: "#0d9488",
+  shape: "hex",
+  role: "Frontend work in pair",
+  voice: "candid",
+};
+const ECHO = { n: "Echo", c: "#db2777", shape: "tall", role: "", voice: "crisp" };
+const JUNO = { n: "Juno", c: "#ea580c", shape: "square", role: "Server and infra", voice: "crisp" };
 
-function botAv(size = 20) {
-  const fs = size <= 16 ? 9 : size <= 20 ? 10.5 : size <= 28 ? 13 : 17;
-  return `<span class="av" style="--c:${BOT.c};width:${size}px;height:${size}px;font-size:${fs}px;border-radius:${Math.round(size * 0.32)}px" title="${BOT.n}">${BOT.n[0]}</span>`;
+// A bot's face: a static, non-human SVG. The server assigns a shape and a colour when the bot is
+// made (the least-used colour, then the least-used shape); each shape has fixed eyes. You can pick
+// another in Edit bot. No mouths, no expressions, no animation, and the face never shows state.
+const FACES = {
+  round: {
+    body: '<circle cx="16" cy="16" r="15"/>',
+    eyes: '<circle cx="11.5" cy="15" r="2.6"/><circle cx="20.5" cy="15" r="2.6"/>',
+  },
+  square: {
+    body: '<rect x="1" y="1" width="30" height="30" rx="9"/>',
+    eyes: '<rect x="9.4" y="10.6" width="4.2" height="8.6" rx="2.1"/><rect x="18.4" y="10.6" width="4.2" height="8.6" rx="2.1"/>',
+  },
+  tall: {
+    body: '<rect x="4" y="1" width="24" height="30" rx="12"/>',
+    eyes: '<circle cx="16" cy="14" r="4.6"/><circle cx="17.2" cy="14.6" r="1.9" fill="var(--fc)"/>',
+  },
+  hex: {
+    body: '<path d="M16 2.2 27.9 9.1v13.8L16 29.8 4.1 22.9V9.1Z" stroke-width="2.4" stroke-linejoin="round"/>',
+    eyes: '<circle cx="11.8" cy="15.5" r="2.5"/><circle cx="20.2" cy="15.5" r="2.5"/>',
+  },
+};
+function face(b, size = 20) {
+  const f = FACES[b.shape];
+  return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" style="--fc:${b.c};flex:none;display:inline-block;vertical-align:middle" aria-hidden="true"><g fill="${b.c}" stroke="${b.c}">${f.body}</g><g fill="#fff">${f.eyes}</g></svg>`;
 }
+
+function botAv(size = 20, b = BOT) {
+  return face(b, size);
+}
+
+const VOICES = {
+  crisp: { n: "Crisp", d: "Results first, fewest words." },
+  candid: { n: "Candid", d: "Results, plus its own call in one sentence." },
+};
+
+// The empty chat greets you in the bot's voice: static copy, one line, no model call.
+const GREETING = {
+  crisp: (n) => `${n} here. What should I take on?`,
+  candid: (n) => `${n} here. Send me work; I'll push back.`,
+};
 
 // Session state glyphs. "you" is only for a question the bot raised to you (bot_ask);
 // a session waiting on the bot shows as working, so the sidebar doesn't cry wolf.
@@ -63,7 +114,13 @@ function sideBots(o = {}) {
   const more = o.more
     ? `<div class="srow muted t12" style="padding-left:30px;gap:6px">${ic("right", "s12")}${o.more}</div>`
     : "";
-  const bot = `<div class="srow${o.sel === "atlas" ? " sel" : ""}" style="gap:8px">${botAv(16)}<span class="grow ell">${BOT.n}</span>${right}</div>${sessions}${more}`;
+  const others = (o.others ?? [NOVA])
+    .map(
+      (b) =>
+        `<div class="srow${o.sel === b.n ? " sel" : ""}" style="gap:8px">${botAv(16, b)}<span class="grow ell">${b.n}</span></div>`,
+    )
+    .join("");
+  const bot = `<div class="srow${o.sel === "atlas" ? " sel" : ""}" style="gap:8px">${botAv(16)}<span class="grow ell">${BOT.n}</span>${right}</div>${sessions}${more}${others}`;
   const threads = [
     { t: "Release checklist 0.1.8", m: "5h" },
     { t: "Pi model picker search", m: "1d" },
@@ -82,13 +139,14 @@ function sideBots(o = {}) {
 
 // The status line is a button when something needs you: it jumps to the oldest open question.
 function botTop(o = {}) {
+  const b = o.bot ?? BOT;
   const status = o.status ?? "1 session working · nothing needs you";
   const statusEl = o.needs
     ? `<span class="row t12 w5 c-input" style="gap:4px;white-space:nowrap;padding:2px 8px;border-radius:6px;background:var(--muted)">${ic("ask", "s12")}${status}${ic("right", "s12")}</span>`
     : `<span class="t12 muted" style="white-space:nowrap">${status}</span>`;
   return `<div class="top" style="gap:10px;position:relative">
-    ${botAv(24)}
-    <span class="title">${BOT.n}</span>
+    ${botAv(24, b)}
+    <span class="title" title="${b.role}">${b.n}</span>
     ${statusEl}
     <span class="grow"></span>
     <span class="btn sm ghost"${o.memory ? ' style="background:var(--accent)"' : ""}>${ic("sparkle", "s12")}Memory</span>
@@ -216,16 +274,23 @@ S.busy = {
   },
 };
 
+// The empty chat is the bot's introduction: its face, its greeting in its voice, its role.
+const emptyChat = (
+  b,
+) => `<div class="feed"><div class="feed-in" style="justify-content:center;align-items:center;min-height:520px;gap:10px;text-align:center">
+        ${botAv(56, b)}
+        <div class="w6" style="font-size:22px;max-width:560px">${GREETING[b.voice](b.n)}</div>
+        ${b.role ? `<div class="t12 muted">${b.role}</div>` : ""}
+        <div class="muted" style="max-width:520px;margin-top:6px">Give it work in any of your projects or on this machine. It starts sessions, answers their questions the way you would, and asks you only what it can't decide.</div>
+      </div></div>`;
+
 S.first = {
-  title: "4. A new bot opens on its empty chat; the first message is its first job",
+  title:
+    "4. A new bot opens on its empty chat: its face, a one-line greeting in its voice, its role",
   render() {
     return shell(
       sideBots({ sel: "atlas", idle: true, sessions: [] }),
-      `${botTop({ status: "Ready" })}<div class="feed"><div class="feed-in" style="justify-content:center;align-items:center;min-height:520px;gap:10px;text-align:center">
-        ${botAv(40)}
-        <div class="w6" style="font-size:22px">What should ${BOT.n} take on?</div>
-        <div class="muted" style="max-width:520px">Give it work in any of your projects. It starts sessions, answers their questions the way you would, and asks you only what it can't decide. Everything it does shows up here.</div>
-      </div></div>
+      `${botTop({ status: "Ready" })}${emptyChat(BOT)}
       ${t3Composer()}`,
     );
   },
@@ -281,12 +346,12 @@ S.memory = {
 };
 
 S.menu = {
-  title: "6. The ⋯ menu: pause, models, rename, delete. Nothing else to configure",
+  title: "6. The ⋯ menu: pause, models, edit, delete",
   render() {
     const menu = `<div class="menu" style="position:absolute;right:12px;top:44px;width:230px;z-index:5">
       <div class="mi">${ic("clock", "s12")}<span>Pause ${BOT.n}</span></div>
       <div class="mi">${ic("cpu", "s12")}<span>Models…</span></div>
-      <div class="mi">${ic("compose", "s12")}<span>Rename…</span></div>
+      <div class="mi">${ic("compose", "s12")}<span>Edit bot…</span></div>
       <div class="msep"></div>
       <div class="mi c-error">${ic("x", "s12")}<span>Delete bot…</span></div></div>`;
     return shell(
@@ -341,7 +406,8 @@ S.states = {
 };
 
 S.mobile = {
-  title: "9. Mobile: the bot is its chat, with the phone's normal thread composer",
+  title:
+    "9. Mobile: faces, and the role line when nothing needs you. + creates at once, like today",
   w: 1400,
   h: 980,
   render() {
@@ -350,7 +416,8 @@ S.mobile = {
     const list = phone(
       `<span class="w6" style="font-size:22px">Bots</span><span class="grow"></span>${ic("plus", "s16")}`,
       `<div class="lrow">${botAv(28)}<div class="grow"><div class="w5">${BOT.n}</div><div class="t12 c-input w5">Rate limit threads API needs you</div></div><span class="pill">1</span></div>
-       ${[{ t: "Rate limit threads API", k: "you" }, SESSIONS.flicker].map((x) => `<div class="row" style="gap:8px;padding:4px 10px 4px 46px">${sess(x.k)}<span class="grow ell">${x.t}</span><span class="t12 muted">${x.m ?? ""}</span></div>`).join("")}`,
+       ${[{ t: "Rate limit threads API", k: "you" }, SESSIONS.flicker].map((x) => `<div class="row" style="gap:8px;padding:4px 10px 4px 46px">${sess(x.k)}<span class="grow ell">${x.t}</span><span class="t12 muted">${x.m ?? ""}</span></div>`).join("")}
+       <div class="lrow">${botAv(28, NOVA)}<div class="grow"><div class="w5">${NOVA.n}</div><div class="t12 muted">${NOVA.role}</div></div></div>`,
     );
     const chat = phone(
       `${ic("back", "s16")}${botAv(24)}<div class="grow" style="min-width:0"><div class="w6 t14">${BOT.n}</div><div class="t12 c-input w5 ell">Rate limit threads API needs you ›</div></div>${ic("more", "s16")}`,
@@ -361,6 +428,154 @@ S.mobile = {
       `<div style="position:absolute;left:12px;right:12px;bottom:24px"><div class="composer"><div class="ph">Message ${BOT.n}</div><div class="foot"><span class="grow"></span><span class="send">${ic("up")}</span></div></div></div>`,
     );
     return `<div class="board natural"><h1>Bots on mobile</h1><div class="row" style="gap:40px;align-items:flex-start;justify-content:center;margin-top:20px">${list}${chat}</div></div>`;
+  },
+};
+
+// ---------- Character ----------
+
+const COLORS = ["#6366f1", "#0d9488", "#db2777", "#ea580c", "#2563eb"];
+const swatch = (c, on) =>
+  `<span style="width:20px;height:20px;border-radius:99px;background:${c};display:inline-block;box-shadow:${on ? "0 0 0 2px var(--popover),0 0 0 4px " + c : "none"}"></span>`;
+const pickCell = (inner, on) =>
+  `<span style="width:36px;height:36px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;border:1px solid ${on ? "var(--foreground)" : "var(--border)"};background:${on ? "var(--accent)" : "var(--card)"}">${inner}</span>`;
+const input = (v, o = {}) =>
+  `<div class="select" style="height:32px;${o.focus ? "box-shadow:0 0 0 2px var(--ring, #6366f1);" : ""}">${o.placeholder ? `<span class="muted">${o.placeholder}</span>` : o.selected ? `<span style="background:rgba(99,102,241,.35);border-radius:2px;padding:0 1px">${v}</span>` : v}</div>`;
+
+// The same report in each voice. Candid is Crisp plus one sentence with its own call.
+const SAMPLE = {
+  crisp: `<b>Sidebar drag flicker is done.</b> It renders once on drop now. 42 of 42 tests pass. #612 is yours to merge.`,
+  candid: `<b>Sidebar drag flicker is done.</b> It renders once on drop now. 42 of 42 tests pass. #612 is yours to merge, and I'd merge it today.`,
+};
+
+// One dialog creates a bot and edits it. Everything is prefilled, so Enter creates.
+function botDialog(o) {
+  const b = o.bot;
+  const shapes = Object.keys(FACES)
+    .map((k) => pickCell(face({ ...b, shape: k }, 24), k === b.shape))
+    .join("");
+  const colors = COLORS.map((c) => swatch(c, c === b.c)).join("");
+  const seg = `<span class="seg">${Object.entries(VOICES)
+    .map(
+      ([k, v]) =>
+        `<span class="${k === b.voice ? "on" : ""}" style="padding:3px 12px">${v.n}</span>`,
+    )
+    .join("")}</span>`;
+  return `<div class="backdrop"><div class="dialog" style="width:480px">
+    <div class="dh"><h2>${o.create ? "New bot" : `Edit ${b.n}`}</h2></div>
+    <div class="db col" style="gap:12px">
+      <div class="field" style="grid-template-columns:64px 1fr"><span class="lab">Face</span><span class="row" style="gap:6px">${shapes}<span style="width:10px"></span>${colors}</span></div>
+      <div class="field" style="grid-template-columns:64px 1fr"><span class="lab">Name</span>${input(b.n, { focus: o.create, selected: o.create })}</div>
+      <div class="field" style="grid-template-columns:64px 1fr;align-items:start"><span class="lab" style="padding-top:7px">Role</span><div>${b.role ? input(b.role) : input("", { placeholder: "What it's for, e.g. Frontend work in pair" })}<div class="t12 muted" style="margin-top:5px">Shown under its name. ${b.n} reads this as its job.</div></div></div>
+      <div class="field" style="grid-template-columns:64px 1fr;align-items:start"><span class="lab" style="padding-top:5px">Voice</span><div class="col" style="gap:6px"><div class="row" style="gap:10px">${seg}<span class="t12 muted">${VOICES[b.voice].d}</span></div>
+        <div class="card t12" style="padding:8px 10px;line-height:1.5">${SAMPLE[b.voice]}</div>
+        <div class="t12 muted">Changes how it sounds, not what it reports. Questions and session tasks are always plain.</div></div></div>
+    </div>
+    <div class="df"><span class="btn sm ghost">Cancel</span><span class="btn sm primary">${o.create ? "Create" : "Save"}</span></div>
+  </div></div>`;
+}
+
+S.faces = {
+  title: "10. Faces: four shapes, each with its own eyes, in five colours. Static, non-human",
+  w: 1440,
+  h: 640,
+  render() {
+    const grid = Object.keys(FACES)
+      .map(
+        (sh) =>
+          `<div class="row" style="gap:18px">${COLORS.map((c) => face({ shape: sh, c }, 40)).join("")}</div>`,
+      )
+      .join("");
+    const sizes = [16, 20, 24, 56]
+      .map(
+        (n) =>
+          `<div class="col" style="gap:6px;align-items:center">${[BOT, NOVA, ECHO, JUNO].map((b) => face(b, n)).join("")}<span class="t11 muted">${n}px</span></div>`,
+      )
+      .join("");
+    const crew = [BOT, NOVA, ECHO, JUNO]
+      .map(
+        (b) =>
+          `<div class="lrow" style="gap:10px">${face(b, 24)}<div class="grow" style="min-width:0"><div class="w5">${b.n}</div><div class="t12 muted ell">${b.role || "&nbsp;"}</div></div><span class="t11 muted">${VOICES[b.voice].n}</span></div>`,
+      )
+      .join("");
+    return `<div class="board natural"><h1>Bot faces</h1><div class="muted t14" style="max-width:760px">Pair gives every new bot the least-used colour, then the least-used shape, so a handful of bots never look alike. Shape and colour carry identity at 16px; the eyes read from 20px up. Change it in ⋯ → Edit bot.</div>
+      <div class="row" style="gap:48px;align-items:flex-start;margin-top:22px">
+        <div class="col" style="gap:14px"><div class="t12 muted w5">4 shapes × 5 colours</div>${grid}</div>
+        <div class="col" style="gap:10px"><div class="t12 muted w5">Sidebar, Inbox, header, empty chat</div><div class="row" style="gap:22px;align-items:flex-end">${sizes}</div></div>
+        <div class="col" style="gap:8px;width:300px"><div class="t12 muted w5">Four bots: name, role, voice</div><div class="card" style="padding:0">${crew}</div></div>
+      </div></div>`;
+  },
+};
+
+S.create = {
+  title: "11. + opens New bot: a free name (selected), an unused face, Crisp. Enter creates",
+  render() {
+    const dlg = botDialog({ bot: ECHO, create: true });
+    return shell(
+      sideBots({ sel: "atlas" }),
+      `${botTop()}<div class="feed"><div class="feed-in" style="gap:14px">${chatTimeline()}</div></div>${t3Composer()}`,
+      "",
+      dlg,
+    );
+  },
+};
+
+S.profile = {
+  title: "12. ⋯ → Edit bot…: the same dialog. Face, name, role, voice",
+  render() {
+    const dlg = botDialog({ bot: { ...BOT, voice: "candid" } });
+    return shell(
+      sideBots({ sel: "atlas" }),
+      `${botTop()}<div class="feed"><div class="feed-in" style="gap:14px">${chatTimeline()}</div></div>${t3Composer()}`,
+      "",
+      dlg,
+    );
+  },
+};
+
+S.voices = {
+  title: "13. Two voices. Candid adds its own call; questions and fold labels stay plain",
+  w: 1440,
+  h: 760,
+  render() {
+    const col = (b) => `<div class="card col" style="padding:14px;gap:12px;width:400px">
+      <div class="row" style="gap:8px">${face(b, 24)}<div><div class="w6">${b.n}</div><div class="t12 muted">${VOICES[b.voice].n} · ${b.role}</div></div></div>
+      <div class="t12 muted w5">Empty chat</div><div class="w6" style="font-size:15px">${GREETING[b.voice](b.n)}</div>
+      <div class="t12 muted w5">Starting work</div><div style="line-height:1.55">${
+        {
+          crisp: `On it, in <b>pair</b>: ${tlink("Sidebar drag flicker", "working")}.`,
+          candid: `On it, in <b>pair</b>: ${tlink("Sidebar drag flicker", "working")}. If it's the double render I suspect, the fix is small.`,
+        }[b.voice]
+      }</div>
+      <div class="t12 muted w5">Finished</div><div style="line-height:1.55">${SAMPLE[b.voice]}</div>
+      <div class="t12 muted w5">Needs you (plain in both)</div><div style="line-height:1.55"><b>Rate limit threads API needs you:</b> per member or per API token? Per member also caps outside agents. I'd pick per member, 60 a minute.</div>
+      <div class="t12 muted w5">Fold label (always Pair's)</div>${fold(ic("check", "s12"), "Sidebar drag flicker finished", "10:52")}
+    </div>`;
+    return `<div class="board natural"><h1>Voices</h1><div class="muted t14" style="max-width:820px">Crisp by default. Candid writes the same thing and adds its own call in one sentence. Anything more personal goes in Memory → Instructions, in your own words. No emoji, no flattery, in either voice.</div>
+      <div class="row" style="gap:16px;align-items:flex-start;margin-top:20px">${[BOT, NOVA].map(col).join("")}</div></div>`;
+  },
+};
+
+// Problem 1: the bot never works in its own turn. Machine work gets a session too, so the chat
+// is free a few seconds after you write.
+S.machine = {
+  title:
+    "14. Work outside a project gets a session too, so the chat is free seconds after you write",
+  render() {
+    return shell(
+      sideBots({
+        sel: "atlas",
+        sessions: [SESSIONS.rate, { t: "Add pgAdmin login to .zshrc", k: "done", m: "now" }],
+      }),
+      `${botTop({ status: "1 session working · nothing needs you" })}<div class="feed"><div class="feed-in" style="gap:14px">
+        ${you("12:51", "add my pgAdmin login to my zshrc and tell me which line to put the password on")}
+        ${atlas(`On it, on this machine: ${tlink("Add pgAdmin login to .zshrc", "working")}. I'll tell you the line when it's in.`)}
+        ${you("12:51", "also, is the threads rate limit merged yet?")}
+        ${atlas(`Not yet. ${tlink("Rate limit threads API", "working")} is writing its tests; ${pr(618)} is a draft.`)}
+        ${fold(ic("check", "s12"), "Add pgAdmin login to .zshrc finished", "12:53")}
+        ${atlas(`<b>Add pgAdmin login to .zshrc is done.</b> Put your password on <b>line 37</b>, inside the single quotes. Your old file is backed up as <span class="code">.zshrc.bak-2026-11-19</span>.`)}
+      </div></div>
+      ${t3Composer()}`,
+    );
   },
 };
 

@@ -1,33 +1,57 @@
-import type { Bot } from "@t3tools/contracts";
-import { View } from "react-native";
+import { type Bot, botDisplayColor } from "@t3tools/contracts";
+import { BOT_FACES, type BotFaceMark, botFaceMarkKey } from "@t3tools/client-runtime/bot-identity";
+import Svg, { Circle, Path, Rect } from "react-native-svg";
 
-import { AppText as Text } from "../../components/ui/AppText";
-import { botInitial } from "./botsModel";
+function Mark(props: { readonly mark: BotFaceMark; readonly fill: string }) {
+  const { mark, fill } = props;
+  switch (mark.kind) {
+    case "circle":
+      return <Circle cx={mark.cx} cy={mark.cy} r={mark.r} fill={fill} />;
+    case "rect":
+      return (
+        <Rect
+          x={mark.x}
+          y={mark.y}
+          width={mark.width}
+          height={mark.height}
+          rx={mark.rx}
+          fill={fill}
+        />
+      );
+    case "path":
+      return (
+        <Path
+          d={mark.d}
+          fill={fill}
+          stroke={fill}
+          strokeWidth={mark.strokeWidth}
+          strokeLinejoin="round"
+        />
+      );
+  }
+}
 
-/** A bot's avatar: its assigned colour as a rounded square with the name's initial. */
+/** A bot's face: its shape in its colour, with white eyes. The same marks the web draws. */
 export function BotAvatar(props: {
-  readonly bot: Pick<Bot, "name" | "color">;
+  readonly bot: Pick<Bot, "color" | "shape">;
   readonly size?: number;
 }) {
   const size = props.size ?? 32;
+  const face = BOT_FACES[props.bot.shape];
+  const color = botDisplayColor(props.bot.color);
   return (
-    <View
+    <Svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
       accessibilityElementsHidden
       importantForAccessibility="no"
-      className="items-center justify-center"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: Math.round(size * 0.3),
-        backgroundColor: props.bot.color,
-      }}
     >
-      <Text
-        className="font-t3-bold text-white"
-        style={{ fontSize: Math.round(size * 0.44), lineHeight: Math.round(size * 0.5) }}
-      >
-        {botInitial(props.bot.name)}
-      </Text>
-    </View>
+      <Mark mark={face.body} fill={color} />
+      {face.eyes.map((eye) => (
+        <Mark key={botFaceMarkKey(eye)} mark={eye} fill="#fff" />
+      ))}
+      {face.pupil === null ? null : <Mark mark={face.pupil} fill={color} />}
+    </Svg>
   );
 }

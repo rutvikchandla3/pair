@@ -16,7 +16,6 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  botColor,
   botSessionGlyph,
   botSidebarSessions,
   botStatusLine,
@@ -108,7 +107,9 @@ function bot(overrides: Partial<Bot> = {}): Bot {
     id: BOT,
     ownerId: "member-1" as Bot["ownerId"],
     name: "Atlas",
-    color: "#4f46e5",
+    color: "#6366f1",
+    shape: "round",
+    voice: "crisp",
     charter: "",
     instructions: "",
     limits: [],
@@ -330,12 +331,5 @@ describe("threadChipState", () => {
     expect(threadChipState(shell({ runtime: { status: "failed" } as never }))).toBe("failed");
     expect(threadChipState(shell({ runtime: { status: "running" } as never }))).toBe("working");
     expect(threadChipState(shell({ runtime: { status: "completed" } as never }))).toBe("done");
-  });
-});
-
-describe("botColor", () => {
-  it("falls back to the default", () => {
-    expect(botColor(bot({ color: "" }))).toBe("#4f46e5");
-    expect(botColor(bot({ color: "#ff0000" }))).toBe("#ff0000");
   });
 });
