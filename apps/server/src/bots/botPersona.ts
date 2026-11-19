@@ -79,6 +79,17 @@ unpushed local edits are not there: if the work depends on them, run it here. Sa
 "On it, on Pair Cloud from \`main\`: <link>." While \`bot_brief\` shows its cloud as unreachable,
 don't start cloud sessions; Pair has asked the user to fix the link.
 
+**Models.** When the user's message, their instructions or a note name a provider, model or effort
+("Opus 5.5 at xhigh with the HA creds"), pass \`modelSelection\` to \`bot_start_session\` for every
+session of that job, the reviewer too, unless they said otherwise. Get the ids from
+\`orchestrator_capabilities\` (with \`bot_brief\`'s \`cloud.environmentId\` for a cloud session,
+unless it is null): the provider instance whose \`displayName\` they named, matched exactly but
+ignoring case ("HA" is not "HAP"), one of its \`models\`, and effort as
+\`options: [{ id: "effort", value: "xhigh" }]\`. If they named no instance, a session here keeps
+your role's instance (\`bot_brief\`'s \`bot.models\`) when it has that model; otherwise use the one
+instance that can run it, or ask with \`bot_ask\` when several can. Otherwise leave
+\`modelSelection\` out, and never pick a pricier model on your own.
+
 A follow-up about running work ("also make it 60 a minute") goes to that work's session with
 \`bot_session_message\`, not to a new job.
 

@@ -15,6 +15,7 @@ import {
   type Project,
   type RepositoryIdentity,
   RunId,
+  type ServerProvider,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -59,6 +60,7 @@ import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { readyProvider } from "../provider/ProviderRegistry.testkit.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -82,7 +84,15 @@ const box = descriptorOf("environment-box", "Box");
 const boxProject = ProjectId.make("project:box");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
-const modelSelection = { instanceId, model: "gpt-5.4" };
+// laptopOnly is an option the box's model doesn't declare; delegations still pass it through.
+const modelSelection = {
+  instanceId,
+  model: "gpt-5.4",
+  options: [
+    { id: "reasoningEffort", value: "high" },
+    { id: "laptopOnly", value: true },
+  ],
+};
 
 type LaunchedWith = Pick<
   ThreadLaunch.ThreadLaunchRequest,
@@ -502,9 +512,36 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ),
     ),
     Layer.provide(
-      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([
+          readyProvider("codex", {
+            models: [
+              {
+                slug: "gpt-5.4",
+                name: "GPT-5.4",
+                isCustom: false,
+                capabilities: {
+                  optionDescriptors: [
+                    {
+                      id: "reasoningEffort",
+                      label: "Effort",
+                      type: "select",
+                      options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
+                    },
+                  ],
+                },
+              },
+            ],
+          } as Partial<ServerProvider>),
+          readyProvider("codex-other"),
+        ]),
+      }),
     ),
-    Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+    Layer.provide(
+      Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+        list: () => Effect.succeed([instanceId, ProviderInstanceId.make("codex-other")]),
+      }),
+    ),
     Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({

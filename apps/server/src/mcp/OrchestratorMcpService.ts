@@ -1,7 +1,6 @@
 import {
   CommandId,
   type RunId,
-  isProviderAvailable,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -112,6 +111,7 @@ import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { invalidOptionSelections, providerConstraints } from "../provider/modelSelectionCheck.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -364,33 +364,6 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
   };
 }
 
-function providerConstraints(
-  provider: ServerProvider | undefined,
-  supportsOrchestrationV2: boolean,
-): ReadonlyArray<string> {
-  const constraints: Array<string> = [];
-  if (!supportsOrchestrationV2) {
-    constraints.push("No V2 provider adapter is registered.");
-  }
-  if (provider === undefined) return constraints;
-  if (!isProviderAvailable(provider)) {
-    constraints.push(provider.unavailableReason ?? "Provider driver is unavailable.");
-  }
-  if (!provider.enabled) {
-    constraints.push("Provider instance is disabled.");
-    // Disabled snapshots contain placeholders for installation, health, and auth.
-    return constraints;
-  }
-  if (!provider.installed) constraints.push("Provider executable is not installed.");
-  if (provider.status === "error" || provider.status === "disabled") {
-    constraints.push(provider.message ?? `Provider status is ${provider.status}.`);
-  }
-  if (provider.auth.status === "unauthenticated") {
-    constraints.push("Provider is not authenticated.");
-  }
-  return constraints;
-}
-
 /** t3_thread_launch keeps a selection as given, so it can hold options its model does not have. */
 function knownOptions(
   options: ReadonlyArray<ProviderOptionSelection> | undefined,
@@ -398,41 +371,6 @@ function knownOptions(
 ): ReadonlyArray<ProviderOptionSelection> | undefined {
   if (options === undefined || descriptors === undefined) return options;
   return options.filter((option) => descriptors.some((descriptor) => descriptor.id === option.id));
-}
-
-/** Skip checks without descriptors; reject duplicate IDs because consumers disagree on precedence. */
-function invalidOptionSelections(
-  selections: ReadonlyArray<ProviderOptionSelection>,
-  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
-): ReadonlyArray<string> {
-  const problems: Array<string> = [];
-  const seen = new Set<string>();
-  for (const selection of selections) {
-    if (seen.has(selection.id)) {
-      problems.push(`Option ${selection.id} was specified more than once.`);
-      continue;
-    }
-    seen.add(selection.id);
-    if (descriptors === undefined) continue;
-    const descriptor = descriptors.find((candidate) => candidate.id === selection.id);
-    if (descriptor === undefined) {
-      const known = descriptors.map((candidate) => candidate.id).join(", ");
-      problems.push(`Unknown option ${selection.id}; supported options: ${known || "none"}.`);
-      continue;
-    }
-    if (descriptor.type === "boolean" && typeof selection.value !== "boolean") {
-      problems.push(`Option ${selection.id} expects a boolean value.`);
-      continue;
-    }
-    if (
-      descriptor.type === "select" &&
-      !descriptor.options.some((choice) => choice.id === selection.value)
-    ) {
-      const choices = descriptor.options.map((choice) => choice.id).join(", ");
-      problems.push(`Option ${selection.id} must be one of: ${choices}.`);
-    }
-  }
-  return problems;
 }
 
 function taskStatusForRun(

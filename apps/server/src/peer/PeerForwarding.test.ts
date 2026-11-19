@@ -36,6 +36,7 @@ import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { readyProvider } from "../provider/ProviderRegistry.testkit.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -259,9 +260,15 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       ),
       Layer.provide(NodeServices.layer),
       Layer.provide(
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([readyProvider("codex")]),
+        }),
       ),
-      Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+      Layer.provide(
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([ProviderInstanceId.make("codex")]),
+        }),
+      ),
       Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
       Layer.provide(
         Layer.mergeAll(

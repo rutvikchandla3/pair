@@ -26,6 +26,8 @@ import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import { isCloudLaunchRefusal } from "../../../sandbox/lifecycle/CloudPreparation.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import { checkModelSelection } from "../../../provider/modelSelectionCheck.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -236,7 +238,23 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               )
             : runtimeMode;
         if (!replaying) {
-          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          let providers = yield* registry.getProviders;
+          if (input.modelSelection !== undefined) {
+            const checked = yield* checkModelSelection({
+              providers: registry,
+              adapterInstanceIds: new Set(
+                yield* (yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2).list(),
+              ),
+              selection: input.modelSelection,
+            });
+            if (checked.problem !== null)
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: `${checked.problem} No thread was created.`,
+              });
+            providers = checked.providers;
+          }
           startedRuntimeMode = yield* resolveRuntimeMode(startedRuntimeMode, input.runtimeMode, {
             modelSelection,
             supportedRuntimeModes: providers.find(

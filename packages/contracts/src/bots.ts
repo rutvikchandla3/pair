@@ -257,6 +257,8 @@ export const BotSession = Schema.Struct({
   /** The user typed into it, so the bot stopped steering it until Hand back. */
   takenOver: Schema.Boolean,
   createdAt: IsoDateTime,
+  /** What it launched with; absent on sessions started before it was recorded. */
+  modelSelection: Schema.optional(ModelSelection),
   /** Absent: it runs on the bot's own server. */
   cloud: Schema.optional(BotCloudSession),
 });

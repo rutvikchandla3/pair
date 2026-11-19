@@ -1127,7 +1127,10 @@ const layerMakeRoutes = Layer.mergeAll(
   // One `layerBotService` reference: the wake loop and BotSessions share it.
   Layer.provide(
     Layer.mergeAll(
-      BotSessions.layer.pipe(Layer.provide(layerPeerForwarding)),
+      BotSessions.layer.pipe(
+        Layer.provide(layerPeerForwarding),
+        Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+      ),
       Layer.effectDiscard(
         Effect.gen(function* () {
           const home = yield* BotHome.BotHome;

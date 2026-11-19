@@ -1,4 +1,6 @@
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import { readyProvider } from "../../../provider/ProviderRegistry.testkit.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -48,6 +50,8 @@ const clientLaunchHarness = (input: {
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly fallbackModel?: ModelSelection;
   readonly providers?: readonly ServerProvider[];
+  /** What a re-probe finds; default: the same providers. */
+  readonly refreshedProviders?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
   readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchRequest>;
@@ -71,6 +75,10 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
+      refreshInstance: () => Effect.succeed(input.refreshedProviders ?? input.providers ?? []),
+    }),
+    Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+      list: () => Effect.succeed((input.providers ?? []).map((provider) => provider.instanceId)),
     }),
     ServerSettings.layerTest({
       fallbackModelSelection: input.fallbackModel ?? null,
@@ -374,12 +382,69 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
   }),
 );
 
+it.effect(
+  "a launch refuses a model selection that can't run here, before creating the thread",
+  () =>
+    Effect.gen(function* () {
+      const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        launched,
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = yield* toolkit
+        .handle("t3_thread_launch", {
+          projectId,
+          title: "Fix",
+          modelSelection: { instanceId: ProviderInstanceId.make("ghost"), model: "claude-opus" },
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(result.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message:
+          'No provider instance "ghost" here. No provider instance here can run threads. No thread was created.',
+      });
+      expect(launched).toHaveLength(0);
+    }),
+);
+
+it.effect("a launch re-probes a provider whose snapshot says it can't run before refusing", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
+    // Before its first probe a provider's snapshot reads as not installed.
+    const pending = readyProvider("claudeAgent", { installed: false, status: "warning" });
+    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched,
+      providers: [pending],
+      refreshedProviders: [readyProvider("claudeAgent")],
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    yield* toolkit
+      .handle("t3_thread_launch", { projectId, title: "Fix", modelSelection })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(launched).toHaveLength(1);
+  }),
+);
+
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
-    const { projectId, dependencies } = clientLaunchHarness({
+    const providers = [readyProvider("claudeAgent")];
+    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
       launched,
+      providers,
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
@@ -392,23 +457,29 @@ it.effect("a launch retried with the same clientRequestId replays the first one"
           title: "Fix",
           projectId,
           message: "Fix the bug",
+          modelSelection,
           ...(clientRequestId === undefined ? {} : { clientRequestId }),
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     yield* launch("fix-1");
-    yield* launch("fix-1");
     yield* launch("fix-2");
     yield* launch(undefined);
     yield* launch(undefined);
+    // The provider is gone now: a replay keeps the model it started with, unchecked.
+    providers.length = 0;
+    yield* launch("fix-1");
+    const refused = yield* launch("fix-3");
     const ids = launched.map((input) => [input.commandId, input.threadId]);
     // The same key sends the same command and thread ids, which the launch
     // service replays instead of starting a second thread.
-    expect(ids[0]).toEqual(ids[1]);
+    expect(ids[4]).toEqual(ids[0]);
     expect(ids[0]?.[0]).toMatch(/^mcp:launch:[0-9a-f]{64}$/);
-    expect(ids[2]).not.toEqual(ids[0]);
+    expect(ids[1]).not.toEqual(ids[0]);
     // Without a key every launch is new.
-    expect(ids[3]).not.toEqual(ids[4]);
+    expect(ids[2]).not.toEqual(ids[3]);
+    expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(5);
   }),
 );
 

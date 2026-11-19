@@ -5,6 +5,7 @@ import {
   BotNoteId,
   BotSessionRole,
   EnvironmentId,
+  ModelSelection,
   NonNegativeInt,
   OrchestratorMcpFailure,
   PositiveInt,
@@ -47,6 +48,8 @@ const SessionLiveState = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId),
   /** False while its cloud can't be reached; its state is then the last one read. */
   reachable: Schema.Boolean,
+  /** What it runs on; null for sessions started before it was recorded. */
+  modelSelection: Schema.NullOr(ModelSelection),
   takenOver: Schema.Boolean,
   status: Schema.String,
   pendingRequest: Schema.NullOr(
@@ -78,6 +81,8 @@ const BriefResult = Schema.Struct({
     /** How to sound in this chat, e.g. "Crisp: results first, in the fewest words." */
     voice: Schema.String,
     paused: Schema.Boolean,
+    /** Each role's default; this machine's instance ids. */
+    models: Schema.Struct({ worker: ModelSelection, reviewer: ModelSelection }),
   }),
   playbook: Schema.Struct({
     instructions: Schema.String,
@@ -172,7 +177,7 @@ const JobCreateTool = Tool.make("bot_job_create", {
 const StartSessionTool = Tool.make("bot_start_session", {
   ...shared,
   description:
-    "Start a session that does a job's work. It runs in the job's project unless you give projectId: a git project gets a new worktree; a job with no project runs in a scratch folder on this machine, with full access. Use role worker for doing the work and reviewer for review. Put the returned link in your reply exactly as given. Pass cloud to run it on a Pair Cloud machine (bot_brief's cloud) that keeps going when this computer sleeps; it starts from the pushed baseRef, so unpushed local edits are not there. A cloud machine spends money: use cloud only when the user asked for it, your instructions say when to, or spending money is not in your check-with-me list; otherwise ask first with bot_ask.",
+    "Start a session that does a job's work. It runs in the job's project unless you give projectId: a git project gets a new worktree; a job with no project runs in a scratch folder on this machine, with full access. Use role worker for doing the work and reviewer for review. Put the returned link in your reply exactly as given. Pass cloud to run it on a Pair Cloud machine (bot_brief's cloud) that keeps going when this computer sleeps; it starts from the pushed baseRef, so unpushed local edits are not there. A cloud machine spends money: use cloud only when the user asked for it, your instructions say when to, or spending money is not in your check-with-me list; otherwise ask first with bot_ask. Pass modelSelection when the user names a provider, model or effort; get the ids from orchestrator_capabilities (with bot_brief's cloud.environmentId for a cloud session, left out when it is null).",
   parameters: Schema.Struct({
     jobId: BotJob.fields.id,
     projectId: Schema.optional(ProjectId),
@@ -194,6 +199,12 @@ const StartSessionTool = Tool.make("bot_start_session", {
         ),
       }),
     ),
+    modelSelection: Schema.optional(
+      ModelSelection.annotate({
+        description:
+          "Instead of your role's model, e.g. effort is options [{ id: 'effort', value: 'xhigh' }].",
+      }),
+    ),
   }),
   success: Schema.Struct({
     threadId: ThreadId,
@@ -201,6 +212,8 @@ const StartSessionTool = Tool.make("bot_start_session", {
     /** "this machine", or the Pair Cloud's label. */
     where: Schema.String,
     environmentId: Schema.optional(EnvironmentId),
+    /** What it runs on. */
+    modelSelection: Schema.optional(ModelSelection),
   }),
 })
   .annotate(Tool.Destructive, true)

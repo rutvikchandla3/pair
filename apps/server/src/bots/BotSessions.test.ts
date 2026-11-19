@@ -9,7 +9,9 @@ import {
   MemberId,
   type Project,
   ProjectId,
+  OrchestratorMcpFailure,
   ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -20,18 +22,28 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { modelSelectionProblem } from "../provider/modelSelectionCheck.ts";
+import { readyProvider } from "../provider/ProviderRegistry.testkit.ts";
 import { BotService } from "./BotService.ts";
 import { NO_CLOUD_MESSAGE } from "./botCloud.ts";
 import * as BotSessions from "./BotSessions.ts";
 
 const at = "2026-11-19T00:00:00.000Z";
 const model = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-haiku-5-5" };
+const claude = readyProvider(model.instanceId, {
+  models: [
+    { slug: "claude-haiku-5-5", name: "Claude Haiku 5.5", isCustom: false, capabilities: null },
+  ],
+});
+
 const bot: Bot = {
   id: BotId.make("bot:atlas"),
   ownerId: MemberId.make("member:owner"),
@@ -99,6 +111,14 @@ const sessionsHarness = (input: {
   readonly cloudOnly?: boolean;
   readonly clouds?: ReadonlyArray<EnvironmentId>;
   readonly sessions?: ReadonlyArray<BotSession>;
+  /** This server's providers; default: the bot's own Claude. */
+  readonly providers?: ReadonlyArray<ServerProvider>;
+  /** What a re-probe finds; default: the same providers. */
+  readonly refreshedProviders?: ReadonlyArray<ServerProvider>;
+  /** The local launch fails with this. */
+  readonly launchFails?: ThreadManagementService.ThreadManagementProviderInstanceDisabledError;
+  /** The cloud's t3_thread_launch refuses with this message. */
+  readonly cloudRefuses?: string;
 }) => {
   const launches: Array<ThreadLaunch.ThreadLaunchRequest> = [];
   const forwarded: Array<Forwarded> = [];
@@ -132,6 +152,7 @@ const sessionsHarness = (input: {
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (request) => {
+            if (input.launchFails !== undefined) return Effect.fail(input.launchFails);
             launches.push(request);
             return Effect.succeed({
               threadId: ThreadId.make("thread:session"),
@@ -179,8 +200,27 @@ const sessionsHarness = (input: {
               environmentId,
               params: params as Record<string, unknown>,
             });
-            return Effect.succeed({ threadId: cloudThreadId } as never);
+            if (input.cloudRefuses !== undefined)
+              return Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: input.cloudRefuses,
+                }),
+              );
+            // The cloud answers with what the thread runs on.
+            return Effect.succeed({
+              threadId: cloudThreadId,
+              modelSelection: (params as { modelSelection: unknown }).modelSelection,
+            } as never);
           },
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed(input.providers ?? [claude]),
+          refreshInstance: () =>
+            Effect.succeed(input.refreshedProviders ?? input.providers ?? [claude]),
+        }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed((input.providers ?? [claude]).map((p) => p.instanceId)),
         }),
         SecureRandom.layerWebCrypto,
       ),
@@ -192,6 +232,7 @@ const sessionsHarness = (input: {
 const startInput = (input: {
   readonly projectId?: ProjectId;
   readonly cloud?: BotSessions.BotSessionStartInput["cloud"];
+  readonly modelSelection?: BotSessions.BotSessionStartInput["modelSelection"];
 }): BotSessions.BotSessionStartInput => ({
   jobId: BotJobId.make("job:1"),
   ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
@@ -199,6 +240,7 @@ const startInput = (input: {
   title: "Add pgAdmin login to .zshrc",
   task: "Add the login.",
   ...(input.cloud === undefined ? {} : { cloud: input.cloud }),
+  ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
 });
 
 /** Starts one session and returns the launch request it made. */
@@ -224,6 +266,101 @@ describe("BotSessions.start", () => {
       assert.strictEqual(launch.projectId, scratchId);
       assert.deepStrictEqual(launch.workspaceStrategy, { type: "root" });
       assert.include(launch.initialMessage?.text ?? "", "You are not in a worktree");
+      assert.deepStrictEqual(launch.modelSelection, bot.models.worker);
+    }),
+  );
+
+  it.effect("runs on the model the bot chose and records it, refusing one that can't run", () =>
+    Effect.gen(function* () {
+      const chosen = { ...model, options: [{ id: "effort", value: "high" }] };
+      const start = (
+        modelSelection: BotSessions.BotSessionStartInput["modelSelection"],
+        providers?: ReadonlyArray<ServerProvider>,
+        fakes: Pick<
+          Parameters<typeof sessionsHarness>[0],
+          "refreshedProviders" | "launchFails"
+        > = {},
+      ) => {
+        const harness = sessionsHarness({
+          jobProjectId: repoId,
+          ...(providers === undefined ? {} : { providers }),
+          ...fakes,
+        });
+        return Effect.gen(function* () {
+          const sessions = yield* BotSessions.BotSessions;
+          return yield* sessions.start(bot.id, startInput({ modelSelection }));
+        }).pipe(
+          Effect.provide(harness.layer),
+          Effect.map((session) => ({ session, launches: harness.launches })),
+          Effect.mapError((error) => ({ error, launches: harness.launches })),
+        );
+      };
+      const started = yield* start(chosen);
+      assert.deepStrictEqual(started.launches[0]?.modelSelection, chosen);
+      assert.deepStrictEqual(started.session.modelSelection, chosen);
+
+      const refused = yield* start({
+        instanceId: ProviderInstanceId.make("claudeAgent-ha"),
+        model: "claude-opus-5-5",
+      }).pipe(Effect.flip);
+      assert.strictEqual(refused.error.reason, "invalid-request");
+      assert.include(refused.error.message, 'No provider instance "claudeAgent-ha" here.');
+      assert.notInclude(refused.error.message, "That is your worker model");
+      assert.lengthOf(refused.launches, 0);
+
+      // The bot's own choice may not carry an option its model doesn't declare.
+      const codex = readyProvider("codex", {
+        models: [
+          {
+            slug: "gpt-5.5",
+            name: "GPT-5.5",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [{ id: "xhigh", label: "Extra high" }],
+                },
+              ],
+            },
+          },
+        ],
+      });
+      const undeclared = yield* start(
+        {
+          instanceId: codex.instanceId,
+          model: "gpt-5.5",
+          options: [{ id: "effort", value: "xhigh" }],
+        },
+        [claude, codex],
+      ).pipe(Effect.flip);
+      assert.include(
+        undeclared.error.message,
+        "Unknown option effort; supported options: reasoningEffort.",
+      );
+      assert.lengthOf(undeclared.launches, 0);
+
+      // The role default is checked too, and the bot is told it was its default.
+      const roleDefault = yield* start(undefined, []).pipe(Effect.flip);
+      assert.include(roleDefault.error.message, "That is your worker model");
+      assert.lengthOf(roleDefault.launches, 0);
+
+      // A stale snapshot, as before the first probe, is re-probed instead of refused.
+      const stale = { ...claude, installed: false, status: "warning" as const };
+      const reprobed = yield* start(chosen, [stale], { refreshedProviders: [claude] });
+      assert.lengthOf(reprobed.launches, 1);
+
+      const turnedOff = yield* start(chosen, undefined, {
+        launchFails: new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+          projectId: repoId,
+          instanceId: model.instanceId,
+        }),
+      }).pipe(Effect.flip);
+      assert.strictEqual(turnedOff.error.reason, "invalid-request");
+      assert.include(turnedOff.error.message, "turned off for");
+      assert.include(turnedOff.error.message, "or pass another modelSelection");
     }),
   );
 
@@ -252,10 +389,16 @@ describe("BotSessions.start", () => {
 describe("BotSessions cloud sessions", () => {
   it.effect("starts on the linked Pair Cloud, in the project there, and records where", () =>
     Effect.gen(function* () {
+      // An instance only the cloud has: the cloud checks it, not this server.
+      const onCloud = {
+        instanceId: ProviderInstanceId.make("claudeAgent-ha"),
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: "xhigh" }],
+      };
       const harness = sessionsHarness({ jobProjectId: repoId, clouds: [cloudId] });
       const session = yield* Effect.gen(function* () {
         const sessions = yield* BotSessions.BotSessions;
-        return yield* sessions.start(bot.id, startInput({ cloud: {} }));
+        return yield* sessions.start(bot.id, startInput({ cloud: {}, modelSelection: onCloud }));
       }).pipe(Effect.provide(harness.layer));
       assert.lengthOf(harness.launches, 0);
       const [launch] = harness.forwarded;
@@ -265,6 +408,8 @@ describe("BotSessions cloud sessions", () => {
       assert.deepStrictEqual(launch?.params.workspaceStrategy, { type: "cloud", baseRef: "main" });
       assert.strictEqual(session.threadId, cloudThreadId);
       assert.strictEqual(session.projectId, projectThere);
+      assert.deepStrictEqual(launch?.params.modelSelection, onCloud);
+      assert.deepStrictEqual(session.modelSelection, onCloud);
       assert.strictEqual(session.cloud?.environmentId, cloudId);
       assert.strictEqual(session.cloud?.state, "working");
     }),
@@ -311,6 +456,31 @@ describe("BotSessions cloud sessions", () => {
         assert.include(error.message, expected);
         assert.lengthOf(harness.forwarded, 0);
         assert.lengthOf(harness.launches, 0);
+      }
+
+      // The cloud's own refusal reaches the bot with its words, plus whose model it was.
+      // What a cloud without this instance answers, worded by the shared check.
+      const refusal = `${modelSelectionProblem({
+        providers: [],
+        adapterInstanceIds: new Set(),
+        selection: model,
+      })} No thread was created.`;
+      for (const modelSelection of [undefined, model]) {
+        const harness = sessionsHarness({
+          jobProjectId: repoId,
+          clouds: [cloudId],
+          cloudRefuses: refusal,
+        });
+        const error = yield* Effect.gen(function* () {
+          const sessions = yield* BotSessions.BotSessions;
+          return yield* sessions.start(bot.id, startInput({ cloud: {}, modelSelection }));
+        }).pipe(Effect.provide(harness.layer), Effect.flip);
+        assert.strictEqual(error.reason, "invalid-request");
+        assert.include(error.message, `on Cloud ${cloudId}: ${refusal}`);
+        assert.strictEqual(
+          error.message.includes("That is your worker model"),
+          modelSelection === undefined,
+        );
       }
     }),
   );

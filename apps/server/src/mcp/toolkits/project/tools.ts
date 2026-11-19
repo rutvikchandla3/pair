@@ -26,6 +26,7 @@ import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as PairCloudProjects from "../../../project/PairCloudProjects.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Digest from "effect/crypto/Digest";
@@ -188,6 +189,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     ServerConfig.ServerConfig,
     ServerSettings.ServerSettingsService,
     ProviderRegistry.ProviderRegistry,
+    ProviderAdapterRegistry.ProviderAdapterRegistryV2,
     DocumentText.DocumentText,
     Digest.Digest,
   ],
