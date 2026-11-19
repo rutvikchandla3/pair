@@ -1,14 +1,34 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { type BotId, BotId as BotIdValue } from "@t3tools/contracts";
-
-import type { BotWake } from "./BotService.ts";
 import {
+  type Bot,
+  type BotId,
+  BotId as BotIdValue,
+  MemberId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+
+import * as ServerConfig from "../config.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import { BotService, type BotWake } from "./BotService.ts";
+import {
+  BotHome,
   formatWakeText,
   initialWakeState,
   splitWakeMessages,
   wakeArrived,
   wakeSummary,
   windowClosed,
+  layer,
 } from "./BotHome.ts";
 
 const botId = BotIdValue.make("bot:atlas") as BotId;
@@ -106,4 +126,73 @@ describe("wake batching and holding", () => {
     expect(appended.effect).toBe("append");
     expect(windowClosed(appended.state).wakes.map((entry) => entry.text)).toEqual(["one", "two"]);
   });
+});
+
+const at = "2026-11-19T00:00:00.000Z";
+const model = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-haiku-5-5" };
+const savedBot = (id: string, homeThreadId: string | null): Bot => ({
+  id: BotIdValue.make(id),
+  ownerId: MemberId.make("member:owner"),
+  name: "Atlas",
+  color: "#6366f1",
+  shape: "round",
+  voice: "candid",
+  charter: "",
+  instructions: "",
+  limits: [],
+  models: { brain: model, worker: model, reviewer: model },
+  homeThreadId: homeThreadId === null ? null : ThreadId.make(homeThreadId),
+  homeProjectId: null,
+  paused: false,
+  lastSeenAt: null,
+  nextJobNumber: 1,
+  createdAt: at,
+  updatedAt: at,
+});
+
+describe("refreshHomes", () => {
+  it.effect("rewrites an existing bot's persona and deny list, and skips bots with no home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-bot-home-" });
+      const services = Layer.mergeAll(
+        Layer.mock(BotService)({
+          listAllBots: () =>
+            Effect.succeed([savedBot("bot:atlas", "thread:home"), savedBot("bot:nova", null)]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(Orchestrator.OrchestratorV2)({}),
+        SecureRandom.layerWebCrypto,
+      );
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const homes = path.join(config.stateDir, "bots");
+        const staleHome = path.join(homes, "bot_atlas");
+        yield* fs.makeDirectory(staleHome, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(staleHome, "AGENTS.md"),
+          "# You are Atlas\n(old rules)\n",
+        );
+
+        yield* (yield* BotHome).refreshHomes();
+
+        const persona = yield* fs.readFileString(path.join(staleHome, "AGENTS.md"));
+        expect(persona).toContain("## Keep this chat free");
+        expect(persona).toContain("Your voice is Candid");
+        const settings = yield* fs.readFileString(path.join(staleHome, ".claude", "settings.json"));
+        expect(JSON.parse(settings).permissions.deny).toContain("Bash");
+        expect(yield* fs.exists(path.join(homes, "bot_nova"))).toBe(false);
+      }).pipe(
+        Effect.provide(
+          layer.pipe(
+            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+            Layer.provide(services),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

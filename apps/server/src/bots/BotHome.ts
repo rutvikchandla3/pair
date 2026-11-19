@@ -141,6 +141,8 @@ export class BotHome extends Context.Service<
     readonly ensureHome: (
       botId: BotId,
     ) => Effect.Effect<{ readonly threadId: ThreadId; readonly projectId: ProjectId }, BotsError>;
+    /** Rewrites every existing bot's persona and deny list; `start` runs it once. */
+    readonly refreshHomes: () => Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/bots/BotHome") {}
@@ -321,14 +323,33 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const start: BotHome["Service"]["start"] = () =>
-    forkParked(
+  // An update can change the persona and the deny list. A bot that gets no wake would keep the
+  // old ones, so every existing home folder is rewritten when the server starts.
+  const refreshHomes: BotHome["Service"]["refreshHomes"] = Effect.fn("BotHome.refreshHomes")(
+    function* () {
+      const bots = yield* botService.listAllBots();
+      yield* Effect.forEach(
+        bots.filter((bot) => bot.homeThreadId !== null),
+        (bot) => writePersona(bot, homeDir(bot.id)),
+        { discard: true },
+      );
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchCause((cause) => Effect.logWarning("bot home refresh failed", { cause })),
+      ),
+  );
+
+  const start: BotHome["Service"]["start"] = Effect.fn("BotHome.start")(function* () {
+    yield* forkParked(refreshHomes());
+    yield* forkParked(
       Stream.runForEach(botService.wakes, handleWake).pipe(
         Effect.catchCause((cause) => Effect.logWarning("bot wake stream failed", { cause })),
       ),
     );
+  });
 
-  return { ensureHome, start } satisfies BotHome["Service"];
+  return { ensureHome, refreshHomes, start } satisfies BotHome["Service"];
 });
 
 export const layer = Layer.effect(BotHome, make);
