@@ -11,6 +11,8 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 
+import { AsyncResult } from "effect/reactivity";
+
 import { relativeTime } from "../../lib/time";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -337,6 +339,14 @@ export function parseBotSessionShellsKey(key: string): {
 
 export type BotsEnvironmentStatus = "loading" | "offline" | "failed" | "loaded";
 
+/** A failed subscription that is retrying counts as pending, so a retry tap shows progress. */
+export function botsSnapshotOutcome(
+  result: AsyncResult.AsyncResult<unknown, unknown>,
+): "pending" | "success" | "failure" {
+  if (AsyncResult.isSuccess(result)) return "success";
+  return AsyncResult.isFailure(result) && !result.waiting ? "failure" : "pending";
+}
+
 /**
  * A server's Bots state. The phase comes first: a subscription that loses its connection keeps
  * its last value and waits, so only the phase can say the server is down.
@@ -367,6 +377,7 @@ export interface BotsEnvironmentEntry {
   /** The latest snapshot, kept while the server is down or its subscription failed. */
   readonly snapshot: BotsSnapshot | null;
   readonly canCreate: boolean;
+  readonly canArchive: boolean;
 }
 
 export interface BotsScreenGroup {

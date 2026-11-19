@@ -11,7 +11,11 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
-import { type BotsEnvironmentEntry, botsEnvironmentStatus } from "../features/bots/botsModel";
+import {
+  type BotsEnvironmentEntry,
+  botsEnvironmentStatus,
+  botsSnapshotOutcome,
+} from "../features/bots/botsModel";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { useAtomCommand } from "./use-atom-command";
@@ -47,11 +51,7 @@ const botsEnvironmentsAtom = Atom.make((get) => {
       const result = get(botsEnvironment.snapshot({ environmentId, input: undefined }));
       const status = botsEnvironmentStatus(
         presentation.connection.phase,
-        AsyncResult.isSuccess(result)
-          ? "success"
-          : AsyncResult.isFailure(result)
-            ? "failure"
-            : "pending",
+        botsSnapshotOutcome(result),
       );
       return [
         {
@@ -62,6 +62,8 @@ const botsEnvironmentsAtom = Atom.make((get) => {
           snapshot: Option.getOrNull(AsyncResult.value(result)),
           canCreate:
             status === "loaded" && get(botsEnvironment.create.permissionAtom(environmentId)),
+          canArchive:
+            status === "loaded" && get(botsEnvironment.archiveJob.permissionAtom(environmentId)),
         },
       ];
     },

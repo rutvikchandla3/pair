@@ -175,7 +175,7 @@ export function BotsScreen() {
                 environmentId={item.entry.environmentId}
                 bot={item.bot}
                 snapshot={item.snapshot}
-                canArchive={item.entry.status === "loaded"}
+                canArchive={item.entry.canArchive}
                 onOpenBot={() => openBot(item.entry.environmentId, item.bot)}
                 onOpenSession={(session) => openSession(item.entry.environmentId, session)}
               />

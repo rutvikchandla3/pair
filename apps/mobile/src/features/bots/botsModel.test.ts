@@ -12,6 +12,8 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -23,6 +25,7 @@ import {
   botSessionShellsKey,
   botsEnvironmentStatus,
   botsScreenModel,
+  botsSnapshotOutcome,
   botStatusLine,
   needsYouCount,
   parseBotSessionShellsKey,
@@ -405,6 +408,16 @@ describe("botsEnvironmentStatus", () => {
   ] as const)("$phase with $outcome is $status", ({ phase, outcome, status }) => {
     expect(botsEnvironmentStatus(phase, outcome)).toBe(status);
   });
+
+  it.each([
+    { result: AsyncResult.success(null), outcome: "success" },
+    { result: AsyncResult.initial(true), outcome: "pending" },
+    { result: AsyncResult.failure(Cause.fail("down")), outcome: "failure" },
+    // A retry tap restarts it: loading, not the same failure again.
+    { result: AsyncResult.failure(Cause.fail("down"), { waiting: true }), outcome: "pending" },
+  ])("a $outcome snapshot result", ({ result, outcome }) => {
+    expect(botsSnapshotOutcome(result)).toBe(outcome);
+  });
 });
 
 describe("botsScreenModel", () => {
@@ -448,6 +461,7 @@ describe("botsScreenModel", () => {
       status: "loaded",
       snapshot: snapshot([]),
       canCreate: true,
+      canArchive: true,
       ...overrides,
     };
   }
