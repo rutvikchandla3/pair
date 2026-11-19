@@ -1,5 +1,6 @@
 import {
   BOT_LIMIT_LABELS,
+  type BotCloudSessionState,
   type BotJobId,
   BotsError,
   OrchestratorMcpFailure,
@@ -45,6 +46,12 @@ const botsFailure = (error: BotsError): OrchestratorMcpFailure => {
   }
 };
 
+const HERE = "this machine";
+
+/** The brief's status words for a cloud session, matching `liveState`'s for local ones. */
+const cloudStatus = (state: BotCloudSessionState): string =>
+  state === "done" ? "idle" : state === "waiting" ? "working" : state;
+
 const mapError = <A, R>(effect: Effect.Effect<A, BotsError, R>) =>
   effect.pipe(Effect.mapError(botsFailure));
 
@@ -79,25 +86,37 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
         Effect.gen(function* () {
           const live = yield* Effect.forEach(
             snapshot.sessions.filter((session) => session.jobId === job.id),
-            (session) =>
-              sessions.liveState(session.threadId).pipe(
-                Effect.map((state) => ({
-                  threadId: session.threadId,
-                  role: session.role,
-                  title: session.title,
-                  takenOver: session.takenOver,
-                  ...state,
-                })),
+            (session) => {
+              const base = {
+                threadId: session.threadId,
+                role: session.role,
+                title: session.title,
+                takenOver: session.takenOver,
+              };
+              // A cloud session's state is what its follower last read: no call there per brief.
+              if (session.cloud !== undefined) {
+                const reachable = session.cloud.state !== "unreachable";
+                return Effect.succeed({
+                  ...base,
+                  where: session.cloud.label,
+                  environmentId: session.cloud.environmentId,
+                  reachable,
+                  status: reachable ? cloudStatus(session.cloud.state) : "unreachable",
+                  pendingRequest: session.cloud.pendingRequest,
+                  lastAssistantText: null,
+                });
+              }
+              const here = { ...base, where: HERE, reachable: true };
+              return sessions.liveState(session.threadId).pipe(
+                Effect.map((state) => ({ ...here, ...state })),
                 Effect.orElseSucceed(() => ({
-                  threadId: session.threadId,
-                  role: session.role,
-                  title: session.title,
-                  takenOver: session.takenOver,
+                  ...here,
                   status: "stopped",
                   pendingRequest: null,
                   lastAssistantText: null,
                 })),
-              ),
+              );
+            },
           );
           return {
             jobId: job.id,
@@ -111,6 +130,12 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
             sessions: live,
           };
         }),
+      );
+      const cloud = yield* sessions.cloudTarget().pipe(
+        Effect.map((target) =>
+          target === null ? { environmentId: null, label: "this server's cloud machines" } : target,
+        ),
+        Effect.catch((error) => Effect.succeed({ unavailable: error.message })),
       );
       return {
         bot: {
@@ -136,6 +161,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
             title: shell.title,
             workspaceRoot: shell.workspaceRoot,
           })),
+        cloud,
         jobs,
         openAsks: openAsks.map((ask) => ({
           askId: ask.id,
@@ -225,14 +251,20 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           role: params.role,
           title: params.title,
           task: params.task,
+          cloud: params.cloud,
         }),
       );
       return {
         threadId: session.threadId,
         link: formatThreadLink(
-          { environmentId: scope.environmentId, threadId: session.threadId },
+          {
+            environmentId: session.cloud?.environmentId ?? scope.environmentId,
+            threadId: session.threadId,
+          },
           session.title,
         ),
+        where: session.cloud?.label ?? HERE,
+        ...(session.cloud === undefined ? {} : { environmentId: session.cloud.environmentId }),
       };
     }),
   ),

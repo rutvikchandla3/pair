@@ -1,4 +1,9 @@
-import { CircleAlertIcon, CircleCheckIcon, MessageCircleQuestionIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CloudOffIcon,
+  MessageCircleQuestionIcon,
+} from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Spinner } from "../ui/spinner";
@@ -8,12 +13,15 @@ const GLYPH_STYLES: Readonly<Record<Exclude<BotSessionGlyph, "working">, string>
   "needs-you": "text-indigo-600 dark:text-indigo-300",
   done: "text-success-foreground",
   failed: "text-error-foreground",
+  offline: "text-muted-foreground",
 };
 
 /** The state glyph for a bot session row or a thread chip. */
 export function BotStateGlyph(props: {
   readonly glyph: BotSessionGlyph;
   readonly className?: string;
+  /** The offline glyph's label, naming the cloud. */
+  readonly label?: string;
 }) {
   if (props.glyph === "working") {
     return <Spinner size="xs" className={props.className} />;
@@ -22,6 +30,14 @@ export function BotStateGlyph(props: {
   if (props.glyph === "needs-you") {
     return (
       <MessageCircleQuestionIcon aria-label="Needs you" className={cn(style, props.className)} />
+    );
+  }
+  if (props.glyph === "offline") {
+    return (
+      <CloudOffIcon
+        aria-label={props.label ?? "Can't be reached"}
+        className={cn(style, props.className)}
+      />
     );
   }
   if (props.glyph === "done") {

@@ -34,6 +34,7 @@ import IconCar from "@tabler/icons-react-native/IconCar";
 import IconChartBar from "@tabler/icons-react-native/IconChartBar";
 import IconCheck from "@tabler/icons-react-native/IconCheck";
 import IconCloud from "@tabler/icons-react-native/IconCloud";
+import IconCloudOff from "@tabler/icons-react-native/IconCloudOff";
 import IconCloudUpload from "@tabler/icons-react-native/IconCloudUpload";
 import IconChevronDown from "@tabler/icons-react-native/IconChevronDown";
 import IconChevronLeft from "@tabler/icons-react-native/IconChevronLeft";
@@ -200,6 +201,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   ticket: IconTicket,
   cloud: IconCloud,
   "icloud.and.arrow.up": IconCloudUpload,
+  "icloud.slash": IconCloudOff,
   cube: IconBox,
   "chevron.down": IconChevronDown,
   "chevron.left": IconChevronLeft,

@@ -219,6 +219,11 @@ export class BotService extends Context.Service<
       },
     ) => Effect.Effect<BotJob, BotsError>;
     readonly addSession: (session: BotSession) => Effect.Effect<BotSession, BotsError>;
+    /** A cloud session's last-read state; no timeline event. */
+    readonly setSessionCloud: (
+      threadId: ThreadId,
+      cloud: NonNullable<BotSession["cloud"]>,
+    ) => Effect.Effect<BotSession, BotsError>;
     readonly setSessionTakenOver: (
       threadId: ThreadId,
       takenOver: boolean,
@@ -245,7 +250,12 @@ export class BotService extends Context.Service<
     readonly resolveAsk: (
       botId: BotId,
       askId: BotAskId,
-      input: { readonly answerKind: BotAnswerKind; readonly answer: string | null },
+      input: {
+        readonly answerKind: BotAnswerKind;
+        readonly answer: string | null;
+        /** The timeline line, when Pair itself resolved it rather than the user in Chat. */
+        readonly eventText?: string;
+      },
     ) => Effect.Effect<BotAsk, BotsError>;
     readonly addNote: (
       botId: BotId,
@@ -1123,6 +1133,22 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     },
   );
 
+  const setSessionCloud: BotService["Service"]["setSessionCloud"] = Effect.fn(
+    "BotService.setSessionCloud",
+  )(function* (threadId, cloud) {
+    return yield* withLock(
+      Effect.gen(function* () {
+        const session = Option.getOrNull(yield* db(store.getSession(threadId)));
+        if (session === null) return yield* notFound("That session is gone.");
+        const bot = yield* loadBot(session.botId);
+        const updated: BotSession = { ...session, cloud };
+        yield* db(store.upsertSession(updated));
+        yield* touch(bot.ownerId);
+        return updated;
+      }),
+    );
+  });
+
   const setSessionTakenOver: BotService["Service"]["setSessionTakenOver"] = Effect.fn(
     "BotService.setSessionTakenOver",
   )(function* (threadId, takenOver) {
@@ -1199,9 +1225,10 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             jobId: ask.jobId,
             kind: "answered",
             text:
-              input.answerKind === "bot-decides"
+              input.eventText ??
+              (input.answerKind === "bot-decides"
                 ? `${bot.name} decided: ${input.answer ?? ""}`
-                : `You answered in Chat: ${input.answer ?? ""}`,
+                : `You answered in Chat: ${input.answer ?? ""}`),
           });
           yield* touch(bot.ownerId);
           return updated;
@@ -1286,6 +1313,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     setHome,
     updateJob,
     addSession,
+    setSessionCloud,
     setSessionTakenOver,
     addEvent,
     createAsk,

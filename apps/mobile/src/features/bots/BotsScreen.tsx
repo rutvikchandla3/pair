@@ -66,8 +66,14 @@ export function BotsScreen() {
 
   const openSession = (session: BotSession) => {
     if (environmentId === null) return;
-    startOpeningEnvironmentThread(environmentId, session.threadId);
-    navigation.dispatch(StackActions.push("Thread", { environmentId, threadId: session.threadId }));
+    const sessionEnvironmentId = session.cloud?.environmentId ?? environmentId;
+    startOpeningEnvironmentThread(sessionEnvironmentId, session.threadId);
+    navigation.dispatch(
+      StackActions.push("Thread", {
+        environmentId: sessionEnvironmentId,
+        threadId: session.threadId,
+      }),
+    );
   };
 
   if (snapshot === null || environmentId === null) {
@@ -271,6 +277,11 @@ function SessionRow(props: {
       >
         {row.session.title}
       </Text>
+      {row.session.cloud === undefined ? null : (
+        <Text numberOfLines={1} className="max-w-[45%] text-xs text-foreground-muted">
+          {row.bucket === "offline" ? row.state.label : row.session.cloud.label}
+        </Text>
+      )}
       {row.bucket === "finished" && row.state.updatedAt !== null ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
           {relativeTime(row.state.updatedAt, props.nowMs)}
@@ -300,6 +311,8 @@ function SessionGlyph(props: { readonly bucket: BotSessionBucket }) {
       );
     case "working":
       return <SymbolView name="circle.dashed" size={14} tintColorClassName="accent-icon-muted" />;
+    case "offline":
+      return <SymbolView name="icloud.slash" size={14} tintColorClassName="accent-icon-muted" />;
     case "failed":
       return (
         <SymbolView

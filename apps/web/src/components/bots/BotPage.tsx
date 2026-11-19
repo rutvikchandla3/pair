@@ -43,6 +43,7 @@ import { BotSettingsDialog } from "./BotSettingsDialog";
 import {
   botSessions,
   botStatusLine,
+  cloudSessionsStillRunning,
   jobSessionState,
   jobsById,
   type ShellLookup,
@@ -127,6 +128,7 @@ export function BotPage(props: {
     );
     return state.kind === "working" || state.kind === "quiet";
   }).length;
+  const cloudRunning = cloudSessionsStillRunning(sessions);
 
   const focusAsk = (runId: RunId | null) => {
     if (runId === null) return;
@@ -285,6 +287,7 @@ export function BotPage(props: {
               All {sessions.length} of its session{sessions.length === 1 ? "" : "s"} move into
               Threads ({runningSessions} {runningSessions === 1 ? "is" : "are"} still running and
               keep going). Its notes are deleted.
+              {cloudRunning === null ? null : ` ${cloudRunning}`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

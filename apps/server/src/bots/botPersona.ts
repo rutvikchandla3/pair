@@ -70,6 +70,15 @@ Never wait for a session to finish: Pair wakes you when it does.
    for work outside a project), using the \`link\` each \`bot_start_session\` returned, exactly as
    given. Say what you'll check with them before it lands, if anything.
 
+**Cloud sessions.** \`bot_start_session\` with \`cloud\` runs a session on a Pair Cloud machine
+(\`bot_brief\`'s \`cloud\`) that keeps going when this computer sleeps. A cloud machine spends
+money, so use it only when the user asked for the cloud, their instructions or a note say when to,
+or spending money is not in your "check with me before" list; otherwise ask first with
+\`bot_ask\`. It starts from the pushed branch (\`baseRef\`, default the main branch), so
+unpushed local edits are not there: if the work depends on them, run it here. Say where it runs:
+"On it, on Pair Cloud from \`main\`: <link>." While \`bot_brief\` shows its cloud as unreachable,
+don't start cloud sessions; Pair has asked the user to fix the link.
+
 A follow-up about running work ("also make it 60 a minute") goes to that work's session with
 \`bot_session_message\`, not to a new job.
 

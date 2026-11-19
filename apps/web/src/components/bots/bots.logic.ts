@@ -20,7 +20,8 @@ export type BotSessionStateKind =
   | "failed"
   | "stopped"
   | "paused-until"
-  | "taken-over";
+  | "taken-over"
+  | "unreachable";
 
 export interface BotSessionState {
   readonly kind: BotSessionStateKind;
@@ -42,9 +43,32 @@ function shellFor(
   return shells?.get(threadId);
 }
 
+/** A cloud session's state as its bot's server last read it, for a client without its shell. */
+function cloudSessionState(cloud: NonNullable<BotSession["cloud"]>, now: number): BotSessionState {
+  switch (cloud.state) {
+    case "working": {
+      const quietMs = now - Date.parse(cloud.lastOutputAt);
+      return Number.isFinite(quietMs) && quietMs >= BOT_QUIET_AFTER_MS
+        ? { kind: "quiet", quietMs }
+        : { kind: "working" };
+    }
+    case "waiting":
+      return { kind: "waiting" };
+    case "done":
+      return { kind: "done" };
+    case "failed":
+      return { kind: "failed" };
+    case "stopped":
+      return { kind: "stopped" };
+    case "unreachable":
+      return { kind: "unreachable" };
+  }
+}
+
 /**
  * The session's live state. `shell` is the ordinary thread shell the client already holds; a
- * missing shell means the thread has not loaded yet, which reads as working.
+ * missing shell means the thread has not loaded yet, which reads as working. A cloud session's
+ * shell is held only by a client connected to that cloud; without it, its last-read state stands.
  */
 export function sessionState(
   session: BotSession,
@@ -52,6 +76,9 @@ export function sessionState(
   now: number = Date.now(),
 ): BotSessionState {
   if (session.takenOver) return { kind: "taken-over" };
+  if (session.cloud !== undefined && (shell === null || shell === undefined)) {
+    return cloudSessionState(session.cloud, now);
+  }
   if (shell === null || shell === undefined) return { kind: "working" };
   if (
     shell.hasPendingApprovals ||
@@ -120,6 +147,29 @@ function workingKinds(kind: BotSessionStateKind): boolean {
   return kind === "working" || kind === "quiet" || kind === "waiting";
 }
 
+/**
+ * "2 sessions keep running on Pair Cloud." for the Delete confirmation: those keep costing money
+ * after the bot is gone. Null when no cloud session may still be running.
+ */
+export function cloudSessionsStillRunning(sessions: ReadonlyArray<BotSession>): string | null {
+  const byLabel = new Map<string, number>();
+  for (const session of sessions) {
+    const cloud = session.cloud;
+    if (cloud === undefined || cloud.unfollowed === true) continue;
+    if (cloud.state !== "working" && cloud.state !== "waiting" && cloud.state !== "unreachable") {
+      continue;
+    }
+    byLabel.set(cloud.label, (byLabel.get(cloud.label) ?? 0) + 1);
+  }
+  if (byLabel.size === 0) return null;
+  return [...byLabel]
+    .map(
+      ([label, count]) =>
+        `${count} ${count === 1 ? "session keeps" : "sessions keep"} running on ${label}.`,
+    )
+    .join(" ");
+}
+
 /** The bot's sessions that are still doing something, the home thread excluded. */
 function workingSessionCount(
   snapshot: BotsSnapshot,
@@ -133,6 +183,21 @@ function workingSessionCount(
       jobSessionState(session, jobs.get(session.jobId), shellFor(shells, session.threadId), now)
         .kind,
     ),
+  ).length;
+}
+
+/** The bot's cloud sessions whose cloud can't be reached right now. */
+function unreachableSessionCount(
+  snapshot: BotsSnapshot,
+  botId: string,
+  shells: ShellLookup,
+  now: number,
+): number {
+  const jobs = jobsById(snapshot);
+  return botSessions(snapshot, botId).filter(
+    (session) =>
+      jobSessionState(session, jobs.get(session.jobId), shellFor(shells, session.threadId), now)
+        .kind === "unreachable",
   ).length;
 }
 
@@ -181,17 +246,22 @@ export function botStatusLine(
   }
   if (bot.paused) return { kind: "text", label: "Paused" };
   const working = workingSessionCount(snapshot, bot.id, shells, now);
-  if (working === 0) {
+  const unreachable = unreachableSessionCount(snapshot, bot.id, shells, now);
+  if (working === 0 && unreachable === 0) {
     return { kind: "text", label: homeThreadWorking(bot, shells) ? "Working…" : "Nothing running" };
   }
+  const parts = [
+    ...(working === 0 ? [] : [`${working} ${working === 1 ? "session" : "sessions"} working`]),
+    ...(unreachable === 0 ? [] : [`${unreachable} can't be reached`]),
+  ];
   return {
     kind: "text",
-    label: `${working} ${working === 1 ? "session" : "sessions"} working · nothing needs you`,
+    label: unreachable === 0 ? `${parts[0]} · nothing needs you` : parts.join(" · "),
   };
 }
 
-/** The four glyphs a sidebar session row or a thread chip shows. */
-export type BotSessionGlyph = "needs-you" | "working" | "done" | "failed";
+/** The glyphs a sidebar session row or a thread chip shows; offline is a cloud it can't reach. */
+export type BotSessionGlyph = "needs-you" | "working" | "done" | "failed" | "offline";
 
 /**
  * One session's sidebar glyph. Needs-you wins over everything but a finished session; the rest is
@@ -213,6 +283,8 @@ export function botSessionGlyph(
     case "stopped":
     case "paused-until":
       return "failed";
+    case "unreachable":
+      return "offline";
     default:
       return "working";
   }
@@ -241,6 +313,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const GLYPH_ORDER: Readonly<Record<BotSessionGlyph, number>> = {
   "needs-you": 0,
   working: 1,
+  // Not finished, and it may well still be running there.
+  offline: 1,
   failed: 2,
   done: 3,
 };
@@ -268,7 +342,10 @@ export function botSidebarSessions(
     return {
       session,
       glyph,
-      finishedAt: glyph === "done" ? (shell?.updatedAt ?? job?.finishedAt ?? null) : null,
+      finishedAt:
+        glyph === "done"
+          ? (shell?.updatedAt ?? session.cloud?.lastOutputAt ?? job?.finishedAt ?? null)
+          : null,
       jobFinished: job !== undefined && botJobFinished(job),
     };
   });

@@ -168,6 +168,7 @@ import * as InboxService from "./inbox/InboxService.ts";
 import * as BotService from "./bots/BotService.ts";
 import * as BotStore from "./bots/BotStore.ts";
 import * as BotHome from "./bots/BotHome.ts";
+import * as BotCloudSessions from "./bots/BotCloudSessions.ts";
 import * as BotSessions from "./bots/BotSessions.ts";
 import * as BotWatcher from "./bots/BotWatcher.ts";
 import * as BranchOffServiceLive from "./lineage/BranchOffServiceLive.ts";
@@ -800,6 +801,12 @@ const layerBotService = Layer.unwrap(
   }),
 );
 
+/** Links to other environments, one instance for Settings, agents, moves and bots. */
+const layerPeerForwarding = PeerForwarding.layer.pipe(
+  Layer.provideMerge(PeerMcpClient.layer),
+  Layer.provideMerge(PeerLinks.layer),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   Layer.effectDiscard(
@@ -1058,6 +1065,10 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  // Follows bots' sessions on a linked Pair Cloud and wakes the bot as for local ones.
+  Layer.effectDiscard(
+    BotCloudSessions.BotCloudSessions.pipe(Effect.flatMap((follower) => follower.start())),
+  ).pipe(Layer.provide(BotCloudSessions.layer)),
   // @pair, the in-process room agent, joins the provider adapter registry.
   SpaceAgentAdapter.layerRegister.pipe(
     Layer.provide(
@@ -1089,7 +1100,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // Links to other environments, shared by Settings (WebSocket), agents (/mcp) and moves.
   Layer.provide(
     Layer.merge(
-      PeerForwarding.layer,
+      layerPeerForwarding,
       CloudMoves.layer.pipe(Layer.provide(CloudMoveClient.layer)),
     ).pipe(Layer.provideMerge(PeerMcpClient.layer), Layer.provideMerge(PeerLinks.layer)),
   ),
@@ -1116,7 +1127,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // One `layerBotService` reference: the wake loop and BotSessions share it.
   Layer.provide(
     Layer.mergeAll(
-      BotSessions.layer,
+      BotSessions.layer.pipe(Layer.provide(layerPeerForwarding)),
       Layer.effectDiscard(
         Effect.gen(function* () {
           const home = yield* BotHome.BotHome;

@@ -61,6 +61,20 @@ const session = (takenOver: boolean): BotSession => ({
   createdAt: "2026-01-01T00:00:00.000Z",
 });
 
+const cloudSession = (state: NonNullable<BotSession["cloud"]>["state"]): BotSession => ({
+  ...session(false),
+  cloud: {
+    environmentId: EnvironmentId.make("environment:cloud"),
+    label: "Pair Cloud",
+    state,
+    pendingRequest: null,
+    lastOutputAt: "2026-01-01T00:00:00.000Z",
+    reportedRunId: null,
+    reportedRequestIds: [],
+    position: 0,
+  },
+});
+
 interface Harness {
   readonly scope?: McpInvocationContext.McpInvocationScope;
   readonly bot?: Partial<BotService["Service"]>;
@@ -269,22 +283,95 @@ describe("bots tools", () => {
     }),
   );
 
-  it.effect("returns a labelled thread link from bot_start_session", () =>
+  it.effect(
+    "returns a labelled thread link from bot_start_session, in the cloud's environment",
+    () =>
+      Effect.gen(function* () {
+        const start = (started: BotSession) =>
+          callTool(
+            "bot_start_session",
+            {
+              jobId,
+              projectId: ProjectId.make("project:one"),
+              role: "worker",
+              title: "Upgrade server",
+              task: "Do it",
+            },
+            { sessions: { start: () => Effect.succeed(started) } },
+          );
+        expect(yield* start(session(false))).toMatchObject({
+          threadId: sessionThreadId,
+          link: "[Upgrade server](t3-thread://v2/environment:bots/thread:session)",
+          where: "this machine",
+        });
+        expect(yield* start(cloudSession("working"))).toMatchObject({
+          link: "[Upgrade server](t3-thread://v2/environment:cloud/thread:session)",
+          where: "Pair Cloud",
+          environmentId: "environment:cloud",
+        });
+      }),
+  );
+
+  it.effect("briefs a cloud session from its last-read state, and says where it runs", () =>
     Effect.gen(function* () {
+      const bot = {
+        id: botId,
+        name: "Atlas",
+        charter: "",
+        voice: "crisp",
+        paused: false,
+        instructions: "",
+        limits: [],
+        homeProjectId: null,
+      };
+      const job = {
+        id: jobId,
+        number: 1,
+        title: "Upgrade server",
+        request: "",
+        projectId: null,
+        status: "working",
+        headline: "",
+        pullRequests: [],
+        finishedAt: null,
+      };
       const result = yield* callTool(
-        "bot_start_session",
+        "bot_brief",
+        {},
         {
-          jobId,
-          projectId: ProjectId.make("project:one"),
-          role: "worker",
-          title: "Upgrade server",
-          task: "Do it",
+          bot: {
+            snapshotForBot: () =>
+              Effect.succeed({
+                bots: [bot],
+                jobs: [job],
+                sessions: [cloudSession("unreachable")],
+                asks: [],
+                notes: [],
+                events: [],
+                revision: 0,
+              } as never),
+            listAllBots: () => Effect.succeed([bot] as never),
+          },
+          sessions: {
+            liveState: () => Effect.die("a cloud session is never read live"),
+            cloudTarget: () => Effect.succeed(null),
+          },
+          projects: { listShells: () => Effect.succeed([]) },
         },
-        { sessions: { start: () => Effect.succeed(session(false)) } },
       );
       expect(result).toMatchObject({
-        threadId: sessionThreadId,
-        link: "[Upgrade server](t3-thread://v2/environment:bots/thread:session)",
+        jobs: [
+          {
+            sessions: [
+              {
+                where: "Pair Cloud",
+                environmentId: "environment:cloud",
+                reachable: false,
+                status: "unreachable",
+              },
+            ],
+          },
+        ],
       });
     }),
   );

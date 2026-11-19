@@ -4,6 +4,7 @@ import {
   BotJobStatus,
   BotNoteId,
   BotSessionRole,
+  EnvironmentId,
   NonNegativeInt,
   OrchestratorMcpFailure,
   PositiveInt,
@@ -40,6 +41,12 @@ const SessionLiveState = Schema.Struct({
   threadId: ThreadId,
   role: BotSessionRole,
   title: Schema.String,
+  /** "this machine", or the Pair Cloud's label. */
+  where: Schema.String,
+  /** Present for a cloud session: pass it to t3_thread_read. */
+  environmentId: Schema.optional(EnvironmentId),
+  /** False while its cloud can't be reached; its state is then the last one read. */
+  reachable: Schema.Boolean,
   takenOver: Schema.Boolean,
   status: Schema.String,
   pendingRequest: Schema.NullOr(
@@ -91,6 +98,11 @@ const BriefResult = Schema.Struct({
       workspaceRoot: Schema.String,
     }),
   ),
+  /** Where `bot_start_session` with `cloud` runs, or why it can't. */
+  cloud: Schema.Union([
+    Schema.Struct({ environmentId: Schema.NullOr(EnvironmentId), label: Schema.String }),
+    Schema.Struct({ unavailable: Schema.String }),
+  ]),
   jobs: Schema.Array(BriefJob),
   openAsks: Schema.Array(
     Schema.Struct({
@@ -160,15 +172,36 @@ const JobCreateTool = Tool.make("bot_job_create", {
 const StartSessionTool = Tool.make("bot_start_session", {
   ...shared,
   description:
-    "Start a session that does a job's work. It runs in the job's project unless you give projectId: a git project gets a new worktree; a job with no project runs in a scratch folder on this machine, with full access. Use role worker for doing the work and reviewer for review. Put the returned link in your reply exactly as given.",
+    "Start a session that does a job's work. It runs in the job's project unless you give projectId: a git project gets a new worktree; a job with no project runs in a scratch folder on this machine, with full access. Use role worker for doing the work and reviewer for review. Put the returned link in your reply exactly as given. Pass cloud to run it on a Pair Cloud machine (bot_brief's cloud) that keeps going when this computer sleeps; it starts from the pushed baseRef, so unpushed local edits are not there. A cloud machine spends money: use cloud only when the user asked for it, your instructions say when to, or spending money is not in your check-with-me list; otherwise ask first with bot_ask.",
   parameters: Schema.Struct({
     jobId: BotJob.fields.id,
     projectId: Schema.optional(ProjectId),
     role: BotSessionRole,
     title: TrimmedNonEmptyString,
     task: Schema.String,
+    cloud: Schema.optional(
+      Schema.Struct({
+        environmentId: Schema.optional(
+          EnvironmentId.annotate({ description: "Only when several Pair Clouds are linked." }),
+        ),
+        baseRef: Schema.optional(
+          TrimmedNonEmptyString.annotate({
+            description: "Pushed branch, tag or commit. Default: the project's default branch.",
+          }),
+        ),
+        branch: Schema.optional(
+          TrimmedNonEmptyString.annotate({ description: "New branch name for the checkout." }),
+        ),
+      }),
+    ),
   }),
-  success: Schema.Struct({ threadId: ThreadId, link: Schema.String }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    link: Schema.String,
+    /** "this machine", or the Pair Cloud's label. */
+    where: Schema.String,
+    environmentId: Schema.optional(EnvironmentId),
+  }),
 })
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
