@@ -16,7 +16,9 @@ import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  emitThreadEvent,
   installFakeEnvironment,
+  projectionOf,
   threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
@@ -67,7 +69,7 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
-it("an archived thread opens read-only, its history shown and no composer to send from", async () => {
+it("an archived thread opens read-only until it is unarchived", async () => {
   const archived = { ...threadWithHistory("archived-thread", 1), archived: true };
   using _environment = installFakeEnvironment([archived]);
   __setClientSettingsForTests({
@@ -88,4 +90,11 @@ it("an archived thread opens read-only, its history shown and no composer to sen
   await expect.element(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
   expect(page.getByTestId("composer-editor").elements()).toEqual([]);
   expect(router.state.location.pathname).toBe(`/${ENVIRONMENT_ID}/${archived.id}`);
+
+  await emitThreadEvent(archived.id, {
+    type: "thread.unarchived",
+    payload: projectionOf({ ...archived, archived: false }).thread,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  expect(page.getByText("Archived · read-only").elements()).toEqual([]);
 });
