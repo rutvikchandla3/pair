@@ -62,6 +62,13 @@ const SessionLiveState = Schema.Struct({
   lastAssistantText: Schema.NullOr(Schema.String),
 });
 
+const ChatAttachmentReferences = Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(4096)))
+  .check(Schema.isMaxLength(8))
+  .annotate({
+    description:
+      "Images or files the user attached in this chat, each by its attachment id or saved path. Never their contents.",
+  });
+
 const BriefJob = Schema.Struct({
   jobId: BotJob.fields.id,
   number: PositiveInt,
@@ -177,7 +184,7 @@ const JobCreateTool = Tool.make("bot_job_create", {
 const StartSessionTool = Tool.make("bot_start_session", {
   ...shared,
   description:
-    "Start a session that does a job's work. It runs in the job's project unless you give projectId: a git project gets a new worktree; a job with no project runs in a scratch folder on this machine, with full access. Use role worker for doing the work and reviewer for review. Put the returned link in your reply exactly as given. Pass cloud to run it on a Pair Cloud machine (bot_brief's cloud) that keeps going when this computer sleeps; it starts from the pushed baseRef, so unpushed local edits are not there. A cloud machine spends money: use cloud only when the user asked for it, your instructions say when to, or spending money is not in your check-with-me list; otherwise ask first with bot_ask. Pass modelSelection when the user names a provider, model or effort; get the ids from orchestrator_capabilities (with bot_brief's cloud.environmentId for a cloud session, left out when it is null).",
+    "Start a session that does a job's work. It runs in the job's project unless you give projectId: a git project gets a new worktree; a job with no project runs in a scratch folder on this machine, with full access. Use role worker for doing the work and reviewer for review. Put the returned link in your reply exactly as given. Pass cloud to run it on a Pair Cloud machine (bot_brief's cloud) that keeps going when this computer sleeps; it starts from the pushed baseRef, so unpushed local edits are not there. A cloud machine spends money: use cloud only when the user asked for it, your instructions say when to, or spending money is not in your check-with-me list; otherwise ask first with bot_ask. Pass modelSelection when the user names a provider, model or effort; get the ids from orchestrator_capabilities (with bot_brief's cloud.environmentId for a cloud session, left out when it is null). When the user attached screenshots or files the session needs, pass them in attachments: the session gets them as its own, in the cloud too.",
   parameters: Schema.Struct({
     jobId: BotJob.fields.id,
     projectId: Schema.optional(ProjectId),
@@ -205,6 +212,7 @@ const StartSessionTool = Tool.make("bot_start_session", {
           "Instead of your role's model, e.g. effort is options [{ id: 'effort', value: 'xhigh' }].",
       }),
     ),
+    attachments: Schema.optional(ChatAttachmentReferences),
   }),
   success: Schema.Struct({
     threadId: ThreadId,
@@ -222,10 +230,11 @@ const StartSessionTool = Tool.make("bot_start_session", {
 const SessionMessageTool = Tool.make("bot_session_message", {
   ...shared,
   description:
-    "Send a message to a session you started, to steer it or ask for a status. Refuses sessions the user took over.",
+    "Send a message to a session you started, to steer it or ask for a status. Pass attachments to give it screenshots or files the user attached in this chat. Refuses sessions the user took over.",
   parameters: Schema.Struct({
     threadId: ThreadId,
     text: Schema.String,
+    attachments: Schema.optional(ChatAttachmentReferences),
   }),
   success: Schema.Struct({ ok: Schema.Literal(true) }),
 })
