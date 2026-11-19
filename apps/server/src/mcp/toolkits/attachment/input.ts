@@ -7,3 +7,4 @@ export const McpAttachmentInput = Schema.Union([
   ChatImageAttachment.mapFields(Struct.omit(["source"])),
   ChatFileAttachment,
 ]);
+export type McpAttachmentInput = typeof McpAttachmentInput.Type;

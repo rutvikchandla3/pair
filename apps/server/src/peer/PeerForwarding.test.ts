@@ -3,6 +3,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ChatAttachmentId,
   EnvironmentId,
   type OrchestrationV2Run,
   type Project,
@@ -16,11 +17,18 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as AssetSigner from "../assets/AssetSigner.ts";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerHttp from "../http.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SandboxFork from "../sandbox/lifecycle/SandboxFork.ts";
@@ -168,6 +176,7 @@ const boxLaunches = (seen: Ref.Ref<Seen>) =>
               title: input.title,
             },
             runs: [],
+            messages: [{ attachments: input.initialMessage?.attachments ?? [] }],
           },
           resumed: false,
         } as unknown as ThreadLaunch.ThreadLaunchResult),
@@ -223,8 +232,18 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
  * OAuth. `linkSession` is filled in once A links, so B's fixture thread reads
  * as one that link started.
  */
-const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
-  servePeer(
+const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>, home?: string) => {
+  // Upload URLs its MCP issues and its upload route checks share one home, so one signing key.
+  const config = ServerConfig.layerTest(
+    process.cwd(),
+    home ?? { prefix: "t3-peer-forwarding-box-" },
+  ).pipe(Layer.provide(NodeServices.layer));
+  const signer = AssetSigner.layer.pipe(
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(config),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+  return servePeer(
     box,
     Layer.mergeAll(
       // The box's own team, whose owner approved the link, reads its threads.
@@ -233,6 +252,7 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       ),
       McpHttpServer.layerProjectRegistration,
       McpHttpServer.layerThreadToolkit,
+      McpHttpServer.layerAttachmentToolkit.pipe(Layer.provide(signer)),
     ).pipe(
       Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       Layer.provide(NodeCrypto.layer),
@@ -253,11 +273,7 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       ),
       Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
       Layer.provide(boxProjects(seen)),
-      Layer.provide(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-forwarding-box-" }).pipe(
-          Layer.provide(NodeServices.layer),
-        ),
-      ),
+      Layer.provide(config),
       Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -283,7 +299,18 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
     ),
+    {
+      ...(home === undefined ? {} : { home }),
+      routes: ServerHttp.layerAttachmentUploadRoute.pipe(
+        HttpRouter.provideRequest(
+          Layer.mergeAll(signer, config, NodeServices.layer, NodeCrypto.layer).pipe(
+            Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+          ),
+        ),
+      ),
+    },
   );
+};
 
 const mcpClient = McpSchema.McpServerClient.of({
   clientId: 1,
@@ -330,7 +357,7 @@ const makeLaptop = Effect.gen(function* () {
       ),
     ),
     Layer.provide(NodeServices.layer),
-    Layer.provide(PeerForwarding.layer),
+    Layer.provideMerge(PeerForwarding.layer),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(
@@ -413,7 +440,12 @@ const makeLaptop = Effect.gen(function* () {
         ),
         Effect.provideService(McpSchema.McpServerClient, mcpClient),
       );
-  return { links: Context.get(linking, PeerLinks.PeerLinks), call };
+  return {
+    links: Context.get(linking, PeerLinks.PeerLinks),
+    forwarding: Context.get(here, PeerForwarding.PeerForwarding),
+    scopeOf,
+    call,
+  };
 });
 
 const failureOf = (result: McpSchema.CallToolResult) => {
@@ -609,6 +641,56 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
       expect((yield* Ref.get(seen)).launches).toHaveLength(2);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a launch there carries attachments staged there, bytes and all", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-peer-forwarding-box-" });
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const linkSession = yield* Ref.make("");
+      const b = yield* serveBox(seen, linkSession, home);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "full-access");
+      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+      const scope = a.scopeOf("thread:laptop-full");
+      const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+      const staged = yield* a.forwarding.stageAttachments(scope, box.environmentId, [
+        {
+          attachment: {
+            type: "image",
+            id: ChatAttachmentId.make("thread-laptop-00000000-0000-4000-8000-000000000001"),
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: bytes.length,
+          },
+          bytes,
+        },
+      ]);
+      yield* a.forwarding.call(
+        scope,
+        ProjectToolkit.tools.t3_thread_launch,
+        box.environmentId,
+        {
+          projectId: boxProject,
+          title: "Look at this",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          message: "What is wrong here?",
+          attachments: staged,
+        },
+        { attachmentsStaged: true },
+      );
+      const [launched] = (yield* Ref.get(seen)).launches;
+      const [received] = launched?.initialMessage?.attachments ?? [];
+      expect(received).toMatchObject({ type: "image", name: "screenshot.png" });
+      const { attachmentsDir } = yield* ServerConfig.ServerConfig.pipe(
+        Effect.provide(ServerConfig.layerTest(process.cwd(), home)),
+      );
+      const stored = resolveAttachmentPath({ attachmentsDir, attachment: received! })!;
+      expect(Array.from(yield* fileSystem.readFile(stored))).toEqual(Array.from(bytes));
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeHttpServer.layerTest, NodeServices.layer))),
 );
 
 it.effect("a launch there with no project finds the one with this thread's repository", () =>

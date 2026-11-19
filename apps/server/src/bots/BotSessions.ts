@@ -6,38 +6,54 @@ import {
   type BotSession,
   type BotSessionRole,
   BotsError,
+  type ChatAttachment,
+  ChatAttachmentId,
+  type ChatFileAttachment,
+  type ChatImageAttachment,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type EnvironmentId,
+  getProviderAttachmentLimitError,
   MessageId,
   type ModelSelection,
   type OrchestrationV2TurnItem,
   type OrchestratorMcpFailure,
   type RuntimeRequestId,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
+import {
+  attachmentFileExtension,
+  createPendingAttachmentId,
+  resolveAttachmentPath,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { AttachmentToolkit } from "../mcp/toolkits/attachment/tools.ts";
 import { OrchestratorToolkit } from "../mcp/toolkits/orchestrator/tools.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import { ThreadToolkit } from "../mcp/toolkits/thread/tools.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadMessageIntake from "../orchestration-v2/ThreadMessageIntake.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import { checkModelSelection, isModelSelectionRefusal } from "../provider/modelSelectionCheck.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { BotService } from "./BotService.ts";
 import { type BotCloudTarget, loadBotLinkScope, resolveCloudTarget } from "./botCloud.ts";
@@ -92,7 +108,14 @@ export interface BotSessionStartInput {
     | undefined;
   /** Replaces the role's model for this session; checked where the session runs. */
   readonly modelSelection?: ModelSelection | undefined;
+  /** Attachments in the bot's chat, by id or saved path, for the first message. */
+  readonly attachments?: ReadonlyArray<string> | undefined;
 }
+
+type SendableAttachment = ChatImageAttachment | ChatFileAttachment;
+
+const isSendable = (attachment: ChatAttachment): attachment is SendableAttachment =>
+  attachment.type === "image" || attachment.type === "file";
 
 const roleModel = (bot: Bot, role: BotSessionRole): ModelSelection =>
   role === "worker" ? bot.models.worker : bot.models.reviewer;
@@ -161,6 +184,8 @@ export class BotSessions extends Context.Service<
       botId: BotId,
       threadId: ThreadId,
       text: string,
+      /** Attachments in the bot's chat, by id or saved path. */
+      attachments?: ReadonlyArray<string>,
     ) => Effect.Effect<void, BotsError>;
     readonly respond: (botId: BotId, input: BotRespondInput) => Effect.Effect<void, BotsError>;
     readonly liveState: (threadId: ThreadId) => Effect.Effect<BotSessionLiveState, BotsError>;
@@ -177,7 +202,6 @@ export class BotSessions extends Context.Service<
 const make = Effect.gen(function* () {
   const botService = yield* BotService;
   const projects = yield* ProjectService.ProjectService;
-  const launches = yield* ThreadLaunch.ThreadLaunchService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const git = yield* GitWorkflow.GitWorkflowService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -186,7 +210,16 @@ const make = Effect.gen(function* () {
   const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const forwarding = yield* PeerForwarding.PeerForwarding;
   const links = yield* PeerLinks.PeerLinks;
-  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  const { cloudOnly, attachmentsDir } = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const intake = yield* Effect.context<
+    | ThreadLaunch.ThreadLaunchService
+    | ThreadManagementService.ThreadManagementService
+    | ServerConfig.ServerConfig
+    | FileSystem.FileSystem
+    | DocumentText.DocumentText
+  >();
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -204,12 +237,125 @@ const make = Effect.gen(function* () {
         ? unavailable(`${what} on ${target.label}: ${error.message}`)
         : invalidRequest(`${what} on ${target.label}: ${error.message}`);
 
+  /**
+   * The user's attachments in the bot's chat that `references` name, by id or saved path. Only
+   * those can go, so a reference never reads any other file.
+   */
+  const chatAttachments = Effect.fn("BotSessions.chatAttachments")(function* (
+    bot: Bot,
+    references: ReadonlyArray<string>,
+  ) {
+    if (references.length === 0) return [];
+    const records =
+      bot.homeThreadId === null
+        ? null
+        : yield* threads
+            .getThreadRecords(bot.homeThreadId, ["messages"], { messageRoles: ["user"] })
+            .pipe(Effect.mapError(() => unavailable("Could not read your chat's attachments.")));
+    const owned = (records?.messages ?? []).flatMap((message) => message.attachments);
+    const attachments = yield* Effect.forEach(references, (reference) => {
+      const asPath = path.resolve(reference);
+      const found = owned.find(
+        (attachment) =>
+          attachment.id === reference ||
+          resolveAttachmentPath({ attachmentsDir, attachment }) === asPath,
+      );
+      return found !== undefined && isSendable(found)
+        ? Effect.succeed(found)
+        : Effect.fail(
+            invalidRequest(
+              `${reference} is not an attachment the user sent in this chat. Pass the id or saved path of one of their images or files.`,
+            ),
+          );
+    });
+    const limit = getProviderAttachmentLimitError(attachments);
+    if (limit !== undefined) return yield* invalidRequest(limit);
+    return attachments;
+  });
+
+  const storedPath = Effect.fn("BotSessions.storedPath")(function* (
+    attachment: SendableAttachment,
+  ) {
+    const stored = resolveAttachmentPath({ attachmentsDir, attachment });
+    if (
+      stored === null ||
+      !(yield* fileSystem.exists(stored).pipe(Effect.orElseSucceed(() => false)))
+    ) {
+      return yield* invalidRequest(`${attachment.name} is no longer stored on this machine.`);
+    }
+    return stored;
+  });
+
+  /** A pending-upload copy of `attachment`, which a send claims as if the user attached it. */
+  const pendingCopy = Effect.fn("BotSessions.pendingCopy")(function* (
+    attachment: SendableAttachment,
+    copies: Array<string>,
+  ) {
+    const source = yield* storedPath(attachment);
+    const copy = {
+      ...attachment,
+      id: ChatAttachmentId.make(
+        createPendingAttachmentId(
+          attachment.type === "file" ? attachmentFileExtension(attachment.name) : undefined,
+        ),
+      ),
+    };
+    const target = resolveAttachmentPath({ attachmentsDir, attachment: copy });
+    if (target === null) return yield* unavailable(`Could not copy ${attachment.name}.`);
+    yield* fileSystem.copyFile(source, target).pipe(
+      Effect.mapError(() => unavailable(`Could not copy ${attachment.name}.`)),
+      Effect.andThen(Effect.sync(() => copies.push(target))),
+      Effect.uninterruptible,
+    );
+    return copy;
+  });
+
+  /** Runs `send` with pending copies of `attachments`; its claim keeps its own copy. */
+  const withPendingCopies = <A, E, R>(
+    attachments: ReadonlyArray<SendableAttachment>,
+    send: (pending: ReadonlyArray<SendableAttachment>) => Effect.Effect<A, E, R>,
+  ) => {
+    const copies: Array<string> = [];
+    return Effect.forEach(attachments, (attachment) => pendingCopy(attachment, copies)).pipe(
+      Effect.flatMap(send),
+      Effect.ensuring(
+        Effect.suspend(() =>
+          Effect.forEach(copies, (copy) => fileSystem.remove(copy).pipe(Effect.ignore), {
+            discard: true,
+          }),
+        ),
+      ),
+    );
+  };
+
+  /** Uploads `attachments` to `target` as pending uploads there. */
+  const stageInCloud = Effect.fn("BotSessions.stageInCloud")(function* (
+    scope: McpInvocationContext.McpInvocationScope,
+    target: BotCloudTarget,
+    attachments: ReadonlyArray<SendableAttachment>,
+  ) {
+    const files = yield* Effect.forEach(attachments, (attachment) =>
+      storedPath(attachment).pipe(
+        Effect.flatMap((stored) =>
+          fileSystem
+            .readFile(stored)
+            .pipe(Effect.mapError(() => unavailable(`Could not read ${attachment.name}.`))),
+        ),
+        Effect.map((bytes) => ({ attachment, bytes })),
+      ),
+    );
+    return yield* forwarding
+      .stageAttachments(scope, target.environmentId, files)
+      .pipe(Effect.mapError(cloudFailure(target, "Could not send the attachments")));
+  });
+
   const startInCloud = Effect.fn("BotSessions.startInCloud")(function* (
     bot: Bot,
     job: BotJob,
     project: { readonly id: BotSession["projectId"]; readonly title: string },
     baseRef: string,
     input: BotSessionStartInput & { readonly cloud: NonNullable<BotSessionStartInput["cloud"]> },
+    attachments: ReadonlyArray<SendableAttachment>,
   ) {
     const target = yield* resolveCloudTarget(links, input.cloud.environmentId);
     const { scope, activeRunId } = yield* linkScope(bot);
@@ -227,22 +373,30 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+    const staged = yield* stageInCloud(scope, target, attachments);
     const launched = yield* forwarding
-      .call(scope, ProjectToolkit.tools.t3_thread_launch, target.environmentId, {
-        projectId: projectThere,
-        title: input.title,
-        modelSelection: input.modelSelection ?? roleModel(bot, input.role),
-        runtimeMode: "full-access",
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        workspaceStrategy: {
-          type: "cloud",
-          baseRef,
-          ...(input.cloud.branch === undefined ? {} : { branch: input.cloud.branch }),
+      .call(
+        scope,
+        ProjectToolkit.tools.t3_thread_launch,
+        target.environmentId,
+        {
+          projectId: projectThere,
+          title: input.title,
+          modelSelection: input.modelSelection ?? roleModel(bot, input.role),
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          workspaceStrategy: {
+            type: "cloud",
+            baseRef,
+            ...(input.cloud.branch === undefined ? {} : { branch: input.cloud.branch }),
+          },
+          message: `${input.task}${sessionTaskFooter({ bot, job, inWorktree: true })}`,
+          ...(staged.length === 0 ? {} : { attachments: staged }),
+          // A retry in the same bot turn finds the machine it started; a later turn gets a new one.
+          clientRequestId: `bot-session:${activeRunId ?? "idle"}:${input.title}`.slice(0, 256),
         },
-        message: `${input.task}${sessionTaskFooter({ bot, job, inWorktree: true })}`,
-        // A retry in the same bot turn finds the machine it started; a later turn gets a new one.
-        clientRequestId: `bot-session:${activeRunId ?? "idle"}:${input.title}`.slice(0, 256),
-      })
+        { attachmentsStaged: true },
+      )
       .pipe(
         Effect.tapError((error) => Effect.logWarning("bot cloud session launch failed", { error })),
         Effect.mapError((error) => {
@@ -316,6 +470,7 @@ const make = Effect.gen(function* () {
           "This job is not working; reopen it before starting sessions.",
         );
       }
+      const attachments = yield* chatAttachments(bot, input.attachments ?? []);
       if (input.cloud !== undefined && input.projectId === undefined && job.projectId === null) {
         return yield* invalidRequest(
           "A job with no project runs on this machine. Leave out cloud, or give the job a project.",
@@ -352,7 +507,14 @@ const make = Effect.gen(function* () {
         const cloudBase = cloud.baseRef ?? baseRef;
         // This server runs cloud machines itself: an ordinary session here, on its own machine.
         if (!cloudOnly)
-          return yield* startInCloud(bot, job, project, cloudBase, { ...input, cloud });
+          return yield* startInCloud(
+            bot,
+            job,
+            project,
+            cloudBase,
+            { ...input, cloud },
+            attachments,
+          );
       }
       const workspaceStrategy =
         cloud !== undefined
@@ -381,9 +543,12 @@ const make = Effect.gen(function* () {
             : problem,
         );
       }
-      const launched = yield* launches
-        .launch({
-          commandId: CommandId.make(`server:bot-session:${yield* random.uuidV4()}`),
+      const commandId = CommandId.make(`server:bot-session:${yield* random.uuidV4()}`);
+      const launched = yield* withPendingCopies(attachments, (pending) =>
+        ThreadMessageIntake.launchThread({
+          commandId,
+          // Claiming an upload names the thread it goes to.
+          ...(pending.length === 0 ? {} : { threadId: ThreadId.make(commandId) }),
           projectId: project.id,
           title: input.title,
           modelSelection,
@@ -392,18 +557,21 @@ const make = Effect.gen(function* () {
           workspaceStrategy,
           initialMessage: {
             text: `${input.task}${sessionTaskFooter({ bot, job, inWorktree })}`,
-            attachments: [],
+            attachments: pending,
           },
           createdBy: "agent",
           creationSource: "server",
           ownerId: bot.ownerId,
-        })
-        .pipe(
+        }).pipe(
           Effect.tapError((error) => Effect.logWarning("bot session launch failed", { error })),
           Effect.mapError((error) =>
-            launchFailure(error, project.title, input.role, input.modelSelection !== undefined),
+            error._tag === "AttachmentClaimError"
+              ? invalidRequest(error.message)
+              : launchFailure(error, project.title, input.role, input.modelSelection !== undefined),
           ),
-        );
+          Effect.provideContext(intake),
+        ),
+      );
       const session: BotSession = {
         threadId: launched.threadId,
         botId,
@@ -419,39 +587,64 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const message: BotSessions["Service"]["message"] = Effect.fn("BotSessions.message")(
-    function* (botId, threadId, text) {
-      const session = yield* requireSession(botId, threadId);
-      if (session.cloud !== undefined) {
-        const target = session.cloud;
-        const { scope } = yield* linkScope(yield* loadBot(botId));
+  const message: BotSessions["Service"]["message"] = Effect.fn("BotSessions.message")(function* (
+    botId,
+    threadId,
+    text,
+    references = [],
+  ) {
+    const session = yield* requireSession(botId, threadId);
+    const bot = yield* loadBot(botId);
+    const attachments = yield* chatAttachments(bot, references);
+    if (session.cloud !== undefined) {
+      const target = session.cloud;
+      const { scope } = yield* linkScope(bot);
+      const failure = cloudFailure(target, "Could not send the message");
+      if (attachments.length === 0) {
         yield* forwarding
           .call(scope, OrchestratorToolkit.tools.t3_thread_send, target.environmentId, {
             threadId,
             message: text,
             mode: "auto",
           })
-          .pipe(Effect.mapError(cloudFailure(target, "Could not send the message")));
+          .pipe(Effect.mapError(failure));
         return;
       }
-      yield* threads
-        .sendToThread({
-          projectId: session.projectId,
-          commandId: CommandId.make(`server:bot-session:${yield* random.uuidV4()}`),
-          threadId,
-          messageId: MessageId.make(`message:bot-session:${yield* random.uuidV4()}`),
-          text,
-          attachments: [],
-          mode: "auto",
-          createdBy: "agent",
-          creationSource: "server",
-        })
-        .pipe(
-          Effect.mapError(() => unavailable("Could not send the message to the session.")),
-          Effect.asVoid,
-        );
-    },
-  );
+      const staged = yield* stageInCloud(scope, target, attachments);
+      yield* forwarding
+        .call(
+          scope,
+          AttachmentToolkit.tools.t3_thread_send_attachments,
+          target.environmentId,
+          { threadId, message: text, attachments: staged },
+          { attachmentsStaged: true },
+        )
+        .pipe(Effect.mapError(failure));
+      return;
+    }
+    const commandId = CommandId.make(`server:bot-session:${yield* random.uuidV4()}`);
+    const messageId = MessageId.make(`message:bot-session:${yield* random.uuidV4()}`);
+    yield* withPendingCopies(attachments, (pending) =>
+      ThreadMessageIntake.sendToThread({
+        projectId: session.projectId,
+        commandId,
+        threadId,
+        messageId,
+        text,
+        attachments: pending,
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "server",
+      }).pipe(
+        Effect.mapError((error) =>
+          error._tag === "AttachmentClaimError"
+            ? invalidRequest(error.message)
+            : unavailable("Could not send the message to the session."),
+        ),
+        Effect.provideContext(intake),
+      ),
+    );
+  });
 
   const respond: BotSessions["Service"]["respond"] = Effect.fn("BotSessions.respond")(
     function* (botId, input) {

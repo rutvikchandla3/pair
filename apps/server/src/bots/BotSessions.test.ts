@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   type Bot,
@@ -5,6 +6,8 @@ import {
   type BotJob,
   BotJobId,
   type BotSession,
+  type ChatAttachment,
+  ChatAttachmentId,
   EnvironmentId,
   MemberId,
   type Project,
@@ -15,10 +18,12 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
+import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -28,6 +33,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import { ProviderCloudUnsupportedError } from "../provider/Errors.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -104,6 +110,14 @@ interface Forwarded {
   readonly tool: string;
   readonly environmentId: EnvironmentId;
   readonly params: Record<string, unknown>;
+  readonly attachmentsStaged: boolean;
+}
+
+/** What the cloud received as pending uploads, with the bytes that went. */
+interface Staged {
+  readonly environmentId: EnvironmentId;
+  readonly name: string;
+  readonly bytes: ReadonlyArray<number>;
 }
 
 /** BotSessions over fakes; `forwarded` records every call made through a link. */
@@ -120,9 +134,13 @@ const sessionsHarness = (input: {
   readonly launchFails?: ThreadManagementService.ThreadManagementProviderInstanceDisabledError;
   /** The cloud's t3_thread_launch fails with this. */
   readonly cloudRefuses?: OrchestratorMcpFailure;
+  /** This server's attachments directory, and what the user attached in the bot's chat. */
+  readonly attachmentsDir?: string;
+  readonly chat?: ReadonlyArray<ChatAttachment>;
 }) => {
   const launches: Array<ThreadLaunch.ThreadLaunchRequest> = [];
   const forwarded: Array<Forwarded> = [];
+  const staged: Array<Staged> = [];
   const clouds = input.clouds ?? [];
   const homeBot: Bot = { ...bot, homeThreadId };
   const layer = BotSessions.layer.pipe(
@@ -156,8 +174,10 @@ const sessionsHarness = (input: {
             if (input.launchFails !== undefined) return Effect.fail(input.launchFails);
             launches.push(request);
             return Effect.succeed({
-              threadId: ThreadId.make("thread:session"),
-              projection: {} as ThreadLaunch.ThreadLaunchResult["projection"],
+              threadId: request.threadId ?? ThreadId.make("thread:session"),
+              projection: {
+                messages: [{ attachments: request.initialMessage?.attachments ?? [] }],
+              } as unknown as ThreadLaunch.ThreadLaunchResult["projection"],
               resumed: false,
             });
           },
@@ -168,6 +188,13 @@ const sessionsHarness = (input: {
               id: homeThreadId,
               providerInstanceId: model.instanceId,
               activeRunId: null,
+            } as never),
+          getThreadRecords: (threadId) =>
+            Effect.succeed({
+              messages:
+                threadId === homeThreadId
+                  ? [{ role: "user", text: "See the screenshots.", attachments: input.chat ?? [] }]
+                  : [],
             } as never),
         }),
         Layer.mock(GitWorkflow.GitWorkflowService)({
@@ -180,7 +207,10 @@ const sessionsHarness = (input: {
         }),
         Layer.succeed(ServerConfig.ServerConfig, {
           cloudOnly: input.cloudOnly ?? false,
+          attachmentsDir: input.attachmentsDir ?? "/home/user/.t3/userdata/attachments",
         } as ServerConfig.ServerConfig["Service"]),
+        Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.undefined }),
+        NodeServices.layer,
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getEnvironmentId: Effect.succeed(EnvironmentId.make("env:here")),
         }),
@@ -195,11 +225,19 @@ const sessionsHarness = (input: {
         }),
         Layer.mock(PeerForwarding.PeerForwarding)({
           resolveProject: () => Effect.succeed(projectThere),
-          call: (_scope, tool, environmentId, params) => {
+          stageAttachments: (_scope, environmentId, files) =>
+            Effect.sync(() =>
+              files.map(({ attachment, bytes }, index) => {
+                staged.push({ environmentId, name: attachment.name, bytes: Array.from(bytes) });
+                return { ...attachment, id: ChatAttachmentId.make(`pending-cloud-${index}`) };
+              }),
+            ),
+          call: (_scope, tool, environmentId, params, options) => {
             forwarded.push({
               tool: tool.name,
               environmentId,
               params: params as Record<string, unknown>,
+              attachmentsStaged: options?.attachmentsStaged === true,
             });
             if (input.cloudRefuses !== undefined) return Effect.fail(input.cloudRefuses);
             // The cloud answers with what the thread runs on.
@@ -221,13 +259,14 @@ const sessionsHarness = (input: {
       ),
     ),
   );
-  return { launches, forwarded, layer };
+  return { launches, forwarded, staged, layer };
 };
 
 const startInput = (input: {
   readonly projectId?: ProjectId;
   readonly cloud?: BotSessions.BotSessionStartInput["cloud"];
   readonly modelSelection?: BotSessions.BotSessionStartInput["modelSelection"];
+  readonly attachments?: ReadonlyArray<string>;
 }): BotSessions.BotSessionStartInput => ({
   jobId: BotJobId.make("job:1"),
   ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
@@ -236,7 +275,26 @@ const startInput = (input: {
   task: "Add the login.",
   ...(input.cloud === undefined ? {} : { cloud: input.cloud }),
   ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+  ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
 });
+
+const screenshotBytes = [0x89, 0x50, 0x4e, 0x47, 1, 2, 3];
+const screenshot: ChatAttachment = {
+  type: "image",
+  id: ChatAttachmentId.make("thread-home-00000000-0000-4000-8000-000000000001"),
+  name: "screenshot.png",
+  mimeType: "image/png",
+  sizeBytes: screenshotBytes.length,
+};
+
+/** A temporary attachments directory holding the screenshot the user sent the bot. */
+const attachmentsWithScreenshot = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "bot-sessions-" });
+  const stored = resolveAttachmentPath({ attachmentsDir, attachment: screenshot })!;
+  yield* fileSystem.writeFile(stored, Uint8Array.from(screenshotBytes));
+  return { attachmentsDir, stored };
+}).pipe(Effect.provide(NodeServices.layer));
 
 /** Starts one session and returns the launch request it made. */
 const startSession = (input: {
@@ -394,6 +452,87 @@ describe("BotSessions.start", () => {
       assert.include(launch.initialMessage?.text ?? "", "Work in your own worktree.");
     }),
   );
+
+  it.effect("gives the session the user's chat attachments, by id or saved path", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { attachmentsDir, stored } = yield* attachmentsWithScreenshot;
+        const fileSystem = yield* FileSystem.FileSystem;
+        for (const reference of [screenshot.id, stored]) {
+          const harness = sessionsHarness({
+            jobProjectId: repoId,
+            attachmentsDir,
+            chat: [screenshot],
+          });
+          yield* Effect.gen(function* () {
+            const sessions = yield* BotSessions.BotSessions;
+            yield* sessions.start(bot.id, startInput({ attachments: [reference] }));
+          }).pipe(Effect.provide(harness.layer));
+          const launch = harness.launches[0];
+          const [sent] = launch?.initialMessage?.attachments ?? [];
+          assert.isDefined(launch?.threadId);
+          assert.isDefined(sent);
+          // The thread's own copy, as if the user had attached it there.
+          assert.notStrictEqual(sent.id, screenshot.id);
+          assert.deepInclude(sent, {
+            type: "image",
+            name: "screenshot.png",
+            mimeType: "image/png",
+          });
+          const copy = resolveAttachmentPath({ attachmentsDir, attachment: sent })!;
+          assert.deepStrictEqual(Array.from(yield* fileSystem.readFile(copy)), screenshotBytes);
+        }
+        // Only the chat's file and the sessions' copies remain: no pending uploads linger.
+        const files = yield* fileSystem.readDirectory(attachmentsDir);
+        assert.lengthOf(files, 3);
+        assert.isFalse(files.some((file) => file.startsWith("pending-")));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses any reference that is not an attachment in the bot's chat", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { attachmentsDir } = yield* attachmentsWithScreenshot;
+        const fileSystem = yield* FileSystem.FileSystem;
+        // Another thread's attachment, stored in the same directory.
+        const elsewhere = {
+          ...screenshot,
+          id: ChatAttachmentId.make("thread-other-00000000-0000-4000-8000-000000000002"),
+        };
+        const elsewherePath = resolveAttachmentPath({ attachmentsDir, attachment: elsewhere })!;
+        yield* fileSystem.writeFile(elsewherePath, Uint8Array.from(screenshotBytes));
+        for (const reference of [
+          "/etc/passwd",
+          `${attachmentsDir}/../secret.png`,
+          elsewhere.id,
+          elsewherePath,
+          "thread-home-00000000-0000-4000-8000-000000000009",
+        ]) {
+          for (const cloud of [undefined, {}]) {
+            const harness = sessionsHarness({
+              jobProjectId: repoId,
+              attachmentsDir,
+              chat: [screenshot],
+              clouds: [cloudId],
+            });
+            const error = yield* Effect.gen(function* () {
+              const sessions = yield* BotSessions.BotSessions;
+              return yield* sessions.start(
+                bot.id,
+                startInput({ attachments: [reference], ...(cloud === undefined ? {} : { cloud }) }),
+              );
+            }).pipe(Effect.provide(harness.layer), Effect.flip);
+            assert.strictEqual(error.reason, "invalid-request");
+            assert.include(error.message, `${reference} is not an attachment the user sent`);
+            assert.lengthOf(harness.launches, 0);
+            assert.lengthOf(harness.forwarded, 0);
+            assert.lengthOf(harness.staged, 0);
+          }
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("BotSessions cloud sessions", () => {
@@ -531,6 +670,41 @@ describe("BotSessions cloud sessions", () => {
       position: 0,
     },
   };
+
+  it.effect("uploads the chat's attachments to the cloud for its session's messages", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { attachmentsDir } = yield* attachmentsWithScreenshot;
+        const harness = sessionsHarness({
+          jobProjectId: repoId,
+          clouds: [cloudId],
+          sessions: [cloudSession],
+          attachmentsDir,
+          chat: [screenshot],
+        });
+        yield* Effect.gen(function* () {
+          const sessions = yield* BotSessions.BotSessions;
+          yield* sessions.start(bot.id, startInput({ cloud: {}, attachments: [screenshot.id] }));
+          yield* sessions.message(bot.id, cloudThreadId, "Here it is.", [screenshot.id]);
+        }).pipe(Effect.provide(harness.layer));
+        const upload = { environmentId: cloudId, name: "screenshot.png", bytes: screenshotBytes };
+        assert.deepStrictEqual(harness.staged, [upload, upload]);
+        const sentThere = [{ ...screenshot, id: "pending-cloud-0" }];
+        assert.deepStrictEqual(
+          harness.forwarded.map((call) => [
+            call.tool,
+            call.params.attachments,
+            call.attachmentsStaged,
+          ]),
+          [
+            ["t3_thread_launch", sentThere, true],
+            ["t3_thread_send_attachments", sentThere, true],
+          ],
+        );
+        assert.strictEqual(harness.forwarded[1]?.params.message, "Here it is.");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("messages and answers a cloud session through the link, never approvals", () =>
     Effect.gen(function* () {
