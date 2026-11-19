@@ -228,6 +228,11 @@ export class BotService extends Context.Service<
       threadId: ThreadId,
       takenOver: boolean,
     ) => Effect.Effect<BotSession, BotsError>;
+    /** A local session's `archived`; undefined clears it. No timeline event. */
+    readonly setSessionArchived: (
+      threadId: ThreadId,
+      archived: BotSession["archived"],
+    ) => Effect.Effect<BotSession, BotsError>;
     readonly addEvent: (input: {
       readonly botId: BotId;
       readonly jobId?: BotJobId | null;
@@ -1149,6 +1154,23 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     );
   });
 
+  const setSessionArchived: BotService["Service"]["setSessionArchived"] = Effect.fn(
+    "BotService.setSessionArchived",
+  )(function* (threadId, archived) {
+    return yield* withLock(
+      Effect.gen(function* () {
+        const session = Option.getOrNull(yield* db(store.getSession(threadId)));
+        if (session === null) return yield* notFound("That session is gone.");
+        const bot = yield* loadBot(session.botId);
+        const { archived: _archived, ...rest } = session;
+        const updated: BotSession = archived === undefined ? rest : { ...rest, archived };
+        yield* db(store.upsertSession(updated));
+        yield* touch(bot.ownerId);
+        return updated;
+      }),
+    );
+  });
+
   const setSessionTakenOver: BotService["Service"]["setSessionTakenOver"] = Effect.fn(
     "BotService.setSessionTakenOver",
   )(function* (threadId, takenOver) {
@@ -1314,6 +1336,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     updateJob,
     addSession,
     setSessionCloud,
+    setSessionArchived,
     setSessionTakenOver,
     addEvent,
     createAsk,
