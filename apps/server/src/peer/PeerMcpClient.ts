@@ -43,6 +43,13 @@ export class PeerMcpClient extends Context.Service<
       readonly limits: PeerCallLimits;
       readonly success: S;
     }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
+    /** Posts `bytes` to an upload URL the peer's `t3_attachment_prepare_upload` returned. */
+    readonly upload: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly relativeUrl: string;
+      readonly bytes: Uint8Array;
+      readonly mimeType: string;
+    }) => Effect.Effect<void, OrchestratorMcpFailure>;
   }
 >()("t3/peer/PeerMcpClient") {}
 
@@ -272,7 +279,39 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  return PeerMcpClient.of({ call });
+  const upload: PeerMcpClient["Service"]["upload"] = Effect.fn("PeerMcpClient.upload")(
+    function* (input) {
+      const resolved = yield* links
+        .resolve(input.environmentId)
+        .pipe(Effect.mapError(peerLinkFailure));
+      const response = yield* httpClient
+        .execute(
+          HttpClientRequest.post(`${resolved.url}${input.relativeUrl}`).pipe(
+            HttpClientRequest.setHeaders({ authorization: `Bearer ${resolved.token}` }),
+            HttpClientRequest.setBody(HttpBody.uint8Array(input.bytes, input.mimeType)),
+          ),
+        )
+        .pipe(
+          // The signed URL is a bearer credential; a client span would record it as url.full.
+          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: "The linked environment stopped answering.",
+              }),
+          ),
+        );
+      if (response.status < 200 || response.status >= 300) {
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: `The linked environment refused the attachment (HTTP ${response.status}).`,
+        });
+      }
+    },
+  );
+
+  return PeerMcpClient.of({ call, upload });
 });
 
 export const layer = Layer.effect(PeerMcpClient, make);

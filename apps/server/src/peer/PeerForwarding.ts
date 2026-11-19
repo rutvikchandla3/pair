@@ -1,4 +1,9 @@
 import {
+  AttachmentCreateUploadUrlInput,
+  AttachmentCreateUploadUrlResult,
+  ChatAttachmentId,
+  type ChatFileAttachment,
+  type ChatImageAttachment,
   type EnvironmentId,
   OrchestratorMcpFailure,
   type OrchestratorMcpEnvironmentLinksResult,
@@ -23,6 +28,7 @@ import type * as Tool from "effect/ai/Tool";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import type { McpAttachmentInput } from "../mcp/toolkits/attachment/input.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -54,14 +60,27 @@ export class PeerForwarding extends Context.Service<
      * Runs `tool` in the linked environment `environmentId` with `params`. A
      * `t3_thread_wait` goes in pieces short enough to survive any route, and a
      * `t3_thread_launch` naming no project goes to the one there with the
-     * calling thread's repository.
+     * calling thread's repository. Its `attachments` must come from `stageAttachments`.
      */
     readonly call: <T extends Tool.Any>(
       scope: Scope,
       tool: T,
       environmentId: EnvironmentId,
       params: Tool.Parameters<T>,
+      options?: { readonly attachmentsStaged?: true },
     ) => Effect.Effect<Tool.Success<T>, OrchestratorMcpFailure>;
+    /**
+     * Uploads attachments stored here to `environmentId` as pending uploads there, for a
+     * `call` with `attachmentsStaged`. The caller has checked that it may send them.
+     */
+    readonly stageAttachments: (
+      scope: Scope,
+      environmentId: EnvironmentId,
+      files: ReadonlyArray<{
+        readonly attachment: ChatImageAttachment | ChatFileAttachment;
+        readonly bytes: Uint8Array;
+      }>,
+    ) => Effect.Effect<ReadonlyArray<McpAttachmentInput>, OrchestratorMcpFailure>;
     /** `t3_thread_read` there. */
     readonly readThread: (
       scope: Scope,
@@ -160,6 +179,7 @@ const make = Effect.gen(function* () {
     success: Schema.Top,
     environmentId: EnvironmentId,
     params: unknown,
+    attachmentsStaged = false,
   ) {
     const limits = yield* callerLimits(scope);
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
@@ -167,7 +187,7 @@ const make = Effect.gen(function* () {
     ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
     const { environmentId: _target, ...args } = encoded;
     // A pending upload lives here, so it cannot go with the call.
-    if (Array.isArray(args.attachments) && args.attachments.length > 0) {
+    if (!attachmentsStaged && Array.isArray(args.attachments) && args.attachments.length > 0) {
       return yield* new OrchestratorMcpFailure({
         code: "invalid_request",
         message: "A launch in a linked environment cannot carry attachments yet.",
@@ -317,6 +337,7 @@ const make = Effect.gen(function* () {
     tool: Tool.Any,
     environmentId: EnvironmentId,
     params: Record<string, unknown>,
+    attachmentsStaged: boolean,
   ) {
     const shell =
       params.projectId !== undefined || params.scratch === true || scope.thread === undefined
@@ -337,10 +358,12 @@ const make = Effect.gen(function* () {
       tool.successSchema,
       environmentId,
       projectId === undefined ? params : { ...params, projectId },
+      attachmentsStaged,
     );
   });
 
-  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
+  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params, options) => {
+    const attachmentsStaged = options?.attachmentsStaged === true;
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
       OrchestratorMcpFailure
@@ -351,10 +374,13 @@ const make = Effect.gen(function* () {
           params as OrchestratorMcpThreadWaitInput,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : tool.name === "t3_thread_launch"
-        ? (launch(scope, tool, environmentId, params as Record<string, unknown>) as Effect.Effect<
-            Tool.Success<typeof tool>,
-            OrchestratorMcpFailure
-          >)
+        ? (launch(
+            scope,
+            tool,
+            environmentId,
+            params as Record<string, unknown>,
+            attachmentsStaged,
+          ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
         : forward(
             scope,
             tool.name,
@@ -362,9 +388,48 @@ const make = Effect.gen(function* () {
             tool.successSchema,
             environmentId,
             params,
+            attachmentsStaged,
           );
     return Effect.andThen(requireUsable(environmentId), forwarded);
   };
+
+  const stageAttachments: PeerForwarding["Service"]["stageAttachments"] = (
+    scope,
+    environmentId,
+    files,
+  ) =>
+    Effect.andThen(
+      requireUsable(environmentId),
+      Effect.forEach(files, ({ attachment, bytes }) =>
+        Effect.gen(function* () {
+          const prepared = yield* forward<AttachmentCreateUploadUrlResult>(
+            scope,
+            "t3_attachment_prepare_upload",
+            Schema.Struct({ upload: AttachmentCreateUploadUrlInput }),
+            AttachmentCreateUploadUrlResult,
+            environmentId,
+            {
+              upload: {
+                type: attachment.type,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes,
+              },
+            },
+          );
+          yield* peers.upload({
+            environmentId,
+            relativeUrl: prepared.relativeUrl,
+            bytes,
+            mimeType: attachment.mimeType,
+          });
+          const staged = { ...attachment, id: ChatAttachmentId.make(prepared.attachmentId) };
+          if (staged.type === "file") return staged;
+          const { source: _source, ...image } = staged;
+          return image;
+        }),
+      ),
+    );
 
   /**
    * The next step for an agent whose machine is not linked: without it, an
@@ -408,6 +473,7 @@ const make = Effect.gen(function* () {
 
   return PeerForwarding.of({
     call,
+    stageAttachments,
     readThread,
     interruptThread,
     waitForThread,

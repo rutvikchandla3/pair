@@ -533,10 +533,10 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
       <WorkspaceNativeTabs
         tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}
         hidden={
-          !workspacePage &&
           projection.detail.length > 0 &&
           !primaryVisible &&
-          !layout.usesSplitView &&
+          // A page pushed from a page tab such as Bots fills the window, so no sidebar keeps the tabs.
+          (workspacePage || !layout.usesSplitView) &&
           (metrics?.verticalBarEdge ?? "none") === "none"
         }
       >
