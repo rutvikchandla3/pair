@@ -1,6 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { type ModelSelection, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  type ModelSelection,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
+import { ThreadManagementProviderInstanceDisabledError } from "../orchestration-v2/ThreadManagementService.ts";
+import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
+import { ProviderCloudLocalOnlyError, ProviderCloudUnsupportedError } from "./Errors.ts";
 import { isModelSelectionRefusal, modelSelectionProblem } from "./modelSelectionCheck.ts";
 import { readyProvider } from "./ProviderRegistry.testkit.ts";
 
@@ -63,6 +72,16 @@ const check = (selection: { instanceId: string; model: string; options?: unknown
     adapterInstanceIds,
     selection: selection as ModelSelection,
   });
+
+/** Why a signed-in-here account of `driver` can't run in the cloud. */
+const localOnlyReason = (driver: "claudeAgent" | "codex"): string => {
+  const support = sandboxCredentialSupport({
+    instanceId: ProviderInstanceId.make(driver),
+    instance: { driver: ProviderDriverKind.make(driver) },
+  });
+  if (support._tag !== "LocalOnly") throw new Error(`${driver} is not local-only`);
+  return support.reason;
+};
 
 describe("modelSelectionProblem", () => {
   it("accepts an instance that can run, its model and a valid effort", () => {
@@ -143,6 +162,24 @@ describe("modelSelectionProblem", () => {
         adapterInstanceIds,
         selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
       }),
+      // What a launch refuses with after the check, and all a 0.1.7-pair.36 server sends.
+      new ProviderCloudUnsupportedError({ threadId: "", driver: "pi" }).message,
+      new ProviderCloudLocalOnlyError({
+        instanceId: "claudeAgent",
+        reason: localOnlyReason("claudeAgent"),
+      }).message,
+      new ProviderCloudLocalOnlyError({ instanceId: "codex", reason: localOnlyReason("codex") })
+        .message,
+      new ThreadManagementProviderInstanceDisabledError({
+        projectId: ProjectId.make("project:there"),
+        instanceId: ProviderInstanceId.make("pi"),
+      }).message,
+      new ThreadManagementProviderInstanceDisabledError({
+        projectId: ProjectId.make("project:there"),
+        instanceId: ProviderInstanceId.make("claudeAgent-piyush-eff7"),
+        // As a team server words another member's instance.
+        reason: "Piyush's Claude belongs to Piyush. Pick another provider.",
+      }).message,
     ];
     for (const refusal of refusals) {
       expect(isModelSelectionRefusal(`Could not start the session on Pair Cloud: ${refusal}`)).toBe(

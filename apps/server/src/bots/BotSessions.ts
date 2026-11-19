@@ -198,9 +198,9 @@ const make = Effect.gen(function* () {
   const cloudFailure = (target: BotCloudTarget, what: string) => (error: OrchestratorMcpFailure) =>
     error.code === "capability_denied"
       ? new BotsError({ reason: "cloud-only", message: `${target.label}: ${error.message}` })
-      : error.code === "invalid_request"
-        ? invalidRequest(`${what} on ${target.label}: ${error.message}`)
-        : unavailable(`${what} on ${target.label}: ${error.message}`);
+      : error.code === "orchestration_error"
+        ? unavailable(`${what} on ${target.label}: ${error.message}`)
+        : invalidRequest(`${what} on ${target.label}: ${error.message}`);
 
   const startInCloud = Effect.fn("BotSessions.startInCloud")(function* (
     bot: Bot,

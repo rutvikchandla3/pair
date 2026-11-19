@@ -206,6 +206,23 @@ describe("bots tools", () => {
     }),
   );
 
+  it.effect("tells the bot why a session could not start", () =>
+    Effect.gen(function* () {
+      const message =
+        "Could not start the session on Pair Cloud: The linked environment stopped answering.";
+      const result = yield* callTool(
+        "bot_start_session",
+        { jobId, role: "worker", title: "Upgrade server", task: "Do it", cloud: {} },
+        {
+          sessions: {
+            start: () => Effect.fail(new BotsError({ reason: "unavailable", message })),
+          },
+        },
+      );
+      expect(result).toMatchObject({ code: "orchestration_error", message });
+    }),
+  );
+
   it.effect("refuses a caller that is not a bot's home thread", () =>
     Effect.gen(function* () {
       const result = yield* callTool(
