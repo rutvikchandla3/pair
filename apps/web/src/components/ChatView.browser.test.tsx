@@ -17,6 +17,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -64,4 +65,27 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("an archived thread opens read-only, its history shown and no composer to send from", async () => {
+  const archived = { ...threadWithHistory("archived-thread", 1), archived: true };
+  using _environment = installFakeEnvironment([archived]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${archived.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("archived-thread: question 0")).toBeVisible();
+  await expect.element(page.getByText("Archived · read-only")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
+  expect(page.getByTestId("composer-editor").elements()).toEqual([]);
+  expect(router.state.location.pathname).toBe(`/${ENVIRONMENT_ID}/${archived.id}`);
 });

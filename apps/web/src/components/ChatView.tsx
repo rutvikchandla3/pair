@@ -315,6 +315,7 @@ import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
+import { ArchivedThreadBar } from "./chat/ArchivedThreadBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { CloudIcon } from "lucide-react";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
@@ -1874,7 +1875,9 @@ export default function ChatView(props: ChatViewProps) {
   });
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
-  const composerMounted = !showProviderSubagentBar;
+  // The server queues a message to an archived thread but never runs it, so it opens read-only.
+  const isArchivedThread = serverThread?.archivedAt != null;
+  const composerMounted = !showProviderSubagentBar && !isArchivedThread;
   const providerSubagentModels = selectedProviderEntry?.models ?? EMPTY_PROVIDER_MODELS;
   // Providers can report dated model ids or aliases.
   const providerSubagentModelSlug = selectedProviderEntry
@@ -1903,7 +1906,7 @@ export default function ChatView(props: ChatViewProps) {
     shouldShowComposerContextStrip({
       isDraftHeroState,
       persistInActiveThreads: settings.persistComposerContextStrip,
-      hasActiveProject: activeProject !== null && !showProviderSubagentBar,
+      hasActiveProject: activeProject !== null && composerMounted,
       isGitRepo: isGitRepo || activeProjectIsWorkspace,
       showEnvironmentIndicator: showComposerEnvironmentIndicator,
     });
@@ -3879,6 +3882,12 @@ export default function ChatView(props: ChatViewProps) {
                                   />
                                 ) : null
                               }
+                            />
+                          ) : null}
+                          {isArchivedThread && activeThreadRef !== null ? (
+                            <ArchivedThreadBar
+                              threadRef={activeThreadRef}
+                              canUnarchive={canOperateThread}
                             />
                           ) : null}
                           {!composerMounted ? null : (

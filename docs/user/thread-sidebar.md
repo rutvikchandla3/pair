@@ -69,6 +69,9 @@ viewing. Discarding an unsent draft from the sidebar works the same way: Undo br
 back its text and attachments. `mod+z` triggers the most recent Undo, even from the composer; see
 [Keybindings](./keybindings.md#commands-with-special-behavior).
 
+On web and desktop, an archived thread still opens from a link, a search, or a bot's **Archived**
+list, read-only. Choose **Unarchive** where the composer would be to send it messages again.
+
 On web and desktop, you can also drag files from your computer onto any thread row:
 the thread opens and the files are attached in its composer, ready for
 your next message. The same per-message file limits apply as when attaching

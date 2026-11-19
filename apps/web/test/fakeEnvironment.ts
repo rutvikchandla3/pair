@@ -185,6 +185,8 @@ function run(threadId: ThreadId, id: RunId, ordinal: number, userMessageId: stri
 export interface FakeThread {
   /** Makes this a side chat of that thread. */
   readonly sideChatOf?: ThreadId;
+  /** Serves it as the server does an archived thread: off the shell, detail only. */
+  readonly archived?: boolean;
   readonly id: ThreadId;
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
@@ -248,7 +250,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     visibleItemCount: thread.items.length,
     createdAt: AT,
     updatedAt: AT,
-    archivedAt: null,
+    archivedAt: thread.archived ? AT : null,
     settledOverride: null,
     settledAt: null,
     lastVisitedAt: AT,
@@ -285,7 +287,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
       creationSource: "web",
       createdAt: AT,
       updatedAt: AT,
-      archivedAt: null,
+      archivedAt: shell.archivedAt,
       settledOverride: null,
       settledAt: null,
       lastVisitedAt: AT,
@@ -350,7 +352,7 @@ const handlers: Record<string, (input: never) => unknown> = {
           schemaVersion: 1,
           snapshotSequence: sequence,
           projects: [project],
-          threads: threads.map(shellOf),
+          threads: threads.filter((thread) => !thread.archived).map(shellOf),
           archivedThreads: [],
         },
       },

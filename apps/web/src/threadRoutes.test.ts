@@ -138,9 +138,13 @@ describe("threadRoutes", () => {
     ).toBe("ready");
   });
 
-  it.each(["missing", "deleted", "archived"] as const)(
-    "redirects an unlisted thread only after detail confirms it is %s",
-    (outcome) => {
+  it.each([
+    ["missing", "missing"],
+    ["deleted", "missing"],
+    ["archived", "ready"],
+  ] as const)(
+    "settles an unlisted %s thread as %s only after its detail arrives",
+    (outcome, expected) => {
       const route = {
         bootstrapComplete: isThreadRouteSnapshotAuthoritative("live"),
         serverThreadExists: false,
@@ -178,7 +182,7 @@ describe("threadRoutes", () => {
                   }),
                 },
         }),
-      ).toBe("missing");
+      ).toBe(expected);
     },
   );
 

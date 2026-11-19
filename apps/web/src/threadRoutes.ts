@@ -45,14 +45,12 @@ export function resolveThreadRouteRenderState(input: {
   if (input.serverThreadExists || input.unlistedThreadDetail.status === "deleted") {
     return "missing";
   }
-  // Shell membership can lag a new thread; its detail decides.
+  // Shell membership can lag a new thread and never holds an archived one; its detail decides.
   const projection = Option.getOrNull(input.unlistedThreadDetail.data);
   if (projection === null) {
     return "loading";
   }
-  return projection.thread.deletedAt !== null || projection.thread.archivedAt !== null
-    ? "missing"
-    : "ready";
+  return projection.thread.deletedAt !== null ? "missing" : "ready";
 }
 
 export function buildThreadRouteParams(ref: ScopedThreadRef): {
