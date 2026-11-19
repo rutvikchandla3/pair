@@ -3654,7 +3654,7 @@ export default function ChatView(props: ChatViewProps) {
             onDrop={workspaceFileDropHandlers.onDrop}
           >
             <ThreadFind onClose={focusComposerStable} />
-            {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
+            {isWorkspaceFileDragActive && composerMounted ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
               environmentId={activeThread.environmentId}
               providerStatus={visibleProviderStatus}
