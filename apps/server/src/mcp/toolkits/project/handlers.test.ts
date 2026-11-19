@@ -50,6 +50,8 @@ const clientLaunchHarness = (input: {
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly fallbackModel?: ModelSelection;
   readonly providers?: readonly ServerProvider[];
+  /** What a re-probe finds; default: the same providers. */
+  readonly refreshedProviders?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
   readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchRequest>;
@@ -73,6 +75,7 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
+      refreshInstance: () => Effect.succeed(input.refreshedProviders ?? input.providers ?? []),
     }),
     Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
       list: () => Effect.succeed((input.providers ?? []).map((provider) => provider.instanceId)),
@@ -409,6 +412,29 @@ it.effect(
       });
       expect(launched).toHaveLength(0);
     }),
+);
+
+it.effect("a launch re-probes a provider whose snapshot says it can't run before refusing", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
+    // Before its first probe a provider's snapshot reads as not installed.
+    const pending = readyProvider("claudeAgent", { installed: false, status: "warning" });
+    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched,
+      providers: [pending],
+      refreshedProviders: [readyProvider("claudeAgent")],
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    yield* toolkit
+      .handle("t3_thread_launch", { projectId, title: "Fix", modelSelection })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(launched).toHaveLength(1);
+  }),
 );
 
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>

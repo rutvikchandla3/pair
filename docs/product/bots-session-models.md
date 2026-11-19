@@ -132,9 +132,10 @@ the box's instance doesn't list the parent's model, or a declared option's value
 launched, and the Claude adapter quietly fell back to the default effort. The caller fixes it with
 `target.model` or `target.options`. We prefer an early refusal to a silent downgrade.
 
-The check reads the registry's cached snapshot, which `delegate_task` already trusts. An instance
-signed in moments ago can be refused until its next probe. We accept that: the message names it
-and a retry after the probe works.
+The check reads the registry's cached snapshot. Health probes run only while a client is
+connected, so an unattended bot or cloud box can hold a stale one (not installed before the first
+probe, or unauthenticated after a sign-in elsewhere). Like `delegate_task`, a refusal re-probes that
+instance once and checks again before it is final.
 
 A cloud server validates only once it runs this version. Until the Pair Cloud is updated, a bad
 selection still fails late there. Working selections behave the same either way.

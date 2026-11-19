@@ -137,6 +137,12 @@ describe("modelSelectionProblem", () => {
         model: "claude-opus-5-5",
         options: [{ id: "effort", value: "huge" }],
       }),
+      // A snapshot without a display name is named by its id alone.
+      modelSelectionProblem({
+        providers: [readyProvider("codex", { installed: false })],
+        adapterInstanceIds,
+        selection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      }),
     ];
     for (const refusal of refusals) {
       expect(isModelSelectionRefusal(`Could not start the session on Pair Cloud: ${refusal}`)).toBe(

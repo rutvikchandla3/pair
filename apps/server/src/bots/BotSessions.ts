@@ -37,7 +37,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
-import { isModelSelectionRefusal, modelSelectionProblem } from "../provider/modelSelectionCheck.ts";
+import { checkModelSelection, isModelSelectionRefusal } from "../provider/modelSelectionCheck.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { BotService } from "./BotService.ts";
 import { type BotCloudTarget, loadBotLinkScope, resolveCloudTarget } from "./botCloud.ts";
@@ -57,17 +57,21 @@ const launchFailure = (
   projectTitle: string,
   role: BotSessionRole,
   chosen: boolean,
-): string => {
+): BotsError => {
   if (!isProviderDisabled(error)) {
-    return "Could not start the session.";
+    return unavailable("Could not start the session.");
   }
   if (error.reason !== undefined) {
-    return `Could not start the session: the ${error.instanceId} provider belongs to someone else (${error.reason}).`;
+    return invalidRequest(
+      `Could not start the session: the ${error.instanceId} provider belongs to someone else (${error.reason}).`,
+    );
   }
   const instead = chosen
     ? "or pass another modelSelection"
     : `or to pick another ${role} model under Models… in your menu`;
-  return `Could not start the session: the ${error.instanceId} provider is turned off for ${projectTitle}. Tell the user to turn it on in Settings, ${instead}.`;
+  return invalidRequest(
+    `Could not start the session: the ${error.instanceId} provider is turned off for ${projectTitle}. Tell the user to turn it on in Settings, ${instead}.`,
+  );
 };
 
 export interface BotSessionStartInput {
@@ -358,8 +362,8 @@ const make = Effect.gen(function* () {
             : { type: "worktree" as const, baseRef, startFromOrigin: false };
       const modelSelection = input.modelSelection ?? roleModel(bot, input.role);
       // ThreadLaunchService doesn't check a selection; t3_thread_launch does, for cloud sessions.
-      const problem = modelSelectionProblem({
-        providers: yield* providers.getProviders,
+      const { problem } = yield* checkModelSelection({
+        providers,
         adapterInstanceIds: new Set(yield* adapters.list()),
         selection: modelSelection,
       });
@@ -390,9 +394,7 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.tapError((error) => Effect.logWarning("bot session launch failed", { error })),
           Effect.mapError((error) =>
-            unavailable(
-              launchFailure(error, project.title, input.role, input.modelSelection !== undefined),
-            ),
+            launchFailure(error, project.title, input.role, input.modelSelection !== undefined),
           ),
         );
       const session: BotSession = {

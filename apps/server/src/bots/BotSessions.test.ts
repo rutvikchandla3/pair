@@ -113,6 +113,10 @@ const sessionsHarness = (input: {
   readonly sessions?: ReadonlyArray<BotSession>;
   /** This server's providers; default: the bot's own Claude. */
   readonly providers?: ReadonlyArray<ServerProvider>;
+  /** What a re-probe finds; default: the same providers. */
+  readonly refreshedProviders?: ReadonlyArray<ServerProvider>;
+  /** The local launch fails with this. */
+  readonly launchFails?: ThreadManagementService.ThreadManagementProviderInstanceDisabledError;
   /** The cloud's t3_thread_launch refuses with this message. */
   readonly cloudRefuses?: string;
 }) => {
@@ -148,6 +152,7 @@ const sessionsHarness = (input: {
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (request) => {
+            if (input.launchFails !== undefined) return Effect.fail(input.launchFails);
             launches.push(request);
             return Effect.succeed({
               threadId: ThreadId.make("thread:session"),
@@ -211,6 +216,8 @@ const sessionsHarness = (input: {
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed(input.providers ?? [claude]),
+          refreshInstance: () =>
+            Effect.succeed(input.refreshedProviders ?? input.providers ?? [claude]),
         }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed((input.providers ?? [claude]).map((p) => p.instanceId)),
@@ -269,10 +276,15 @@ describe("BotSessions.start", () => {
       const start = (
         modelSelection: BotSessions.BotSessionStartInput["modelSelection"],
         providers?: ReadonlyArray<ServerProvider>,
+        fakes: Pick<
+          Parameters<typeof sessionsHarness>[0],
+          "refreshedProviders" | "launchFails"
+        > = {},
       ) => {
         const harness = sessionsHarness({
           jobProjectId: repoId,
           ...(providers === undefined ? {} : { providers }),
+          ...fakes,
         });
         return Effect.gen(function* () {
           const sessions = yield* BotSessions.BotSessions;
@@ -300,6 +312,21 @@ describe("BotSessions.start", () => {
       const roleDefault = yield* start(undefined, []).pipe(Effect.flip);
       assert.include(roleDefault.error.message, "That is your worker model");
       assert.lengthOf(roleDefault.launches, 0);
+
+      // A stale snapshot, as before the first probe, is re-probed instead of refused.
+      const stale = { ...claude, installed: false, status: "warning" as const };
+      const reprobed = yield* start(chosen, [stale], { refreshedProviders: [claude] });
+      assert.lengthOf(reprobed.launches, 1);
+
+      const turnedOff = yield* start(chosen, undefined, {
+        launchFails: new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+          projectId: repoId,
+          instanceId: model.instanceId,
+        }),
+      }).pipe(Effect.flip);
+      assert.strictEqual(turnedOff.error.reason, "invalid-request");
+      assert.include(turnedOff.error.message, "turned off for");
+      assert.include(turnedOff.error.message, "or pass another modelSelection");
     }),
   );
 

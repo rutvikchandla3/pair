@@ -6,6 +6,7 @@ import {
   type ProviderOptionSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { Effect } from "effect";
 
 const LISTED_LIMIT = 8;
 
@@ -141,6 +142,30 @@ export function modelSelectionProblem(input: {
   return null;
 }
 
+/** Background callers miss foreground-only health probes, so re-probe once before refusing. */
+export const checkModelSelection = Effect.fn("modelSelectionCheck.checkModelSelection")(
+  function* (input: {
+    readonly providers: {
+      readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
+      readonly refreshInstance: (
+        instanceId: ProviderInstanceId,
+      ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+    };
+    readonly adapterInstanceIds: ReadonlySet<ProviderInstanceId>;
+    readonly selection: ModelSelection;
+  }) {
+    const { adapterInstanceIds, selection } = input;
+    const cached = yield* input.providers.getProviders;
+    const problem = modelSelectionProblem({ providers: cached, adapterInstanceIds, selection });
+    if (problem === null) return { providers: cached, problem };
+    const providers = yield* input.providers.refreshInstance(selection.instanceId);
+    return {
+      providers,
+      problem: modelSelectionProblem({ providers, adapterInstanceIds, selection }),
+    };
+  },
+);
+
 /** Whether a refusal, possibly prefixed by a forwarder, came from `modelSelectionProblem`. */
 export const isModelSelectionRefusal = (message: string): boolean =>
-  /No provider instance "|\) can't run here: |\) has no model "| rejected options: /.test(message);
+  /No provider instance "| can't run here: | has no model "| rejected options: /.test(message);
