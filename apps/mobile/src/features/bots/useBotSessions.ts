@@ -5,7 +5,13 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { Atom } from "effect/reactivity";
 
 import { environmentThreadShells } from "../../state/threads";
-import { type BotSessionShell, type BotSessionState, botSessionState } from "./botsModel";
+import {
+  type BotSessionShell,
+  type BotSessionState,
+  botSessionShellsKey,
+  botSessionState,
+  parseBotSessionShellsKey,
+} from "./botsModel";
 
 function toShell(shell: EnvironmentThreadShell | null): BotSessionShell | null {
   if (shell === null) return null;
@@ -22,14 +28,14 @@ function toShell(shell: EnvironmentThreadShell | null): BotSessionShell | null {
 
 /** Every session's live shell, keyed by the environment and the sessions' thread ids. */
 const sessionShellsFamily = Atom.family((key: string) => {
-  const [environmentId, ...threadIds] = key.split("\u0000");
+  const { environmentId, threadIds } = parseBotSessionShellsKey(key);
   return Atom.make((get) =>
     threadIds.map((threadId) =>
       toShell(
         get(
           environmentThreadShells.threadShellAtom({
-            environmentId: EnvironmentIdSchema.make(environmentId ?? ""),
-            threadId: ThreadId.make(threadId ?? ""),
+            environmentId: EnvironmentIdSchema.make(environmentId),
+            threadId: ThreadId.make(threadId),
           }),
         ),
       ),
@@ -41,10 +47,10 @@ function useBotSessionShells(
   environmentId: EnvironmentId | null,
   sessions: ReadonlyArray<BotSession>,
 ): ReadonlyArray<BotSessionShell | null> {
-  const key =
-    environmentId === null
-      ? ""
-      : `${environmentId}\u0000${sessions.map((session) => session.threadId).join("\u0000")}`;
+  const key = botSessionShellsKey(
+    environmentId,
+    sessions.map((session) => session.threadId),
+  );
   return useAtomValue(sessionShellsFamily(key));
 }
 

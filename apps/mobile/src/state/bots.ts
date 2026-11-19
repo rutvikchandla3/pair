@@ -1,11 +1,19 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type BotsSnapshot, type EnvironmentId } from "@t3tools/contracts";
+import {
+  type BotsSnapshot,
+  type EnvironmentId,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 import { createBotsEnvironmentAtoms } from "@t3tools/client-runtime/state/bots";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
+import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
-import { connectedEnvironmentIdsAtom } from "./presentation";
+import { type BotsEnvironmentEntry, botsEnvironmentStatus } from "../features/bots/botsModel";
+import { appAtomRegistry } from "./atom-registry";
+import { environmentPresentations } from "./presentation";
 import { useAtomCommand } from "./use-atom-command";
 
 const botsEnvironment = createBotsEnvironmentAtoms(connectionAtomRuntime);
@@ -29,9 +37,45 @@ export function useBotsSnapshot(environmentId: EnvironmentId | null): BotsSnapsh
   );
 }
 
-/** Bots live on the primary (first connected) environment. */
-export function usePrimaryEnvironmentId(): EnvironmentId | null {
-  return useAtomValue(connectedEnvironmentIdsAtom)[0] ?? null;
+/** Every enabled server's Bots, in saved order; reading it keeps each `bots.subscribe` open. */
+const botsEnvironmentsAtom = Atom.make((get) => {
+  const catalog = get(environmentCatalog.catalogValueAtom);
+  const entries = [...enabledEnvironmentIds(catalog)].flatMap(
+    (environmentId): BotsEnvironmentEntry[] => {
+      const presentation = get(environmentPresentations.presentationAtom(environmentId));
+      if (presentation === null) return [];
+      const result = get(botsEnvironment.snapshot({ environmentId, input: undefined }));
+      const status = botsEnvironmentStatus(
+        presentation.connection.phase,
+        AsyncResult.isSuccess(result)
+          ? "success"
+          : AsyncResult.isFailure(result)
+            ? "failure"
+            : "pending",
+      );
+      return [
+        {
+          environmentId,
+          label: presentation.entry.target.label,
+          machineKind: resolveEnvironmentMachineKind(presentation.serverConfig),
+          status,
+          snapshot: Option.getOrNull(AsyncResult.value(result)),
+          canCreate:
+            status === "loaded" && get(botsEnvironment.create.permissionAtom(environmentId)),
+        },
+      ];
+    },
+  );
+  return { catalogReady: catalog.isReady, entries };
+}).pipe(Atom.withLabel("mobile-bots-environments"));
+
+export function useBotsEnvironments() {
+  return useAtomValue(botsEnvironmentsAtom);
+}
+
+/** Restarts a server's Bots subscription after it failed. */
+export function retryBotsSnapshot(environmentId: EnvironmentId) {
+  appAtomRegistry.refresh(botsEnvironment.snapshot({ environmentId, input: undefined }));
 }
 
 /** The Bots mutations the mobile screens run, all against the screen's environment. */

@@ -4,6 +4,10 @@ import { useState } from "react";
 import { FlatList, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import {
+  ENVIRONMENT_MACHINE_SYMBOLS,
+  EnvironmentMachineSymbol,
+} from "../../components/EnvironmentMachineSymbol";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -11,31 +15,42 @@ import * as Dialog from "../../components/ui/Dialog";
 import { Menu } from "../../components/ui/Menu";
 import { useNowMinuteMs } from "../../lib/clock";
 import { relativeTime } from "../../lib/time";
-import { useBotsCommands, useBotsSnapshot, usePrimaryEnvironmentId } from "../../state/bots";
+import { retryBotsSnapshot, useBotsCommands, useBotsEnvironments } from "../../state/bots";
 import { startOpeningEnvironmentThread } from "../../state/threads";
+import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { BotAvatar } from "./BotAvatar";
 import {
+  type BotsEnvironmentEntry,
   type BotSessionBucket,
   type BotSessionRow,
+  botsScreenModel,
   botStatusLine,
   botSessionRows,
   needsYouCount,
 } from "./botsModel";
 import { useBotSessionStates } from "./useBotSessions";
 
-/** The Bots workspace tab: every bot with its sessions nested under it. */
+type BotsListRow =
+  | { readonly kind: "header"; readonly entry: BotsEnvironmentEntry }
+  | {
+      readonly kind: "bot";
+      readonly entry: BotsEnvironmentEntry;
+      readonly snapshot: BotsSnapshot;
+      readonly bot: Bot;
+    };
+
+/** The Bots workspace tab: every linked server's bots, each with its sessions nested under it. */
 export function BotsScreen() {
-  const environmentId = usePrimaryEnvironmentId();
-  const snapshot = useBotsSnapshot(environmentId);
+  const { catalogReady, entries } = useBotsEnvironments();
+  const model = botsScreenModel(entries, catalogReady);
   const insets = useSafeAreaInsets();
   const workspace = useWorkspaceTabs();
   const navigation = useNavigation();
   const { create } = useBotsCommands();
   const bottom = (workspace?.bottomClearance ?? insets.bottom) + 24;
 
-  const createBot = async () => {
-    if (environmentId === null) return;
+  const createBot = async (environmentId: EnvironmentId) => {
     const result = await create({
       environmentId,
       input: { charter: "", starter: "default" },
@@ -52,8 +67,7 @@ export function BotsScreen() {
     );
   };
 
-  const openBot = (bot: Bot) => {
-    if (environmentId === null) return;
+  const openBot = (environmentId: EnvironmentId, bot: Bot) => {
     if (bot.homeThreadId === null) {
       navigation.dispatch(
         StackActions.push("BotHome", { environmentId: String(environmentId), botId: bot.id }),
@@ -64,8 +78,7 @@ export function BotsScreen() {
     navigation.dispatch(StackActions.push("Thread", { environmentId, threadId: bot.homeThreadId }));
   };
 
-  const openSession = (session: BotSession) => {
-    if (environmentId === null) return;
+  const openSession = (environmentId: EnvironmentId, session: BotSession) => {
     const sessionEnvironmentId = session.cloud?.environmentId ?? environmentId;
     startOpeningEnvironmentThread(sessionEnvironmentId, session.threadId);
     navigation.dispatch(
@@ -76,7 +89,7 @@ export function BotsScreen() {
     );
   };
 
-  if (snapshot === null || environmentId === null) {
+  if (model.view === "spinner") {
     return (
       <View className="flex-1 items-center justify-center bg-screen p-8">
         <AppActivityIndicator colorClassName="accent-icon-muted" />
@@ -84,20 +97,62 @@ export function BotsScreen() {
     );
   }
 
+  const rows = model.groups.flatMap((group): BotsListRow[] => {
+    const { entry } = group;
+    const header: BotsListRow[] = group.showHeader ? [{ kind: "header", entry }] : [];
+    const snapshot = entry.snapshot;
+    if (snapshot === null) return header;
+    return [
+      ...header,
+      ...group.bots.map((bot) => ({ kind: "bot" as const, entry, snapshot, bot })),
+    ];
+  });
+  const newBotButton = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="New bot"
+      accessibilityState={{ disabled: model.createMode === "none" }}
+      disabled={model.createMode === "none"}
+      onPress={
+        model.createMode === "direct"
+          ? () => void createBot(model.createTargets[0]!.environmentId)
+          : undefined
+      }
+      className={
+        model.createMode === "none"
+          ? "size-10 items-center justify-center opacity-40"
+          : "size-10 items-center justify-center active:opacity-60"
+      }
+    >
+      <SymbolView name="plus" size={20} tintColorClassName="accent-primary-text" />
+    </Pressable>
+  );
+
   return (
     <View className="flex-1 bg-screen">
       <View className="flex-row items-center justify-between px-4 pt-3 pb-2">
         <Text className="text-2xl font-t3-bold text-foreground">Bots</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="New bot"
-          onPress={() => void createBot()}
-          className="size-10 items-center justify-center active:opacity-60"
-        >
-          <SymbolView name="plus" size={20} tintColorClassName="accent-primary-text" />
-        </Pressable>
+        {model.createMode === "menu" ? (
+          <Menu
+            actions={model.createTargets.map((target) => ({
+              id: target.environmentId,
+              title: target.label,
+              image: ENVIRONMENT_MACHINE_SYMBOLS[target.machineKind],
+            }))}
+            onPressAction={({ nativeEvent }) => {
+              const target = model.createTargets.find(
+                (candidate) => candidate.environmentId === nativeEvent.event,
+              );
+              if (target !== undefined) void createBot(target.environmentId);
+            }}
+          >
+            {newBotButton}
+          </Menu>
+        ) : (
+          newBotButton
+        )}
       </View>
-      {snapshot.bots.length === 0 ? (
+      {model.view === "empty" ? (
         <View className="flex-1 items-center justify-center p-8">
           <Text className="text-center text-sm text-foreground-muted">
             Tap + to start your first bot.
@@ -105,20 +160,75 @@ export function BotsScreen() {
         </View>
       ) : (
         <FlatList
-          data={snapshot.bots}
-          keyExtractor={(bot) => bot.id}
+          data={rows}
+          keyExtractor={(row) =>
+            row.kind === "header"
+              ? `header:${row.entry.environmentId}`
+              : `bot:${row.entry.environmentId}:${row.bot.id}`
+          }
           contentContainerStyle={{ paddingBottom: bottom }}
-          renderItem={({ item }) => (
-            <BotSection
-              environmentId={environmentId}
-              bot={item}
-              snapshot={snapshot}
-              onOpenBot={() => openBot(item)}
-              onOpenSession={(session) => openSession(session)}
-            />
-          )}
+          renderItem={({ item }) =>
+            item.kind === "header" ? (
+              <EnvironmentHeader entry={item.entry} />
+            ) : (
+              <BotSection
+                environmentId={item.entry.environmentId}
+                bot={item.bot}
+                snapshot={item.snapshot}
+                canArchive={item.entry.status === "loaded"}
+                onOpenBot={() => openBot(item.entry.environmentId, item.bot)}
+                onOpenSession={(session) => openSession(item.entry.environmentId, session)}
+              />
+            )
+          }
         />
       )}
+    </View>
+  );
+}
+
+/** Names the server a group of bots lives on, and says when its bots can't be shown. */
+function EnvironmentHeader(props: { readonly entry: BotsEnvironmentEntry }) {
+  const { entry } = props;
+  const label = (
+    <>
+      <EnvironmentMachineSymbol
+        kind={entry.machineKind}
+        size={13}
+        tintColorClassName="accent-icon-muted"
+      />
+      <Text numberOfLines={1} className="shrink text-sm text-foreground-muted">
+        {entry.label}
+      </Text>
+    </>
+  );
+  if (entry.status === "failed") {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${entry.label}, Couldn't load bots`}
+        accessibilityHint="Double-tap to retry"
+        onPress={() => retryBotsSnapshot(entry.environmentId)}
+        className="min-h-10 flex-row items-center gap-1.5 px-4 pt-4 pb-1 active:opacity-70"
+      >
+        {label}
+        <ConnectionStatusDot state="error" pulse={false} size={6} />
+        <Text numberOfLines={1} className="shrink text-sm text-foreground-muted">
+          Couldn't load bots. Tap to retry.
+        </Text>
+      </Pressable>
+    );
+  }
+  const offline = entry.status === "offline";
+  return (
+    <View
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel={offline ? `${entry.label}, Offline` : entry.label}
+      className="min-h-10 flex-row items-center gap-1.5 px-4 pt-4 pb-1"
+    >
+      {label}
+      {offline ? <Text className="text-sm text-foreground-muted">Offline</Text> : null}
     </View>
   );
 }
@@ -127,6 +237,7 @@ function BotSection(props: {
   readonly environmentId: EnvironmentId;
   readonly bot: Bot;
   readonly snapshot: BotsSnapshot;
+  readonly canArchive: boolean;
   readonly onOpenBot: () => void;
   readonly onOpenSession: (session: BotSession) => void;
 }) {
@@ -158,6 +269,7 @@ function BotSection(props: {
       row={row}
       nowMs={nowMs}
       archived={isArchived}
+      canArchive={props.canArchive}
       onOpen={() => props.onOpenSession(row.session)}
       onArchive={(value) => void setArchived(row, value)}
     />
@@ -241,15 +353,18 @@ function SessionRow(props: {
   readonly row: BotSessionRow;
   readonly nowMs: number;
   readonly archived: boolean;
+  readonly canArchive: boolean;
   readonly onOpen: () => void;
   readonly onArchive: (archived: boolean) => void;
 }) {
   const { row } = props;
-  const action = props.archived
-    ? { id: "unarchive", title: "Unarchive job", image: "archivebox" }
-    : row.jobFinished
-      ? { id: "archive", title: "Archive job", image: "archivebox" }
-      : null;
+  const action = !props.canArchive
+    ? null
+    : props.archived
+      ? { id: "unarchive", title: "Unarchive job", image: "archivebox" }
+      : row.jobFinished
+        ? { id: "archive", title: "Archive job", image: "archivebox" }
+        : null;
   const pressable = (
     <Pressable
       accessibilityRole="button"
