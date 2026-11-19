@@ -301,6 +301,36 @@ it.effect("refuses to reopen a working job", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("archives only a finished job, and reopening brings it back", () =>
+  Effect.gen(function* () {
+    const bots = yield* BotService.BotService;
+    const bot = yield* createBot(bots);
+    const job = yield* bots.createJob(caller, { botId: bot.id, request: "Archive me" });
+    const working = yield* bots
+      .archiveJob(caller, { jobId: job.id, archived: true })
+      .pipe(Effect.flip);
+    assert.strictEqual(working.reason, "invalid-request");
+
+    const report = { changed: "Done", evidence: [], openQuestions: [], next: null };
+    const archived = yield* bots.updateJob(bot.id, job.id, {
+      status: "done",
+      report,
+      archived: true,
+    });
+    assert.isNotNull(archived.archivedAt);
+    const restored = yield* bots.archiveJob(caller, { jobId: job.id, archived: false });
+    assert.isNull(restored.archivedAt);
+
+    yield* bots.archiveJob(caller, { jobId: job.id, archived: true });
+    const reopened = yield* bots.reopenJob(caller, { jobId: job.id });
+    assert.isNull(reopened.archivedAt);
+    const hidden = yield* bots
+      .archiveJob(otherCaller, { jobId: job.id, archived: true })
+      .pipe(Effect.flip);
+    assert.strictEqual(hidden.reason, "not-found");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("tracks home and session threads and finishes a job", () =>
   Effect.gen(function* () {
     BotThreads.reset();

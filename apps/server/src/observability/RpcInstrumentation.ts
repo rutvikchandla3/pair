@@ -92,6 +92,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.botsCreateJob]: "bots",
   [WS_METHODS.botsStopJob]: "bots",
   [WS_METHODS.botsReopenJob]: "bots",
+  [WS_METHODS.botsArchiveJob]: "bots",
   [WS_METHODS.botsAnswerAsk]: "bots",
   [WS_METHODS.botsRememberAsk]: "bots",
   [WS_METHODS.botsCorrectDecision]: "bots",

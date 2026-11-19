@@ -232,6 +232,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           ...(params.headline === undefined ? {} : { headline: params.headline }),
           ...(params.title === undefined ? {} : { title: params.title }),
           ...(params.status === undefined ? {} : { status: params.status }),
+          ...(params.archived === undefined ? {} : { archived: params.archived }),
           ...(report === undefined ? {} : { report }),
         }),
       );

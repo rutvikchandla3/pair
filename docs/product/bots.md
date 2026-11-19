@@ -44,9 +44,17 @@ nothing. Paused bots say
 
 Under the bot row, its sessions are nested, one row each with a state glyph. The needs-you glyph
 appears only on a session the bot has asked you about (`bot_ask`); a session waiting on the bot
-shows as working. Sessions that need you, working or failed come first, then sessions finished in
-the last 24 hours, newest first. Older ones collapse into "N earlier", which expands in place. A session row opens the real thread.
-Bot sessions don't also appear under Threads.
+shows as working. Once a job is done or stopped, its sessions show the job's state, even when
+their threads are archived. Sessions that need you, working or failed come first, then sessions
+finished in the last 24 hours, newest first. Older ones collapse into "N earlier", which expands in
+place. A session row opens the real thread. Bot sessions don't also appear under Threads.
+
+**Archive job** (on a finished job's row, where its time sits on hover) clears a done or stopped
+job: all of its sessions move behind the same disclosure, under "Archived" ("Archived" alone when
+nothing is earlier), with **Unarchive job** in the same place. A toast offers Undo. Archiving
+doesn't touch the threads or wake the bot; the bot can do the same with `bot_job_update`
+(`archived`) when you ask it to clear finished work. Reopening a job, or a question from the bot
+on it, brings it back to the list.
 
 ### Bot page
 
@@ -153,8 +161,9 @@ Threads.
 
 ### Mobile
 
-The Bots tab lists bots with their faces and sessions nested; a bot's second line is its status,
-or its role when nothing is running. Tapping a bot opens its chat in the normal
+The Bots tab lists bots with their faces and sessions nested, with the same "N earlier" and
+"Archived" disclosure; long-press a finished job's row for **Archive job** or **Unarchive job**. A
+bot's second line is its status, or its role when nothing is running. Tapping a bot opens its chat in the normal
 mobile thread screen and composer, with the status line under the name in the header (tapping it
 jumps to the open question); tapping a session opens that thread. No Memory button: Memory is on
 desktop and web in v1, and so is Edit bot.

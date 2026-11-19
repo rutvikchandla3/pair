@@ -72,6 +72,7 @@ const job = (status: BotJob["status"] = "working"): BotJob => ({
   createdAt: at,
   updatedAt: at,
   finishedAt: null,
+  archivedAt: null,
 });
 
 const cloud: BotCloudSession = {

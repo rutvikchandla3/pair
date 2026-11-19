@@ -3189,6 +3189,8 @@ export const layerWsRpc = (
           bots.stopJob({ memberId: currentSession.memberId }, input),
         [WS_METHODS.botsReopenJob]: (input) =>
           bots.reopenJob({ memberId: currentSession.memberId }, input),
+        [WS_METHODS.botsArchiveJob]: (input) =>
+          bots.archiveJob({ memberId: currentSession.memberId }, input),
         [WS_METHODS.botsAnswerAsk]: (input) =>
           bots.answerAsk({ memberId: currentSession.memberId }, input),
         [WS_METHODS.botsRememberAsk]: (input) =>

@@ -2,6 +2,8 @@ import {
   BOT_QUIET_AFTER_MS,
   type Bot,
   type BotAsk,
+  type BotJob,
+  botJobFinished,
   type BotSession,
   type BotsSnapshot,
   type RunId,
@@ -109,6 +111,26 @@ export function sessionState(
   return { kind: "working" };
 }
 
+/**
+ * A session's state, read from its job once the job is finished: an archived session thread has
+ * no shell, and a missing shell otherwise reads as working.
+ */
+export function jobSessionState(
+  session: BotSession,
+  job: BotJob | undefined,
+  shell: EnvironmentThreadShell | null | undefined,
+  now: number = Date.now(),
+): BotSessionState {
+  if (job?.status === "done") return { kind: "done" };
+  if (job?.status === "stopped") return { kind: "stopped" };
+  return sessionState(session, shell, now);
+}
+
+/** The snapshot's jobs by id, for `jobSessionState`. */
+export function jobsById(snapshot: BotsSnapshot): ReadonlyMap<string, BotJob> {
+  return new Map(snapshot.jobs.map((job) => [job.id, job]));
+}
+
 /** The bot's sessions. */
 export function botSessions(snapshot: BotsSnapshot, botId: string): ReadonlyArray<BotSession> {
   return snapshot.sessions.filter((session) => session.botId === botId);
@@ -155,8 +177,12 @@ function workingSessionCount(
   shells: ShellLookup,
   now: number = Date.now(),
 ): number {
+  const jobs = jobsById(snapshot);
   return botSessions(snapshot, botId).filter((session) =>
-    workingKinds(sessionState(session, shellFor(shells, session.threadId), now).kind),
+    workingKinds(
+      jobSessionState(session, jobs.get(session.jobId), shellFor(shells, session.threadId), now)
+        .kind,
+    ),
   ).length;
 }
 
@@ -167,9 +193,11 @@ function unreachableSessionCount(
   shells: ShellLookup,
   now: number,
 ): number {
+  const jobs = jobsById(snapshot);
   return botSessions(snapshot, botId).filter(
     (session) =>
-      sessionState(session, shellFor(shells, session.threadId), now).kind === "unreachable",
+      jobSessionState(session, jobs.get(session.jobId), shellFor(shells, session.threadId), now)
+        .kind === "unreachable",
   ).length;
 }
 
@@ -241,11 +269,12 @@ export type BotSessionGlyph = "needs-you" | "working" | "done" | "failed" | "off
  */
 export function botSessionGlyph(
   session: BotSession,
+  job: BotJob | undefined,
   shell: EnvironmentThreadShell | null | undefined,
   openAskJobIds: ReadonlySet<string>,
   now: number = Date.now(),
 ): BotSessionGlyph {
-  const state = sessionState(session, shell, now);
+  const state = jobSessionState(session, job, shell, now);
   if (state.kind !== "done" && openAskJobIds.has(session.jobId)) return "needs-you";
   switch (state.kind) {
     case "done":
@@ -266,6 +295,8 @@ export interface BotSidebarSession {
   readonly glyph: BotSessionGlyph;
   /** When a done session finished, for its relative time; null for the rest. */
   readonly finishedAt: string | null;
+  /** The session's job is done or stopped, so the row offers Archive job. */
+  readonly jobFinished: boolean;
 }
 
 export interface BotSidebarSessions {
@@ -273,6 +304,8 @@ export interface BotSidebarSessions {
   readonly rows: ReadonlyArray<BotSidebarSession>;
   /** Finished longer ago than 24 hours, newest first; behind "N earlier". */
   readonly earlier: ReadonlyArray<BotSidebarSession>;
+  /** Sessions of archived jobs, newest first; after the earlier ones, behind the same disclosure. */
+  readonly archived: ReadonlyArray<BotSidebarSession>;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -296,14 +329,24 @@ export function botSidebarSessions(
   const openAskJobIds = new Set(
     openAsks(snapshot, botId).flatMap((ask) => (ask.jobId === null ? [] : [ask.jobId])),
   );
+  const jobs = jobsById(snapshot);
+  const archivedJobIds = new Set<string>();
   const decorated = botSessions(snapshot, botId).map((session): BotSidebarSession => {
+    const job = jobs.get(session.jobId);
     const shell = shellFor(shells, session.threadId);
-    const glyph = botSessionGlyph(session, shell, openAskJobIds, now);
+    const glyph = botSessionGlyph(session, job, shell, openAskJobIds, now);
+    // A question on an archived job keeps it in the list.
+    if (job !== undefined && job.archivedAt !== null && !openAskJobIds.has(job.id)) {
+      archivedJobIds.add(job.id);
+    }
     return {
       session,
       glyph,
       finishedAt:
-        glyph === "done" ? (shell?.updatedAt ?? session.cloud?.lastOutputAt ?? null) : null,
+        glyph === "done"
+          ? (shell?.updatedAt ?? session.cloud?.lastOutputAt ?? job?.finishedAt ?? null)
+          : null,
+      jobFinished: job !== undefined && botJobFinished(job),
     };
   });
   const byGlyphThenNewest = (left: BotSidebarSession, right: BotSidebarSession): number =>
@@ -311,14 +354,18 @@ export function botSidebarSessions(
     right.session.createdAt.localeCompare(left.session.createdAt);
   const newestFirst = (left: BotSidebarSession, right: BotSidebarSession): number =>
     (right.finishedAt ?? "").localeCompare(left.finishedAt ?? "");
-  const active = decorated.filter((row) => row.glyph !== "done").sort(byGlyphThenNewest);
-  const finished = decorated.filter((row) => row.glyph === "done").sort(newestFirst);
+  const archived = decorated
+    .filter((row) => archivedJobIds.has(row.session.jobId))
+    .sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
+  const listed = decorated.filter((row) => !archivedJobIds.has(row.session.jobId));
+  const active = listed.filter((row) => row.glyph !== "done").sort(byGlyphThenNewest);
+  const finished = listed.filter((row) => row.glyph === "done").sort(newestFirst);
   const recent = finished.filter((row) => {
     const finishedAt = row.finishedAt === null ? Number.NaN : Date.parse(row.finishedAt);
     return Number.isFinite(finishedAt) && now - finishedAt <= DAY_MS;
   });
   const earlier = finished.filter((row) => !recent.includes(row));
-  return { rows: [...active, ...recent], earlier };
+  return { rows: [...active, ...recent], earlier, archived };
 }
 
 /** Whether the bot or any of its sessions is working, for the sidebar row's glyph. */

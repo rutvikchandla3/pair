@@ -67,6 +67,7 @@ const job = (projectId: ProjectId | null): BotJob => ({
   createdAt: at,
   updatedAt: at,
   finishedAt: null,
+  archivedAt: null,
 });
 
 const project = (id: ProjectId, workspaceRoot: string) =>

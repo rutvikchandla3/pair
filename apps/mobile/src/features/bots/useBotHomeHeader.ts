@@ -23,9 +23,12 @@ export function useBotHomeHeader(
     snapshot === null || bot === null
       ? []
       : snapshot.sessions.filter((session) => session.botId === bot.id);
+  const jobs =
+    snapshot === null || bot === null ? [] : snapshot.jobs.filter((job) => job.botId === bot.id);
   const states = useBotSessionStates({
     environmentId,
     sessions,
+    jobs,
     botName: bot?.name ?? "",
     nowMs,
   });
@@ -33,7 +36,7 @@ export function useBotHomeHeader(
   const status = botStatusLine({
     bot,
     asks: snapshot.asks.filter((ask) => ask.botId === bot.id),
-    jobs: snapshot.jobs.filter((job) => job.botId === bot.id),
+    jobs,
     sessions,
     sessionStates: states,
   });

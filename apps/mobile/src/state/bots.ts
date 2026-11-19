@@ -42,6 +42,7 @@ export function useBotsCommands() {
     answerAsk: useAtomCommand(botsEnvironment.answerAsk, { reportFailure: false }),
     rememberAsk: useAtomCommand(botsEnvironment.rememberAsk, { reportFailure: false }),
     stopJob: useAtomCommand(botsEnvironment.stopJob, { reportFailure: false }),
+    archiveJob: useAtomCommand(botsEnvironment.archiveJob, { reportFailure: false }),
     markSeen: useAtomCommand(botsEnvironment.markSeen, { reportFailure: false }),
   };
 }
