@@ -194,7 +194,6 @@ describe("RunnerForwards", () => {
             Layer.mock(McpSessionRegistry)({
               endpoint: target.endpoint,
               resolve: (token) => Effect.succeed(tokens.get(token)),
-              resolveClient: () => Effect.undefined,
             }),
             Layer.mock(CodexManagedTokenBroker)({
               endpoint: Effect.succeed(`${tmp}/broker.sock`),

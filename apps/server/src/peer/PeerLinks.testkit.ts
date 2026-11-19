@@ -126,7 +126,6 @@ export const servePeer = <E, R>(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             endpoint: "http://127.0.0.1/mcp",
             resolve: () => Effect.undefined,
-            resolveClient: () => Effect.undefined,
           }),
         ),
         Layer.provide(McpOAuth.layerMcpClientAuthenticator),

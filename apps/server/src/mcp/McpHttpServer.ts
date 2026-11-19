@@ -232,7 +232,6 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const token = parseBearerToken(request) ?? "";
     const invocation =
       (yield* registry.resolve(token)) ??
-      (yield* registry.resolveClient(token)) ??
       (Option.isSome(clients) && token.length > 0
         ? yield* clients.value.authenticate(request)
         : undefined);
@@ -912,18 +911,13 @@ const handoffTargetIds = (
   return typeof threadId === "string" ? [threadId] : [];
 };
 
-/**
- * Records every tool call after it returns: analytics without IDs, prompts or free text.
- * Runs detached from the response.
- */
-const withToolRecording =
+/** Tool analytics must never include IDs, prompts or free text. */
+const withToolAnalytics =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
     const server = yield* McpServer.McpServer;
     const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
-    if (Option.isNone(analytics)) {
-      return yield* registration;
-    }
+    if (Option.isNone(analytics)) return yield* registration;
     const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
     const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
     const shellOf = (threadId: string) =>
@@ -968,7 +962,6 @@ const withToolRecording =
               }),
               Effect.orElseSucceed(() => false),
             );
-
     const record =
       /* Request instrumentation already owns the span; keep this helper in that context. */
       Effect.fnUntraced(
@@ -978,7 +971,6 @@ const withToolRecording =
           result: McpSchema.CallToolResult | undefined,
           durationMs: number,
         ) {
-          if (Option.isNone(analytics)) return;
           const handoff =
             HANDOFF_TOOLS.has(tool) ||
             isInputTargetHandoff(tool, args) ||
@@ -1114,7 +1106,7 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
   Layer.effectDiscard(
-    withToolRecording(
+    withToolAnalytics(
       withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
     ),
   ).pipe(
@@ -1131,7 +1123,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolRecording(register)).pipe(
+  Layer.effectDiscard(withToolAnalytics(register)).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
