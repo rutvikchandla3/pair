@@ -36,6 +36,7 @@ import * as PairCloudProjects from "../project/PairCloudProjects.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { readyProvider } from "../provider/ProviderRegistry.testkit.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -127,11 +128,13 @@ const layerTools = Layer.mergeAll(
   Layer.provide(layerLaunches),
   Layer.provide(NodeCrypto.layer),
   Layer.provide(
-    Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed([readyProvider(instanceId)]),
+    }),
   ),
   Layer.provide(
     Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-      list: () => Effect.succeed([]),
+      list: () => Effect.succeed([instanceId]),
     }),
   ),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),

@@ -1,4 +1,5 @@
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -71,6 +72,9 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
+    }),
+    Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+      list: () => Effect.succeed((input.providers ?? []).map((provider) => provider.instanceId)),
     }),
     ServerSettings.layerTest({
       fallbackModelSelection: input.fallbackModel ?? null,
@@ -372,6 +376,38 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
     const offered = yield* launchPi("approval-required");
     expect(offered.launched[0]?.runtimeMode).toBe("approval-required");
   }),
+);
+
+it.effect(
+  "a launch refuses a model selection that can't run here, before creating the thread",
+  () =>
+    Effect.gen(function* () {
+      const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        launched,
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = yield* toolkit
+        .handle("t3_thread_launch", {
+          projectId,
+          title: "Fix",
+          modelSelection: { instanceId: ProviderInstanceId.make("ghost"), model: "claude-opus" },
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(result.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message:
+          'No provider instance "ghost" here. No provider instance here can run threads. No thread was created.',
+      });
+      expect(launched).toHaveLength(0);
+    }),
 );
 
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>

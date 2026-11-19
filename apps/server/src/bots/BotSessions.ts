@@ -10,6 +10,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type EnvironmentId,
   MessageId,
+  type ModelSelection,
   type OrchestrationV2TurnItem,
   type OrchestratorMcpFailure,
   type RuntimeRequestId,
@@ -29,12 +30,15 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { OrchestratorToolkit } from "../mcp/toolkits/orchestrator/tools.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import { ThreadToolkit } from "../mcp/toolkits/thread/tools.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
+import { modelSelectionProblem } from "../provider/modelSelectionCheck.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { BotService } from "./BotService.ts";
 import { type BotCloudTarget, loadBotLinkScope, resolveCloudTarget } from "./botCloud.ts";
 import { sessionTaskFooter } from "./botPersona.ts";
@@ -48,14 +52,22 @@ const isProviderDisabled = Schema.is(
 );
 
 /** What the bot is told when a session can't start, so it can tell the user what to change. */
-const launchFailure = (error: unknown, projectTitle: string, role: BotSessionRole): string => {
+const launchFailure = (
+  error: unknown,
+  projectTitle: string,
+  role: BotSessionRole,
+  chosen: boolean,
+): string => {
   if (!isProviderDisabled(error)) {
     return "Could not start the session.";
   }
   if (error.reason !== undefined) {
     return `Could not start the session: the ${error.instanceId} provider belongs to someone else (${error.reason}).`;
   }
-  return `Could not start the session: the ${error.instanceId} provider is turned off for ${projectTitle}. Tell the user to turn it on in Settings, or to pick another ${role} model under Models… in your menu.`;
+  const instead = chosen
+    ? "or pass another modelSelection"
+    : `or to pick another ${role} model under Models… in your menu`;
+  return `Could not start the session: the ${error.instanceId} provider is turned off for ${projectTitle}. Tell the user to turn it on in Settings, ${instead}.`;
 };
 
 export interface BotSessionStartInput {
@@ -74,7 +86,12 @@ export interface BotSessionStartInput {
         readonly branch?: string | undefined;
       }
     | undefined;
+  /** Replaces the role's model for this session; checked where the session runs. */
+  readonly modelSelection?: ModelSelection | undefined;
 }
+
+const roleModel = (bot: Bot, role: BotSessionRole): ModelSelection =>
+  role === "worker" ? bot.models.worker : bot.models.reviewer;
 
 export interface BotRespondInput {
   readonly threadId: ThreadId;
@@ -156,6 +173,8 @@ const make = Effect.gen(function* () {
   const git = yield* GitWorkflow.GitWorkflowService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const random = yield* SecureRandom.SecureRandom;
+  const providers = yield* ProviderRegistry.ProviderRegistry;
+  const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const forwarding = yield* PeerForwarding.PeerForwarding;
   const links = yield* PeerLinks.PeerLinks;
   const { cloudOnly } = yield* ServerConfig.ServerConfig;
@@ -201,7 +220,7 @@ const make = Effect.gen(function* () {
       .call(scope, ProjectToolkit.tools.t3_thread_launch, target.environmentId, {
         projectId: projectThere,
         title: input.title,
-        modelSelection: input.role === "worker" ? bot.models.worker : bot.models.reviewer,
+        modelSelection: input.modelSelection ?? roleModel(bot, input.role),
         runtimeMode: "full-access",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         workspaceStrategy: {
@@ -227,6 +246,7 @@ const make = Effect.gen(function* () {
       projectId: projectThere,
       takenOver: false,
       createdAt: now,
+      modelSelection: launched.modelSelection,
       cloud: {
         environmentId: target.environmentId,
         label: target.label,
@@ -323,12 +343,26 @@ const make = Effect.gen(function* () {
           : baseRef === null
             ? { type: "root" as const }
             : { type: "worktree" as const, baseRef, startFromOrigin: false };
+      const modelSelection = input.modelSelection ?? roleModel(bot, input.role);
+      // The cloud's own t3_thread_launch checks a cloud session's selection.
+      const problem = modelSelectionProblem({
+        providers: yield* providers.getProviders,
+        adapterInstanceIds: new Set(yield* adapters.list()),
+        selection: modelSelection,
+      });
+      if (problem !== null) {
+        return yield* invalidRequest(
+          input.modelSelection === undefined
+            ? `${problem} Your ${input.role} model can't run here: pass modelSelection, or ask the user to pick another under Models… in your menu.`
+            : problem,
+        );
+      }
       const launched = yield* launches
         .launch({
           commandId: CommandId.make(`server:bot-session:${yield* random.uuidV4()}`),
           projectId: project.id,
           title: input.title,
-          modelSelection: input.role === "worker" ? bot.models.worker : bot.models.reviewer,
+          modelSelection,
           runtimeMode: "full-access",
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           workspaceStrategy,
@@ -342,7 +376,11 @@ const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.tapError((error) => Effect.logWarning("bot session launch failed", { error })),
-          Effect.mapError((error) => unavailable(launchFailure(error, project.title, input.role))),
+          Effect.mapError((error) =>
+            unavailable(
+              launchFailure(error, project.title, input.role, input.modelSelection !== undefined),
+            ),
+          ),
         );
       const session: BotSession = {
         threadId: launched.threadId,
@@ -353,6 +391,7 @@ const make = Effect.gen(function* () {
         projectId: project.id,
         takenOver: false,
         createdAt: DateTime.formatIso(yield* DateTime.now),
+        modelSelection,
       };
       return yield* botService.addSession(session);
     },

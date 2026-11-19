@@ -91,6 +91,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
                 threadId: session.threadId,
                 role: session.role,
                 title: session.title,
+                modelSelection: session.modelSelection ?? null,
                 takenOver: session.takenOver,
               };
               // A cloud session's state is what its follower last read: no call there per brief.
@@ -143,6 +144,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           charter: bot.charter,
           voice: voiceGuide(bot.voice),
           paused: bot.paused,
+          models: { worker: bot.models.worker, reviewer: bot.models.reviewer },
         },
         playbook: {
           instructions: bot.instructions,
@@ -252,6 +254,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           title: params.title,
           task: params.task,
           cloud: params.cloud,
+          modelSelection: params.modelSelection,
         }),
       );
       return {
@@ -265,6 +268,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
         ),
         where: session.cloud?.label ?? HERE,
         ...(session.cloud === undefined ? {} : { environmentId: session.cloud.environmentId }),
+        ...(session.modelSelection === undefined ? {} : { modelSelection: session.modelSelection }),
       };
     }),
   ),

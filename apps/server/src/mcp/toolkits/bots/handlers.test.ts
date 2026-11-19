@@ -61,6 +61,12 @@ const session = (takenOver: boolean): BotSession => ({
   createdAt: "2026-01-01T00:00:00.000Z",
 });
 
+const haOpus = {
+  instanceId: ProviderInstanceId.make("claudeAgent-rutvik-916a"),
+  model: "claude-opus-5-5",
+  options: [{ id: "effort", value: "xhigh" }],
+};
+
 const cloudSession = (state: NonNullable<BotSession["cloud"]>["state"]): BotSession => ({
   ...session(false),
   cloud: {
@@ -287,6 +293,7 @@ describe("bots tools", () => {
     "returns a labelled thread link from bot_start_session, in the cloud's environment",
     () =>
       Effect.gen(function* () {
+        const asked: Array<unknown> = [];
         const start = (started: BotSession) =>
           callTool(
             "bot_start_session",
@@ -296,8 +303,16 @@ describe("bots tools", () => {
               role: "worker",
               title: "Upgrade server",
               task: "Do it",
+              modelSelection: haOpus,
             },
-            { sessions: { start: () => Effect.succeed(started) } },
+            {
+              sessions: {
+                start: (_botId, input) => {
+                  asked.push(input.modelSelection);
+                  return Effect.succeed({ ...started, modelSelection: haOpus });
+                },
+              },
+            },
           );
         expect(yield* start(session(false))).toMatchObject({
           threadId: sessionThreadId,
@@ -308,7 +323,9 @@ describe("bots tools", () => {
           link: "[Upgrade server](t3-thread://v2/environment:cloud/thread:session)",
           where: "Pair Cloud",
           environmentId: "environment:cloud",
+          modelSelection: haOpus,
         });
+        expect(asked).toEqual([haOpus, haOpus]);
       }),
   );
 
@@ -323,6 +340,7 @@ describe("bots tools", () => {
         instructions: "",
         limits: [],
         homeProjectId: null,
+        models: { brain: haOpus, worker: haOpus, reviewer: haOpus },
       };
       const job = {
         id: jobId,
@@ -344,7 +362,7 @@ describe("bots tools", () => {
               Effect.succeed({
                 bots: [bot],
                 jobs: [job],
-                sessions: [cloudSession("unreachable")],
+                sessions: [{ ...cloudSession("unreachable"), modelSelection: haOpus }],
                 asks: [],
                 notes: [],
                 events: [],
@@ -360,10 +378,12 @@ describe("bots tools", () => {
         },
       );
       expect(result).toMatchObject({
+        bot: { models: { worker: haOpus, reviewer: haOpus } },
         jobs: [
           {
             sessions: [
               {
+                modelSelection: haOpus,
                 where: "Pair Cloud",
                 environmentId: "environment:cloud",
                 reachable: false,
