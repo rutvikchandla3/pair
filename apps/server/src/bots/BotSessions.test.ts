@@ -116,7 +116,7 @@ const sessionsHarness = (input: {
   readonly providers?: ReadonlyArray<ServerProvider>;
   /** What a re-probe finds; default: the same providers. */
   readonly refreshedProviders?: ReadonlyArray<ServerProvider>;
-  /** This server's launch fails with this. */
+  /** The local launch fails with this. */
   readonly launchFails?: ThreadManagementService.ThreadManagementProviderInstanceDisabledError;
   /** The cloud's t3_thread_launch fails with this. */
   readonly cloudRefuses?: OrchestratorMcpFailure;
@@ -153,8 +153,8 @@ const sessionsHarness = (input: {
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (request) => {
-            launches.push(request);
             if (input.launchFails !== undefined) return Effect.fail(input.launchFails);
+            launches.push(request);
             return Effect.succeed({
               threadId: ThreadId.make("thread:session"),
               projection: {} as ThreadLaunch.ThreadLaunchResult["projection"],

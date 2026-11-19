@@ -7,7 +7,10 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
-import { ThreadManagementProviderInstanceDisabledError } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  providerOwnedReason,
+  ThreadManagementProviderInstanceDisabledError,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
 import { ProviderCloudLocalOnlyError, ProviderCloudUnsupportedError } from "./Errors.ts";
 import { isModelSelectionRefusal, modelSelectionProblem } from "./modelSelectionCheck.ts";
@@ -177,8 +180,7 @@ describe("modelSelectionProblem", () => {
       new ThreadManagementProviderInstanceDisabledError({
         projectId: ProjectId.make("project:there"),
         instanceId: ProviderInstanceId.make("claudeAgent-piyush-eff7"),
-        // As a team server words another member's instance.
-        reason: "Piyush's Claude belongs to Piyush. Pick another provider.",
+        reason: providerOwnedReason("Piyush's Claude", "Piyush"),
       }).message,
     ];
     for (const refusal of refusals) {

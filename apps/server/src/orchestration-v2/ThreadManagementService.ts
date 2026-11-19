@@ -386,6 +386,10 @@ export class ThreadManagementDurableRunProjectionError extends Schema.TaggedErro
   }
 }
 
+/** Bots' `isModelSelectionRefusal` matches this wording, as older servers send it. */
+export const providerOwnedReason = (instance: string, owner: string): string =>
+  `${instance} belongs to ${owner}. Pick another provider.`;
+
 export class ThreadManagementProviderInstanceDisabledError extends Schema.TaggedError<ThreadManagementProviderInstanceDisabledError>()(
   "ThreadManagementProviderInstanceDisabledError",
   {
@@ -846,9 +850,10 @@ const make = Effect.gen(function* () {
     return yield* new ThreadManagementProviderInstanceDisabledError({
       projectId: target.projectId,
       instanceId: input.instanceId,
-      reason: `${instance?.displayName ?? input.instanceId} belongs to ${
-        owner?.name ?? ownerMemberId
-      }. Pick another provider.`,
+      reason: providerOwnedReason(
+        instance?.displayName ?? input.instanceId,
+        owner?.name ?? ownerMemberId,
+      ),
     });
   });
 
