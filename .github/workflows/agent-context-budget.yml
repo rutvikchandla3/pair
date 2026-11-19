@@ -29,7 +29,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           # Pin the merge commit and compare against its first parent, the base branch tip, so
-          # the diff is only this PR's change, whatever branch it targets.
+          # the diff is only this PR's change, whatever branch it targets. Not the merge ref:
+          # it can move after the event is queued.
           ref: ${{ github.sha }}
           fetch-depth: 2
           sparse-checkout: apps/server/src/provider/agentContextBudget.json
@@ -37,7 +38,9 @@ jobs:
 
       - name: Compare with base branch
         run: |
-          if ! git cat-file -e "HEAD^1:$BUDGET" 2>/dev/null; then
+          # Trees are local; a blob that fails to fetch must fail the step, not read as absent.
+          listed=$(git ls-tree --name-only HEAD^1 -- "$BUDGET")
+          if [ -z "$listed" ]; then
             echo "$BASE_REF has no agent context budget yet."
             exit 0
           fi
