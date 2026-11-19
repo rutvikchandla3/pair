@@ -40,6 +40,7 @@ function job(overrides: Partial<BotJob> & { number: number }): BotJob {
     createdAt: "2026-11-18T09:00:00.000Z",
     updatedAt: "2026-11-18T09:00:00.000Z",
     finishedAt: null,
+    archivedAt: null,
     ...overrides,
   };
 }
@@ -99,6 +100,7 @@ function state(overrides: Partial<BotSessionState>): BotSessionState {
 const stateFor = (overrides: Parameters<typeof botSessionState>[0]["shell"], takenOver = false) =>
   botSessionState({
     session: session(BotJobIdSchema.make("job:1"), { takenOver }),
+    job: undefined,
     shell: overrides,
     botName: "Atlas",
     nowMs,
@@ -112,6 +114,22 @@ describe("botSessionState", () => {
       trouble: true,
       updatedAt: null,
     });
+  });
+
+  it("reads a finished job's state when its archived thread has no shell", () => {
+    const finishedAt = "2026-11-18T11:00:00.000Z";
+    const read = (status: BotJob["status"]) =>
+      botSessionState({
+        session: session(BotJobIdSchema.make("job:1")),
+        job: job({ number: 1, status, finishedAt }),
+        shell: null,
+        botName: "Atlas",
+        nowMs,
+      });
+    expect(read("done")).toEqual(state({ kind: "done", updatedAt: finishedAt }));
+    expect(read("stopped")).toEqual(
+      state({ kind: "stopped", label: "Implement stopped", trouble: true, updatedAt: finishedAt }),
+    );
   });
 
   it("an unloaded shell is working with nothing to say", () => {
@@ -222,6 +240,7 @@ describe("botStatusLine", () => {
           state({ kind: "working" }),
           state({ kind: "waiting" }),
           state({ kind: "done" }),
+          state({ kind: "stopped" }),
         ],
       }),
     ).toEqual({ text: "2 sessions working", tone: "muted" });
@@ -245,7 +264,7 @@ describe("botSessionRows", () => {
   const otherJobId = BotJobIdSchema.make("job:other");
   const openAsk = ask({ jobId: askedJobId });
 
-  it("orders needs-you, failed, working, then finished newest first and drops old ones", () => {
+  it("orders needs-you, failed, working, then finished newest first, older ones earlier", () => {
     const sessions = [
       session(otherJobId, { title: "Finished older", createdAt: "2026-11-18T07:00:00.000Z" }),
       session(otherJobId, { title: "Working" }),
@@ -253,6 +272,7 @@ describe("botSessionRows", () => {
       session(askedJobId, { title: "Needs you" }),
       session(otherJobId, { title: "Finished newer", createdAt: "2026-11-18T08:00:00.000Z" }),
       session(otherJobId, { title: "Too old" }),
+      session(otherJobId, { title: "Stopped" }),
     ];
     const states = [
       state({ kind: "done", updatedAt: "2026-11-18T11:00:00.000Z" }),
@@ -261,28 +281,48 @@ describe("botSessionRows", () => {
       state({ kind: "waiting" }),
       state({ kind: "done", updatedAt: "2026-11-18T11:30:00.000Z" }),
       state({ kind: "done", updatedAt: "2026-11-10T11:00:00.000Z" }),
+      state({ kind: "stopped" }),
     ];
-    expect(
-      botSessionRows({ sessions, states, asks: [openAsk], nowMs }).map(
-        (row) => `${row.session.title}:${row.bucket}`,
-      ),
-    ).toEqual([
+    const list = botSessionRows({ sessions, states, jobs: [], asks: [openAsk], nowMs });
+    expect(list.rows.map((row) => `${row.session.title}:${row.bucket}`)).toEqual([
       "Needs you:needs-you",
       "Failed:failed",
+      "Stopped:failed",
       "Working:working",
       "Finished newer:finished",
       "Finished older:finished",
     ]);
+    expect(list.earlier.map((row) => row.session.title)).toEqual(["Too old"]);
   });
 
   it("does not mark a finished session as needs-you", () => {
-    const rows = botSessionRows({
+    const list = botSessionRows({
       sessions: [session(askedJobId, { title: "Finished" })],
       states: [state({ kind: "done", updatedAt: "2026-11-18T11:00:00.000Z" })],
+      jobs: [],
       asks: [openAsk],
       nowMs,
     });
-    expect(rows.map((row) => row.bucket)).toEqual(["finished"]);
+    expect(list.rows.map((row) => row.bucket)).toEqual(["finished"]);
+  });
+
+  it("sets an archived job apart unless it has an open question", () => {
+    const archivedAt = "2026-11-18T11:00:00.000Z";
+    const done = state({ kind: "done", updatedAt: archivedAt });
+    const list = botSessionRows({
+      sessions: [session(askedJobId, { title: "Asked" }), session(otherJobId, { title: "Gone" })],
+      states: [done, done],
+      jobs: [
+        job({ number: 1, id: askedJobId, status: "done", archivedAt }),
+        job({ number: 2, id: otherJobId, status: "done", archivedAt }),
+      ],
+      asks: [openAsk],
+      nowMs,
+    });
+    expect(list.rows.map((row) => row.session.title)).toEqual(["Asked"]);
+    expect(list.archived.map((row) => [row.session.title, row.jobFinished])).toEqual([
+      ["Gone", true],
+    ]);
   });
 });
 

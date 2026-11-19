@@ -3,6 +3,7 @@ import {
   type Bot,
   type BotAsk,
   type BotJob,
+  botJobFinished,
   type BotSession,
 } from "@t3tools/contracts";
 
@@ -62,14 +63,29 @@ function sessionState(
   return { kind, label, trouble, updatedAt };
 }
 
-/** One session's state from its thread shell; taken over wins over everything. */
+/**
+ * One session's state. A finished job's state wins, since an archived session thread has no shell;
+ * otherwise it comes from the shell, and taken over wins over everything.
+ */
 export function botSessionState(input: {
   readonly session: BotSession;
+  readonly job: BotJob | undefined;
   readonly shell: BotSessionShell | null;
   readonly botName: string;
   readonly nowMs: number;
 }): BotSessionState {
-  const { session, shell, botName, nowMs } = input;
+  const { session, job, shell, botName, nowMs } = input;
+  if (job?.status === "done") {
+    return sessionState("done", "", false, shell?.updatedAt ?? job.finishedAt);
+  }
+  if (job?.status === "stopped") {
+    return sessionState(
+      "stopped",
+      `${session.title} stopped`,
+      true,
+      shell?.updatedAt ?? job.finishedAt,
+    );
+  }
   if (session.takenOver) return sessionState("taken-over", "You took over", true, null);
   if (shell === null) return sessionState("working", "", false, null);
   const resetAt = shell.usageLimitResetAt;
@@ -121,9 +137,9 @@ export interface BotStatusLine {
   readonly tone: BotStatusTone;
 }
 
-/** A session the bot is working on: neither finished nor failed. */
+/** A session the bot is working on: neither finished, failed nor stopped. */
 function isWorkingState(state: BotSessionState): boolean {
-  return state.kind !== "done" && state.kind !== "failed";
+  return state.kind !== "done" && state.kind !== "failed" && state.kind !== "stopped";
 }
 
 /** The newest session of the ask's job, else the job's title; null when the ask names neither. */
@@ -182,44 +198,72 @@ export interface BotSessionRow {
   readonly session: BotSession;
   readonly state: BotSessionState;
   readonly bucket: BotSessionBucket;
+  /** The session's job is done or stopped, so the row offers Archive job. */
+  readonly jobFinished: boolean;
 }
 
-function sessionBucket(
-  hasOpenAsk: boolean,
-  state: BotSessionState,
-  nowMs: number,
-): BotSessionBucket | null {
-  if (state.kind === "done") {
-    const updatedAt = state.updatedAt === null ? Number.NaN : Date.parse(state.updatedAt);
-    return Number.isFinite(updatedAt) && nowMs - updatedAt <= DAY_MS ? "finished" : null;
-  }
+export interface BotSessionRows {
+  /** Needs you, failed, working, then finished in the last day, newest first. */
+  readonly rows: ReadonlyArray<BotSessionRow>;
+  /** Finished longer ago than a day, newest first; behind "N earlier". */
+  readonly earlier: ReadonlyArray<BotSessionRow>;
+  /** Sessions of archived jobs; after the earlier ones, behind the same disclosure. */
+  readonly archived: ReadonlyArray<BotSessionRow>;
+}
+
+function sessionBucket(hasOpenAsk: boolean, state: BotSessionState): BotSessionBucket {
+  if (state.kind === "done") return "finished";
   if (hasOpenAsk) return "needs-you";
-  if (state.kind === "failed") return "failed";
+  if (state.kind === "failed" || state.kind === "stopped") return "failed";
   return "working";
 }
 
-/** The sessions nested under a bot, ordered, with finished rows older than a day dropped. */
+function finishedInLastDay(row: BotSessionRow, nowMs: number): boolean {
+  const updatedAt = row.state.updatedAt === null ? Number.NaN : Date.parse(row.state.updatedAt);
+  return Number.isFinite(updatedAt) && nowMs - updatedAt <= DAY_MS;
+}
+
+/** The sessions nested under a bot, ordered, with older finished and archived rows set apart. */
 export function botSessionRows(input: {
   readonly sessions: ReadonlyArray<BotSession>;
   readonly states: ReadonlyArray<BotSessionState>;
+  readonly jobs: ReadonlyArray<BotJob>;
   readonly asks: ReadonlyArray<BotAsk>;
   readonly nowMs: number;
-}): ReadonlyArray<BotSessionRow> {
-  const rows: BotSessionRow[] = [];
+}): BotSessionRows {
+  const jobs = new Map(input.jobs.map((job) => [job.id, job]));
+  const listed: BotSessionRow[] = [];
+  const archived: BotSessionRow[] = [];
   input.sessions.forEach((session, index) => {
     const state = input.states[index];
     if (state === undefined) return;
+    const job = jobs.get(session.jobId);
     const hasOpenAsk = input.asks.some(
       (ask) => ask.status === "open" && ask.jobId === session.jobId,
     );
-    const bucket = sessionBucket(hasOpenAsk, state, input.nowMs);
-    if (bucket === null) return;
-    rows.push({ session, state, bucket });
+    const row: BotSessionRow = {
+      session,
+      state,
+      bucket: sessionBucket(hasOpenAsk, state),
+      jobFinished: job !== undefined && botJobFinished(job),
+    };
+    // A question on an archived job keeps it in the list.
+    if (job !== undefined && job.archivedAt !== null && !hasOpenAsk) archived.push(row);
+    else listed.push(row);
   });
-  return rows.sort((left, right) => {
+  const ordered = listed.sort((left, right) => {
     const rank = BUCKET_RANK[left.bucket] - BUCKET_RANK[right.bucket];
     if (rank !== 0) return rank;
     if (left.bucket !== "finished") return 0;
     return (right.state.updatedAt ?? "").localeCompare(left.state.updatedAt ?? "");
   });
+  return {
+    rows: ordered.filter((row) => row.bucket !== "finished" || finishedInLastDay(row, input.nowMs)),
+    earlier: ordered.filter(
+      (row) => row.bucket === "finished" && !finishedInLastDay(row, input.nowMs),
+    ),
+    archived: archived.sort((left, right) =>
+      right.session.createdAt.localeCompare(left.session.createdAt),
+    ),
+  };
 }

@@ -40,7 +40,13 @@ import { BotAvatar } from "./BotAvatar";
 import { openBotDialog } from "./botDialogStore";
 import { BotMemoryPanel } from "./BotMemoryPanel";
 import { BotSettingsDialog } from "./BotSettingsDialog";
-import { botSessions, botStatusLine, sessionState, type ShellLookup } from "./bots.logic";
+import {
+  botSessions,
+  botStatusLine,
+  jobSessionState,
+  jobsById,
+  type ShellLookup,
+} from "./bots.logic";
 
 const EMBEDDED_PANEL: SideChatParentPanel = {
   openToolDiff: () => {},
@@ -111,8 +117,14 @@ export function BotPage(props: {
 
   const status = botStatusLine(snapshot, bot, shellMap, now);
   const sessions = botSessions(snapshot, bot.id);
+  const jobs = jobsById(snapshot);
   const runningSessions = sessions.filter((session) => {
-    const state = sessionState(session, shellMap.get(session.threadId) ?? null, now);
+    const state = jobSessionState(
+      session,
+      jobs.get(session.jobId),
+      shellMap.get(session.threadId) ?? null,
+      now,
+    );
     return state.kind === "working" || state.kind === "quiet";
   }).length;
 

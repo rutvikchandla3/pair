@@ -111,6 +111,7 @@ import {
   BotJob,
   BotNote,
   BotsAnswerAskInput,
+  BotsArchiveJobInput,
   BotsAskInput,
   BotsBotInput,
   BotsCorrectDecisionInput,
@@ -694,6 +695,7 @@ export const WS_METHODS = {
   botsCreateJob: "bots.createJob",
   botsStopJob: "bots.stopJob",
   botsReopenJob: "bots.reopenJob",
+  botsArchiveJob: "bots.archiveJob",
   botsAnswerAsk: "bots.answerAsk",
   botsRememberAsk: "bots.rememberAsk",
   botsCorrectDecision: "bots.correctDecision",
@@ -1232,6 +1234,12 @@ const WsBotsStopJobRpc = Rpc.make(WS_METHODS.botsStopJob, {
 
 const WsBotsReopenJobRpc = Rpc.make(WS_METHODS.botsReopenJob, {
   payload: BotsJobInput,
+  success: BotJob,
+  error: botsRpcError,
+});
+
+const WsBotsArchiveJobRpc = Rpc.make(WS_METHODS.botsArchiveJob, {
+  payload: BotsArchiveJobInput,
   success: BotJob,
   error: botsRpcError,
 });
@@ -2946,6 +2954,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsBotsCreateJobRpc,
   WsBotsStopJobRpc,
   WsBotsReopenJobRpc,
+  WsBotsArchiveJobRpc,
   WsBotsAnswerAskRpc,
   WsBotsRememberAskRpc,
   WsBotsCorrectDecisionRpc,

@@ -77,6 +77,7 @@ function job(overrides: Partial<BotJob> = {}): BotJob {
     createdAt: new Date(NOW).toISOString(),
     updatedAt: new Date(NOW).toISOString(),
     finishedAt: null,
+    archivedAt: null,
     ...overrides,
   };
 }
@@ -301,7 +302,50 @@ describe("botSidebarSessions", () => {
     const shells = new Map([
       [ThreadId.make("done"), shell({ runtime: { status: "completed" } as never })],
     ]);
-    expect(botSessionGlyph(done, shells.get(done.threadId), new Set([JOB]), NOW)).toBe("done");
+    expect(botSessionGlyph(done, job(), shells.get(done.threadId), new Set([JOB]), NOW)).toBe(
+      "done",
+    );
+  });
+
+  it("reads a finished job's sessions from the job when their threads are archived", () => {
+    const finishedAt = new Date(NOW - 60 * 60_000).toISOString();
+    const stoppedJob = BotJobId.make("job-stopped");
+    const data = snapshot({
+      jobs: [job({ status: "done", finishedAt }), job({ id: stoppedJob, status: "stopped" })],
+      sessions: [
+        session({ threadId: ThreadId.make("done") }),
+        session({ threadId: ThreadId.make("stopped"), jobId: stoppedJob }),
+      ],
+    });
+    // Archived threads leave the client's shells, so neither session has one.
+    const list = botSidebarSessions(data, BOT, new Map(), NOW);
+    expect(list.rows.map((row) => [row.session.threadId, row.glyph, row.finishedAt])).toEqual([
+      ["stopped", "failed", null],
+      ["done", "done", finishedAt],
+    ]);
+    expect(botWorking(data, bot(), new Map(), NOW)).toBe(false);
+    expect(botStatusLine(data, bot(), new Map(), NOW).label).toBe("Nothing running");
+  });
+
+  it("moves an archived job behind the disclosure unless it has an open question", () => {
+    const asked = BotJobId.make("job-asked");
+    const archivedAt = new Date(NOW).toISOString();
+    const data = snapshot({
+      jobs: [
+        job({ status: "done", finishedAt: archivedAt, archivedAt }),
+        job({ id: asked, status: "done", finishedAt: archivedAt, archivedAt }),
+      ],
+      sessions: [
+        session({ threadId: ThreadId.make("archived") }),
+        session({ threadId: ThreadId.make("asked"), jobId: asked }),
+      ],
+      asks: [ask({ jobId: asked })],
+    });
+    const list = botSidebarSessions(data, BOT, new Map(), NOW);
+    expect(list.rows.map((row) => row.session.threadId)).toEqual(["asked"]);
+    expect(list.archived.map((row) => [row.session.threadId, row.jobFinished])).toEqual([
+      ["archived", true],
+    ]);
   });
 });
 

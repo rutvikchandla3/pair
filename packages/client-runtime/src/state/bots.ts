@@ -57,6 +57,10 @@ export function createBotsEnvironmentAtoms<R, E>(
       label: "environment-data:bots:reopen-job",
       tag: WS_METHODS.botsReopenJob,
     }),
+    archiveJob: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:bots:archive-job",
+      tag: WS_METHODS.botsArchiveJob,
+    }),
     answerAsk: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:bots:answer-ask",
       tag: WS_METHODS.botsAnswerAsk,

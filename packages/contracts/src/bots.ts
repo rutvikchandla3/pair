@@ -192,8 +192,14 @@ export const BotJob = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
+  /** Hidden from the bot's list until unarchived. Only a done or stopped job is archived. */
+  archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });
 export type BotJob = typeof BotJob.Type;
+
+/** Whether a job is finished, so it shows its own state and may be archived. */
+export const botJobFinished = (job: Pick<BotJob, "status">): boolean =>
+  job.status === "done" || job.status === "stopped";
 
 export const BotSessionRole = Schema.Literals(["worker", "reviewer"]);
 export type BotSessionRole = typeof BotSessionRole.Type;
@@ -367,6 +373,9 @@ export type BotsCreateJobInput = typeof BotsCreateJobInput.Type;
 
 export const BotsJobInput = Schema.Struct({ jobId: BotJobId });
 export type BotsJobInput = typeof BotsJobInput.Type;
+
+export const BotsArchiveJobInput = Schema.Struct({ jobId: BotJobId, archived: Schema.Boolean });
+export type BotsArchiveJobInput = typeof BotsArchiveJobInput.Type;
 
 export const BotsAnswerAskInput = Schema.Struct({
   askId: BotAskId,

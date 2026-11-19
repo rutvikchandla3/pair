@@ -1,12 +1,16 @@
 import type { Bot, BotsSnapshot, EnvironmentId } from "@t3tools/contracts";
 import { Link, useParams } from "@tanstack/react-router";
-import { ChevronRightIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { toastCommandFailure } from "../team/toastCommandFailure";
 import { useQuietThreadShells } from "../../state/entities";
-import { useBotsNow, useBotsSnapshot } from "../../state/bots";
+import { botsEnvironment, useBotsNow, useBotsSnapshot } from "../../state/bots";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -60,24 +64,81 @@ function SessionRow(props: {
   readonly environmentId: EnvironmentId;
   readonly row: BotSidebarSession;
   readonly selectedThreadId: string | null;
+  readonly archived?: boolean;
 }) {
   const { session } = props.row;
+  const archiveJob = useAtomCommand(botsEnvironment.archiveJob);
+  const setArchived = async (archived: boolean) => {
+    const result = await archiveJob({
+      environmentId: props.environmentId,
+      input: { jobId: session.jobId, archived },
+    });
+    toastCommandFailure(
+      archived ? "Could not archive the job" : "Could not unarchive the job",
+      result,
+    );
+    if (!archived || result._tag !== "Success") return;
+    const id = toastManager.add({
+      type: "success",
+      title: "Job archived",
+      actionProps: {
+        children: "Undo",
+        onClick: () => {
+          toastManager.close(id);
+          void setArchived(false);
+        },
+      },
+    });
+  };
+  const action = props.archived ? "Unarchive job" : props.row.jobFinished ? "Archive job" : null;
   return (
-    <Link
-      to="/$environmentId/$threadId"
-      params={{ environmentId: props.environmentId, threadId: session.threadId }}
-      aria-current={props.selectedThreadId === session.threadId ? "page" : undefined}
-      className={cn(
-        sessionRowClass,
-        props.selectedThreadId === session.threadId && "bg-sidebar-row-active",
+    <div className="group/bot-session relative">
+      <Link
+        to="/$environmentId/$threadId"
+        params={{ environmentId: props.environmentId, threadId: session.threadId }}
+        aria-current={props.selectedThreadId === session.threadId ? "page" : undefined}
+        className={cn(
+          sessionRowClass,
+          props.selectedThreadId === session.threadId && "bg-sidebar-row-active",
+          props.archived && "text-sidebar-muted-foreground",
+        )}
+      >
+        <span className="inline-flex w-3.5 shrink-0 justify-center">
+          <BotStateGlyph glyph={props.row.glyph} className="size-3.5" />
+        </span>
+        <span className="min-w-0 flex-1 truncate">{session.title}</span>
+        {props.row.finishedAt === null ? null : (
+          <span
+            className={cn(
+              "inline-flex",
+              action !== null &&
+                "group-hover/bot-session:invisible group-has-[button:focus-visible]/bot-session:invisible",
+            )}
+          >
+            <SessionTime timestamp={props.row.finishedAt} />
+          </span>
+        )}
+      </Link>
+      {action === null ? null : (
+        <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity group-hover/bot-session:pointer-events-auto group-hover/bot-session:opacity-100 has-[button:focus-visible]:pointer-events-auto has-[button:focus-visible]:opacity-100">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  aria-label={`${action} ${session.title}`}
+                  onClick={() => void setArchived(!props.archived)}
+                />
+              }
+            >
+              {props.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{action}</TooltipPopup>
+          </Tooltip>
+        </div>
       )}
-    >
-      <span className="inline-flex w-3.5 shrink-0 justify-center">
-        <BotStateGlyph glyph={props.row.glyph} className="size-3.5" />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{session.title}</span>
-      {props.row.finishedAt === null ? null : <SessionTime timestamp={props.row.finishedAt} />}
-    </Link>
+    </div>
   );
 }
 
@@ -90,15 +151,24 @@ function BotGroup(props: {
   readonly selectedBotId: string | null;
   readonly selectedThreadId: string | null;
 }) {
-  const [showEarlier, setShowEarlier] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [revealedThreadId, setRevealedThreadId] = useState<string | null>(null);
   const askCount = openAsks(props.snapshot, props.bot.id).length;
   const working = botWorking(props.snapshot, props.bot, props.shells, props.now);
-  const { rows, earlier } = botSidebarSessions(
+  const { rows, earlier, archived } = botSidebarSessions(
     props.snapshot,
     props.bot.id,
     props.shells,
     props.now,
   );
+  // Opening a row that sits behind the disclosure expands it once, so the row keeps its highlight.
+  const selectedHidden = [...earlier, ...archived].some(
+    (row) => row.session.threadId === props.selectedThreadId,
+  );
+  if (selectedHidden && revealedThreadId !== props.selectedThreadId) {
+    setRevealedThreadId(props.selectedThreadId);
+    setExpanded(true);
+  }
   const selected = props.selectedBotId === props.bot.id;
   return (
     <>
@@ -131,28 +201,50 @@ function BotGroup(props: {
           selectedThreadId={props.selectedThreadId}
         />
       ))}
-      {earlier.length === 0 ? null : (
+      {earlier.length === 0 && archived.length === 0 ? null : (
         <>
-          {showEarlier
-            ? earlier.map((row) => (
+          {expanded ? (
+            <>
+              {earlier.map((row) => (
                 <SessionRow
                   key={row.session.threadId}
                   environmentId={props.environmentId}
                   row={row}
                   selectedThreadId={props.selectedThreadId}
                 />
-              ))
-            : null}
+              ))}
+              {earlier.length > 0 && archived.length > 0 ? (
+                <div className="pe-2 ps-7.5 pt-2 pb-1 text-sidebar-muted-foreground text-xs">
+                  Archived
+                </div>
+              ) : null}
+              {archived.map((row) => (
+                <SessionRow
+                  key={row.session.threadId}
+                  environmentId={props.environmentId}
+                  row={row}
+                  selectedThreadId={props.selectedThreadId}
+                  archived
+                />
+              ))}
+            </>
+          ) : null}
           <button
             type="button"
-            aria-expanded={showEarlier}
+            aria-expanded={expanded}
             className={cn(rowClass, "ps-7.5 text-sidebar-muted-foreground")}
-            onClick={() => setShowEarlier(!showEarlier)}
+            onClick={() => setExpanded(!expanded)}
           >
             <ChevronRightIcon
-              className={cn("size-3 shrink-0 transition-transform", showEarlier && "rotate-90")}
+              className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-90")}
             />
-            {showEarlier ? "Hide earlier" : `${earlier.length} earlier`}
+            {earlier.length > 0
+              ? expanded
+                ? "Hide earlier"
+                : `${earlier.length} earlier`
+              : expanded
+                ? "Hide archived"
+                : "Archived"}
           </button>
         </>
       )}

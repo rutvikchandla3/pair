@@ -112,6 +112,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.botsCreateJob]: AuthOrchestrationOperateScope,
   [WS_METHODS.botsStopJob]: AuthOrchestrationOperateScope,
   [WS_METHODS.botsReopenJob]: AuthOrchestrationOperateScope,
+  [WS_METHODS.botsArchiveJob]: AuthOrchestrationOperateScope,
   [WS_METHODS.botsAnswerAsk]: AuthOrchestrationOperateScope,
   [WS_METHODS.botsRememberAsk]: AuthOrchestrationOperateScope,
   [WS_METHODS.botsCorrectDecision]: AuthOrchestrationOperateScope,

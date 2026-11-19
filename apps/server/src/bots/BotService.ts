@@ -22,9 +22,11 @@ import {
   BotNote,
   type BotNoteId,
   BotNoteId as BotNoteIdValue,
+  botJobFinished,
   BotSession,
   BotsError,
   type BotsAnswerAskInput,
+  type BotsArchiveJobInput,
   type BotsAskInput,
   type BotsBotInput,
   type BotsCorrectDecisionInput,
@@ -88,6 +90,14 @@ const WORKER_MODEL: ModelSelection = {
 
 const notFound = (message: string) => new BotsError({ reason: "not-found", message });
 const invalidRequest = (message: string) => new BotsError({ reason: "invalid-request", message });
+/** The job's `archivedAt` after an archive request; only a finished job can be archived. */
+const archivedAtFor = (job: BotJob, archived: boolean | undefined, at: string) => {
+  if (archived === undefined) return Effect.succeed(job.archivedAt);
+  if (!archived) return Effect.succeed(null);
+  if (!botJobFinished(job))
+    return Effect.fail(invalidRequest("Only a finished job can be archived."));
+  return Effect.succeed(job.archivedAt ?? at);
+};
 const unavailable = (message: string) => new BotsError({ reason: "unavailable", message });
 
 const newBotId = (random: SecureRandom.SecureRandom["Service"]) =>
@@ -145,6 +155,10 @@ export class BotService extends Context.Service<
       caller: BotCaller,
       input: BotsJobInput,
     ) => Effect.Effect<BotJob, BotsError>;
+    readonly archiveJob: (
+      caller: BotCaller,
+      input: BotsArchiveJobInput,
+    ) => Effect.Effect<BotJob, BotsError>;
     readonly answerAsk: (
       caller: BotCaller,
       input: BotsAnswerAskInput,
@@ -201,6 +215,7 @@ export class BotService extends Context.Service<
         readonly status?: BotJobStatus;
         readonly report?: BotJobReport | null;
         readonly pullRequests?: BotJob["pullRequests"];
+        readonly archived?: boolean;
       },
     ) => Effect.Effect<BotJob, BotsError>;
     readonly addSession: (session: BotSession) => Effect.Effect<BotSession, BotsError>;
@@ -632,6 +647,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
       createdAt: at,
       updatedAt: at,
       finishedAt: null,
+      archivedAt: null,
     };
     yield* db(store.upsertJob(job));
     yield* db(store.upsertBot({ ...bot, nextJobNumber: number + 1, updatedAt: at }));
@@ -728,6 +744,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             ...job,
             status: "working",
             finishedAt: null,
+            archivedAt: null,
             report: null,
             updatedAt: at,
           };
@@ -744,6 +761,25 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             label: "Job reopened",
             text: `The user reopened the job "${job.title}" (jobId ${job.id}). Pick it up where it stopped; call bot_brief.`,
           });
+          return updated;
+        }),
+      );
+    },
+  );
+
+  const archiveJob: BotService["Service"]["archiveJob"] = Effect.fn("BotService.archiveJob")(
+    function* (caller, input) {
+      return yield* withLock(
+        Effect.gen(function* () {
+          const job = Option.getOrNull(yield* db(store.getJob(input.jobId)));
+          if (job === null) return yield* notFound("That job is gone.");
+          const bot = yield* requireBot(caller, job.botId);
+          const at = DateTime.formatIso(yield* DateTime.now);
+          const archivedAt = yield* archivedAtFor(job, input.archived, at);
+          if (archivedAt === job.archivedAt) return job;
+          const updated: BotJob = { ...job, archivedAt, updatedAt: at };
+          yield* db(store.upsertJob(updated));
+          yield* touch(bot.ownerId);
           return updated;
         }),
       );
@@ -1041,7 +1077,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           const job = Option.getOrNull(yield* db(store.getJob(jobIdValue)));
           if (job === null || job.botId !== bot.id) return yield* notFound("That job is gone.");
           const at = DateTime.formatIso(yield* DateTime.now);
-          const updated: BotJob = {
+          const patched: BotJob = {
             ...job,
             ...(patch.title === undefined ? {} : { title: patch.title }),
             ...(patch.headline === undefined ? {} : { headline: patch.headline }),
@@ -1051,6 +1087,10 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             ...(patch.headline === undefined ? {} : { headlineAt: at }),
             ...(patch.status === "done" ? { finishedAt: at } : {}),
             updatedAt: at,
+          };
+          const updated: BotJob = {
+            ...patched,
+            archivedAt: yield* archivedAtFor(patched, patch.archived, at),
           };
           yield* db(store.upsertJob(updated));
           if (patch.status === "done") {
@@ -1223,6 +1263,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     createJobForBot,
     stopJob,
     reopenJob,
+    archiveJob,
     answerAsk,
     rememberAsk,
     correctDecision,

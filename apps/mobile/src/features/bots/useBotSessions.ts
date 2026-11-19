@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { BotSession, EnvironmentId } from "@t3tools/contracts";
+import type { BotJob, BotSession, EnvironmentId } from "@t3tools/contracts";
 import { EnvironmentId as EnvironmentIdSchema, ThreadId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { Atom } from "effect/reactivity";
@@ -52,13 +52,16 @@ function useBotSessionShells(
 export function useBotSessionStates(input: {
   readonly environmentId: EnvironmentId | null;
   readonly sessions: ReadonlyArray<BotSession>;
+  readonly jobs: ReadonlyArray<BotJob>;
   readonly botName: string;
   readonly nowMs: number;
 }): ReadonlyArray<BotSessionState> {
   const shells = useBotSessionShells(input.environmentId, input.sessions);
+  const jobs = new Map(input.jobs.map((job) => [job.id, job]));
   return input.sessions.map((session, index) =>
     botSessionState({
       session,
+      job: jobs.get(session.jobId),
       shell: shells[index] ?? null,
       botName: input.botName,
       nowMs: input.nowMs,
