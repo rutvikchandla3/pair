@@ -488,9 +488,12 @@ describe("BotSessions cloud sessions", () => {
           assert.strictEqual(error.reason, "invalid-request");
           assert.include(error.message, `on Cloud ${cloudId}: ${refusal}`);
           assert.strictEqual(
-            error.message.includes("That is your worker model"),
+            error.message.includes(
+              `That is your worker model, from this machine: pass modelSelection with one that runs there (orchestrator_capabilities with environmentId ${cloudId} lists them).`,
+            ),
             modelSelection === undefined,
           );
+          assert.notInclude(error.message, "Models…");
         }
       }
       // Only a failure to answer may pass with time; any other code is a refusal to act on.

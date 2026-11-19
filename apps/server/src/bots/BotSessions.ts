@@ -97,8 +97,10 @@ export interface BotSessionStartInput {
 const roleModel = (bot: Bot, role: BotSessionRole): ModelSelection =>
   role === "worker" ? bot.models.worker : bot.models.reviewer;
 
-const roleDefaultHint = (role: BotSessionRole): string =>
-  `That is your ${role} model: pass modelSelection (orchestrator_capabilities lists what can), or ask the user to pick another under Models… in your menu.`;
+const roleDefaultHint = (role: BotSessionRole, cloud?: EnvironmentId): string =>
+  cloud === undefined
+    ? `That is your ${role} model: pass modelSelection (orchestrator_capabilities lists what can), or ask the user to pick another under Models… in your menu.`
+    : `That is your ${role} model, from this machine: pass modelSelection with one that runs there (orchestrator_capabilities with environmentId ${cloud} lists them).`;
 
 export interface BotRespondInput {
   readonly threadId: ThreadId;
@@ -249,7 +251,9 @@ const make = Effect.gen(function* () {
           return input.modelSelection === undefined &&
             error.code === "invalid_request" &&
             isModelSelectionRefusal(error.message)
-            ? invalidRequest(`${failure.message} ${roleDefaultHint(input.role)}`)
+            ? invalidRequest(
+                `${failure.message} ${roleDefaultHint(input.role, target.environmentId)}`,
+              )
             : failure;
         }),
       );
