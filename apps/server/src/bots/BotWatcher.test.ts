@@ -4,12 +4,31 @@ import {
   BOT_QUIET_AFTER_MS,
   BotId,
   type BotJob,
+  EventId,
+  MemberId,
+  MessageId,
   type OrchestrationV2ThreadShell,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as BotService from "./BotService.ts";
+import * as BotStore from "./BotStore.ts";
 import {
+  BotWatcher,
+  layer as botWatcherLayer,
   classifyRunEnd,
   dueEscalations,
   isTakeoverMessage,
@@ -189,3 +208,126 @@ it("merges a session's pull requests into the job by number", () => {
     { number: 2, url: "https://example.test/2", state: "open" },
   ]);
 });
+
+it.effect(
+  "records a local session's archived thread state, refreshes it when the run ends, and clears it",
+  () => {
+    const sessionThreadId = ThreadId.make("thread:local-session");
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const now = DateTime.makeUnsafe("2026-11-19T00:00:00.000Z");
+    let current: OrchestrationV2ThreadShell = {
+      id: sessionThreadId,
+      projectId: ProjectId.make("project:bots"),
+      title: "Fix the login bug",
+      providerInstanceId: instanceId,
+      modelSelection: { instanceId, model: "claude-haiku-5-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { rootThreadId: sessionThreadId, parentThreadId: null, relationshipToParent: null },
+      forkedFrom: null,
+      createdBy: "agent",
+      creationSource: "web",
+      activeRunId: RunId.make("run:1"),
+      latestRunId: RunId.make("run:1"),
+      activityRunStatus: "running",
+      status: "running",
+      pendingRuntimeRequest: null,
+      latestVisibleMessage: null,
+      latestUserMessageAt: null,
+      hasActionableProposedPlan: false,
+      itemCount: 0,
+      visibleItemCount: 0,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: now,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    const event = (type: "thread.archived" | "thread.unarchived") => ({
+      id: EventId.make(`event:${type}`),
+      type,
+      threadId: sessionThreadId,
+      occurredAt: now,
+      payload: { ...current, lastVisitedAt: null },
+    });
+    const bots = BotService.layer({ cloudOnly: false }).pipe(
+      Layer.provide(BotStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      Layer.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({})),
+      Layer.provide(SecureRandom.layerWebCrypto),
+    );
+    const layer = botWatcherLayer.pipe(
+      Layer.provideMerge(bots),
+      Layer.provide(SqlitePersistence.layerMemory),
+      Layer.provide(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.sync(() => current),
+        }),
+      ),
+      Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({})),
+    );
+    return Effect.gen(function* () {
+      const service = yield* BotService.BotService;
+      const watcher = yield* BotWatcher;
+      const caller = { memberId: MemberId.make("member:rutvik") };
+      const bot = yield* service.create(caller, {
+        name: "Atlas",
+        charter: "Ship it",
+        starter: "default",
+      });
+      const job = yield* service.createJob(caller, { botId: bot.id, request: "Fix the login bug" });
+      yield* service.addSession({
+        threadId: sessionThreadId,
+        botId: bot.id,
+        jobId: job.id,
+        role: "worker",
+        title: "Fix the login bug",
+        projectId: current.projectId,
+        takenOver: false,
+        createdAt: "2026-11-19T00:00:00.000Z",
+      });
+      const archived = () =>
+        service
+          .sessionForThread(sessionThreadId)
+          .pipe(Effect.map((s) => Option.getOrThrow(s).archived));
+
+      yield* watcher.handle(event("thread.archived"));
+      assert.strictEqual(yield* archived(), "working");
+      assert.strictEqual(Option.getOrThrow(yield* service.getJob(job.id)).status, "working");
+
+      current = { ...current, activeRunId: null, activityRunStatus: null, status: "completed" };
+      yield* watcher.handle({
+        id: EventId.make("event:run.updated"),
+        type: "run.updated",
+        threadId: sessionThreadId,
+        occurredAt: now,
+        payload: {
+          id: RunId.make("run:1"),
+          threadId: sessionThreadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection: current.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:1"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      assert.strictEqual(yield* archived(), "done");
+
+      current = { ...current, archivedAt: null };
+      yield* watcher.handle(event("thread.unarchived"));
+      assert.strictEqual(yield* archived(), undefined);
+    }).pipe(Effect.provide(layer));
+  },
+);

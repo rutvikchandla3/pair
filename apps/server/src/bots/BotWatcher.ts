@@ -1,6 +1,7 @@
 import {
   BOT_ESCALATE_AFTER_MS,
   BOT_QUIET_AFTER_MS,
+  type BotCloudSessionState,
   type BotId,
   type BotJob,
   type BotSession,
@@ -39,6 +40,35 @@ const LIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2ThreadShell["status"]> = new
   "starting",
   "running",
 ]);
+
+const LIVE_THREAD_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
+const STOPPED_THREAD_STATUSES = new Set(["interrupted", "cancelled", "rolled_back"]);
+
+/** A session's state from its thread, for clients that hold no shell for it. */
+export function sessionThreadState(thread: {
+  readonly status: string;
+  readonly pendingRequestCount: number;
+}): BotCloudSessionState {
+  if (thread.pendingRequestCount > 0) return "waiting";
+  if (LIVE_THREAD_STATUSES.has(thread.status)) return "working";
+  if (thread.status === "failed") return "failed";
+  if (STOPPED_THREAD_STATUSES.has(thread.status)) return "stopped";
+  return "done";
+}
+
+/** A local session's `archived` from its thread's shell. */
+function localArchivedState(
+  shell: Pick<
+    OrchestrationV2ThreadShell,
+    "archivedAt" | "status" | "activityRunStatus" | "pendingRuntimeRequest"
+  >,
+): BotCloudSessionState | undefined {
+  if (shell.archivedAt === null) return undefined;
+  return sessionThreadState({
+    status: shell.activityRunStatus ?? shell.status,
+    pendingRequestCount: shell.pendingRuntimeRequest === null ? 0 : 1,
+  });
+}
 
 export type RunEndKind = "completed" | "usage-limit" | "failed" | "stopped";
 
@@ -344,6 +374,17 @@ const make = Effect.gen(function* () {
       return next;
     });
 
+  /** Record a local session's thread archived, or not, as its shell now reads. */
+  const syncArchived = Effect.fnUntraced(function* (
+    session: BotSession,
+    shell: OrchestrationV2ThreadShell,
+  ) {
+    if (session.cloud !== undefined) return;
+    const archived = localArchivedState(shell);
+    if (archived === session.archived) return;
+    yield* bots.setSessionArchived(session.threadId, archived);
+  });
+
   /** Copy the session shell's PRs into the job, only when the set actually changed. */
   const syncPullRequests = Effect.fnUntraced(function* (
     session: BotSession,
@@ -369,6 +410,7 @@ const make = Effect.gen(function* () {
   ) {
     const shell = yield* readShell(event.threadId);
     if (shell === null) return;
+    yield* syncArchived(session, shell);
     const job = Option.getOrNull(yield* bots.getJob(session.jobId));
     if (job === null) return;
     yield* syncPullRequests(session, job, shell);
@@ -423,7 +465,9 @@ const make = Effect.gen(function* () {
       if (
         event.type !== "run.updated" &&
         event.type !== "runtime-request.updated" &&
-        event.type !== "message.updated"
+        event.type !== "message.updated" &&
+        event.type !== "thread.archived" &&
+        event.type !== "thread.unarchived"
       ) {
         return;
       }
@@ -438,7 +482,13 @@ const make = Effect.gen(function* () {
         yield* onRuntimeRequest(event, session);
         return;
       }
-      yield* onMessageUpdated(event, session);
+      if (event.type === "message.updated") {
+        yield* onMessageUpdated(event, session);
+        return;
+      }
+      // Archived or unarchived.
+      const shell = yield* readShell(event.threadId);
+      if (shell !== null) yield* syncArchived(session, shell);
     },
     (effect, event) =>
       effect.pipe(
@@ -513,6 +563,8 @@ const make = Effect.gen(function* () {
           continue;
         }
         const shell = yield* readShell(session.threadId);
+        // Catches an archive the event stream missed, such as one from before a restart.
+        if (shell !== null) yield* syncArchived(session, shell);
         candidates.push({
           threadId: session.threadId,
           jobStatus: job.status,

@@ -2,7 +2,6 @@ import {
   type Bot,
   BotCloudSession,
   BotJob,
-  type BotCloudSessionState,
   type BotSession,
   type EnvironmentId,
   type OrchestratorMcpFailure,
@@ -33,6 +32,7 @@ import {
   reportRequest,
   reportRunEnd,
   reportTakeover,
+  sessionThreadState,
 } from "./BotWatcher.ts";
 
 /** How often a working cloud session is read. */
@@ -50,19 +50,7 @@ const samePullRequests = Schema.toEquivalence(BotJob.fields.pullRequests);
 export const STOP_FOLLOWING = "Stop following them";
 const outageQuestion = (label: string) => `Can't reach ${label}.`;
 
-const LIVE_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 const STOPPED_STATUSES = new Set(["interrupted", "cancelled", "rolled_back"]);
-
-type ThreadDetail = OrchestratorMcpThreadReadResult["thread"];
-
-/** The cloud session's state from the thread there. */
-function cloudState(detail: ThreadDetail): BotCloudSessionState {
-  if (detail.pendingRequestCount > 0) return "waiting";
-  if (LIVE_STATUSES.has(detail.status)) return "working";
-  if (detail.status === "failed") return "failed";
-  if (STOPPED_STATUSES.has(detail.status)) return "stopped";
-  return "done";
-}
 
 /** What a run that ended there amounts to, as `classifyRunEnd` does for a local shell. */
 function cloudRunEnd(status: string, error: string | null): RunEnd | null {
@@ -244,7 +232,7 @@ const make = Effect.gen(function* () {
     const next: BotCloudSession = {
       ...rest,
       ...(detail.archived ? { archived: true as const } : {}),
-      state: cloudState(detail),
+      state: sessionThreadState(detail),
       pendingRequest,
       lastOutputAt: detail.updatedAt,
       reportedRunId,

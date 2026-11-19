@@ -263,8 +263,17 @@ export const BotSession = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   /** Absent: it runs on the bot's own server. */
   cloud: Schema.optional(BotCloudSession),
+  /**
+   * A local session whose thread is archived: the state its last run left, since clients hold no
+   * shell for an archived thread. A cloud session records this as `cloud.archived`.
+   */
+  archived: Schema.optional(BotCloudSessionState),
 });
 export type BotSession = typeof BotSession.Type;
+
+/** The session's thread is archived, here or on its cloud; it moves under the bot's Archived. */
+export const botSessionArchived = (session: Pick<BotSession, "archived" | "cloud">): boolean =>
+  session.archived !== undefined || session.cloud?.archived === true;
 
 export const BotAskStatus = Schema.Literals(["open", "answered"]);
 export type BotAskStatus = typeof BotAskStatus.Type;

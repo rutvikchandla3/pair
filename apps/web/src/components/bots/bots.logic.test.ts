@@ -371,10 +371,11 @@ describe("botSidebarSessions", () => {
     expect(botStatusLine(data, bot(), new Map(), NOW).label).toBe("Nothing running");
   });
 
-  it("moves an archived job or cloud thread behind the disclosure unless it has an open question", () => {
+  it("moves an archived job or thread behind the disclosure unless it has an open question", () => {
     const asked = BotJobId.make("job-asked");
     const open = BotJobId.make("job-open");
     const openAsked = BotJobId.make("job-open-asked");
+    const here = session({ threadId: ThreadId.make("here"), jobId: open });
     const archivedAt = new Date(NOW).toISOString();
     const there = cloudSession("done", { threadId: ThreadId.make("there"), jobId: open });
     const thereAsked = cloudSession("done", {
@@ -393,11 +394,17 @@ describe("botSidebarSessions", () => {
         session({ threadId: ThreadId.make("asked"), jobId: asked }),
         { ...there, cloud: { ...there.cloud!, archived: true } },
         { ...thereAsked, cloud: { ...thereAsked.cloud!, archived: true } },
+        { ...here, archived: "failed" },
+        session({ threadId: ThreadId.make("here-asked"), jobId: openAsked, archived: "done" }),
       ],
       asks: [ask({ jobId: asked }), ask({ jobId: openAsked })],
     });
     const list = botSidebarSessions(data, BOT, new Map(), NOW);
-    expect(list.rows.map((row) => row.session.threadId)).toEqual(["asked", "there-asked"]);
+    expect(list.rows.map((row) => row.session.threadId)).toEqual([
+      "asked",
+      "there-asked",
+      "here-asked",
+    ]);
     expect(
       list.archived.map((row) => [
         row.session.threadId,
@@ -408,7 +415,15 @@ describe("botSidebarSessions", () => {
     ).toEqual([
       ["archived", "done", true, true],
       ["there", "done", false, false],
+      ["here", "failed", false, false],
     ]);
+
+    // Unarchived, its shell is back and it returns to the list.
+    const unarchived = { ...data, sessions: [here] };
+    const shells = new Map([[here.threadId, shell({ id: here.threadId, runtime: null })]]);
+    const back = botSidebarSessions(unarchived, BOT, shells, NOW);
+    expect(back.rows.map((row) => row.session.threadId)).toEqual(["here"]);
+    expect(back.archived).toEqual([]);
   });
 });
 
