@@ -1,7 +1,7 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import type { Bot, BotSession, BotsSnapshot, EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
-import { FlatList, Pressable, View } from "react-native";
+import { FlatList, Platform, Pressable, View, type ScrollViewProps } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -15,6 +15,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import { Menu } from "../../components/ui/Menu";
 import { useNowMinuteMs } from "../../lib/clock";
 import { relativeTime } from "../../lib/time";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { retryBotsSnapshot, useBotsCommands, useBotsEnvironments } from "../../state/bots";
 import { startOpeningEnvironmentThread } from "../../state/threads";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
@@ -48,7 +50,14 @@ export function BotsScreen() {
   const workspace = useWorkspaceTabs();
   const navigation = useNavigation();
   const { create } = useBotsCommands();
-  const bottom = (workspace?.bottomClearance ?? insets.bottom) + 24;
+  // UIKit insets the list by its column's safe area, which this context can report as 0.
+  const columnSafeBottom = useNativeColumnLayoutMetrics()?.safeArea.bottom;
+  const bottomSafeArea =
+    Platform.OS === "ios" ? (columnSafeBottom ?? insets.bottom) : insets.bottom;
+  const listBottomPadding =
+    Math.max(bottomSafeArea, workspace?.bottomClearance ?? insets.bottom) +
+    24 -
+    (Platform.OS === "ios" ? bottomSafeArea : 0);
 
   const createBot = async (environmentId: EnvironmentId) => {
     const result = await create({
@@ -128,63 +137,74 @@ export function BotsScreen() {
     </Pressable>
   );
 
-  return (
-    <View className="flex-1 bg-screen">
-      <View className="flex-row items-center justify-between px-4 pt-3 pb-2">
-        <Text className="text-2xl font-t3-bold text-foreground">Bots</Text>
-        {model.createMode === "menu" ? (
-          <Menu
-            actions={model.createTargets.map((target) => ({
-              id: target.environmentId,
-              title: target.label,
-              image: ENVIRONMENT_MACHINE_SYMBOLS[target.machineKind],
-            }))}
-            onPressAction={({ nativeEvent }) => {
-              const target = model.createTargets.find(
-                (candidate) => candidate.environmentId === nativeEvent.event,
-              );
-              if (target !== undefined) void createBot(target.environmentId);
-            }}
-          >
-            {newBotButton}
-          </Menu>
-        ) : (
-          newBotButton
-        )}
-      </View>
-      {model.view === "empty" ? (
-        <View className="flex-1 items-center justify-center p-8">
-          <Text className="text-center text-sm text-foreground-muted">
-            Tap + to start your first bot.
-          </Text>
-        </View>
+  const titleRow = (
+    <View className="flex-row items-center justify-between px-4 pt-3 pb-2">
+      <Text className="text-2xl font-t3-bold text-foreground">Bots</Text>
+      {model.createMode === "menu" ? (
+        <Menu
+          actions={model.createTargets.map((target) => ({
+            id: target.environmentId,
+            title: target.label,
+            image: ENVIRONMENT_MACHINE_SYMBOLS[target.machineKind],
+          }))}
+          onPressAction={({ nativeEvent }) => {
+            const target = model.createTargets.find(
+              (candidate) => candidate.environmentId === nativeEvent.event,
+            );
+            if (target !== undefined) void createBot(target.environmentId);
+          }}
+        >
+          {newBotButton}
+        </Menu>
       ) : (
-        <FlatList
-          data={rows}
-          keyExtractor={(row) =>
-            row.kind === "header"
-              ? `header:${row.entry.environmentId}`
-              : `bot:${row.entry.environmentId}:${row.bot.id}`
-          }
-          contentContainerStyle={{ paddingBottom: bottom }}
-          renderItem={({ item }) =>
-            item.kind === "header" ? (
-              <EnvironmentHeader entry={item.entry} />
-            ) : (
-              <BotSection
-                environmentId={item.entry.environmentId}
-                bot={item.bot}
-                snapshot={item.snapshot}
-                canArchive={item.entry.canArchive}
-                onOpenBot={() => openBot(item.entry.environmentId, item.bot)}
-                onOpenSession={(session) => openSession(item.entry.environmentId, session)}
-              />
-            )
-          }
-        />
+        newBotButton
       )}
     </View>
   );
+
+  return (
+    <View className="flex-1 bg-screen">
+      <FlatList
+        data={rows}
+        keyExtractor={(row) =>
+          row.kind === "header"
+            ? `header:${row.entry.environmentId}`
+            : `bot:${row.entry.environmentId}:${row.bot.id}`
+        }
+        renderScrollComponent={Platform.OS === "ios" ? renderBotsScrollView : undefined}
+        // The workspace header is transparent on iOS; UIKit insets the list below it.
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: listBottomPadding }}
+        ListHeaderComponent={titleRow}
+        ListEmptyComponent={
+          <View className="flex-1 items-center justify-center p-8">
+            <Text className="text-center text-sm text-foreground-muted">
+              Tap + to start your first bot.
+            </Text>
+          </View>
+        }
+        renderItem={({ item }) =>
+          item.kind === "header" ? (
+            <EnvironmentHeader entry={item.entry} />
+          ) : (
+            <BotSection
+              environmentId={item.entry.environmentId}
+              bot={item.bot}
+              snapshot={item.snapshot}
+              canArchive={item.entry.canArchive}
+              onOpenBot={() => openBot(item.entry.environmentId, item.bot)}
+              onOpenSession={(session) => openSession(item.entry.environmentId, session)}
+            />
+          )
+        }
+      />
+    </View>
+  );
+}
+
+function renderBotsScrollView(props: ScrollViewProps) {
+  // UIKit's scroll-edge material under the header takes the scroll view's own color.
+  return <NativeScrollView {...props} className="bg-screen" />;
 }
 
 /** Names the server a group of bots lives on, and says when its bots can't be shown. */
