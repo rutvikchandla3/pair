@@ -57,7 +57,6 @@ type ThreadDetail = OrchestratorMcpThreadReadResult["thread"];
 
 /** The cloud session's state from the thread there. */
 function cloudState(detail: ThreadDetail): BotCloudSessionState {
-  if (detail.archived) return "stopped";
   if (detail.pendingRequestCount > 0) return "waiting";
   if (LIVE_STATUSES.has(detail.status)) return "working";
   if (detail.status === "failed") return "failed";
@@ -241,8 +240,10 @@ const make = Effect.gen(function* () {
       }
     }
 
+    const { archived: _archived, ...rest } = cloud;
     const next: BotCloudSession = {
-      ...cloud,
+      ...rest,
+      ...(detail.archived ? { archived: true as const } : {}),
       state: cloudState(detail),
       pendingRequest,
       lastOutputAt: detail.updatedAt,

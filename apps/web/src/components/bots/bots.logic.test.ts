@@ -371,24 +371,43 @@ describe("botSidebarSessions", () => {
     expect(botStatusLine(data, bot(), new Map(), NOW).label).toBe("Nothing running");
   });
 
-  it("moves an archived job behind the disclosure unless it has an open question", () => {
+  it("moves an archived job or cloud thread behind the disclosure unless it has an open question", () => {
     const asked = BotJobId.make("job-asked");
+    const open = BotJobId.make("job-open");
+    const openAsked = BotJobId.make("job-open-asked");
     const archivedAt = new Date(NOW).toISOString();
+    const there = cloudSession("done", { threadId: ThreadId.make("there"), jobId: open });
+    const thereAsked = cloudSession("done", {
+      threadId: ThreadId.make("there-asked"),
+      jobId: openAsked,
+    });
     const data = snapshot({
       jobs: [
         job({ status: "done", finishedAt: archivedAt, archivedAt }),
         job({ id: asked, status: "done", finishedAt: archivedAt, archivedAt }),
+        job({ id: open, status: "working" }),
+        job({ id: openAsked, status: "working" }),
       ],
       sessions: [
         session({ threadId: ThreadId.make("archived") }),
         session({ threadId: ThreadId.make("asked"), jobId: asked }),
+        { ...there, cloud: { ...there.cloud!, archived: true } },
+        { ...thereAsked, cloud: { ...thereAsked.cloud!, archived: true } },
       ],
-      asks: [ask({ jobId: asked })],
+      asks: [ask({ jobId: asked }), ask({ jobId: openAsked })],
     });
     const list = botSidebarSessions(data, BOT, new Map(), NOW);
-    expect(list.rows.map((row) => row.session.threadId)).toEqual(["asked"]);
-    expect(list.archived.map((row) => [row.session.threadId, row.jobFinished])).toEqual([
-      ["archived", true],
+    expect(list.rows.map((row) => row.session.threadId)).toEqual(["asked", "there-asked"]);
+    expect(
+      list.archived.map((row) => [
+        row.session.threadId,
+        row.glyph,
+        row.jobFinished,
+        row.jobArchived,
+      ]),
+    ).toEqual([
+      ["archived", "done", true, true],
+      ["there", "done", false, false],
     ]);
   });
 });
