@@ -15,6 +15,7 @@ import {
   type Project,
   type RepositoryIdentity,
   RunId,
+  type ServerProvider,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -83,7 +84,15 @@ const box = descriptorOf("environment-box", "Box");
 const boxProject = ProjectId.make("project:box");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
-const modelSelection = { instanceId, model: "gpt-5.4" };
+// laptopOnly is an option the box's model doesn't declare; delegations still pass it through.
+const modelSelection = {
+  instanceId,
+  model: "gpt-5.4",
+  options: [
+    { id: "reasoningEffort", value: "high" },
+    { id: "laptopOnly", value: true },
+  ],
+};
 
 type LaunchedWith = Pick<
   ThreadLaunch.ThreadLaunchRequest,
@@ -504,7 +513,28 @@ const boxToolkitLayer = (thread: BoxThread) => {
     ),
     Layer.provide(
       Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed([readyProvider("codex"), readyProvider("codex-other")]),
+        getProviders: Effect.succeed([
+          readyProvider("codex", {
+            models: [
+              {
+                slug: "gpt-5.4",
+                name: "GPT-5.4",
+                isCustom: false,
+                capabilities: {
+                  optionDescriptors: [
+                    {
+                      id: "reasoningEffort",
+                      label: "Effort",
+                      type: "select",
+                      options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
+                    },
+                  ],
+                },
+              },
+            ],
+          } as Partial<ServerProvider>),
+          readyProvider("codex-other"),
+        ]),
       }),
     ),
     Layer.provide(

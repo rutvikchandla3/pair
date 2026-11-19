@@ -1,4 +1,5 @@
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import { readyProvider } from "../../../provider/ProviderRegistry.testkit.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
@@ -413,9 +414,11 @@ it.effect(
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
-    const { projectId, dependencies } = clientLaunchHarness({
+    const providers = [readyProvider("claudeAgent")];
+    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
       launched,
+      providers,
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
@@ -428,23 +431,29 @@ it.effect("a launch retried with the same clientRequestId replays the first one"
           title: "Fix",
           projectId,
           message: "Fix the bug",
+          modelSelection,
           ...(clientRequestId === undefined ? {} : { clientRequestId }),
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     yield* launch("fix-1");
-    yield* launch("fix-1");
     yield* launch("fix-2");
     yield* launch(undefined);
     yield* launch(undefined);
+    // The provider is gone now: a replay keeps the model it started with, unchecked.
+    providers.length = 0;
+    yield* launch("fix-1");
+    const refused = yield* launch("fix-3");
     const ids = launched.map((input) => [input.commandId, input.threadId]);
     // The same key sends the same command and thread ids, which the launch
     // service replays instead of starting a second thread.
-    expect(ids[0]).toEqual(ids[1]);
+    expect(ids[4]).toEqual(ids[0]);
     expect(ids[0]?.[0]).toMatch(/^mcp:launch:[0-9a-f]{64}$/);
-    expect(ids[2]).not.toEqual(ids[0]);
+    expect(ids[1]).not.toEqual(ids[0]);
     // Without a key every launch is new.
-    expect(ids[3]).not.toEqual(ids[4]);
+    expect(ids[2]).not.toEqual(ids[3]);
+    expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(5);
   }),
 );
 

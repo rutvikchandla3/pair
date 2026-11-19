@@ -111,13 +111,30 @@ modelSelection?: ModelSelection; // { instanceId, model, options?: [{ id, value 
 ### `t3_thread_launch` (every caller)
 
 A given `modelSelection` is checked before the thread is created. The check doesn't run on a replay
-(a retried `clientRequestId` keeps the model it started with) or on an inherited selection. It is one
+(a retried `clientRequestId` keeps the model it started with) or on a selection it fills in itself (the caller's or the project's). It is one
 pure function over the provider snapshot and the registered V2 adapters. It checks the instance,
 its health, the model and the options. `delegate_task`'s `providerConstraints` and
 `invalidOptionSelections` move into that module unchanged, so both tools word their refusals the
 same way. Like `delegate_task`, it skips the model check when an instance lists no models, and it
-accepts custom models (they are in the list). An id the instance doesn't list is refused, as
-`delegate_task` already refuses it: the bot is told the ids that work instead of failing later.
+accepts custom models (they are in the list) and a model's aliases. An id the instance doesn't
+list is refused, as `delegate_task` already refuses it: the bot is told the ids that work instead
+of failing later.
+
+Options are checked only for ids the model declares: a duplicate, or a bad value for a declared
+id, is refused. An id it doesn't declare passes through unchecked, as before. Threads keep such
+options (another version's, or a delegated parent's that `delegate_task` to a linked environment
+forwards as given), so refusing them would break delegations that work today.
+
+Version skew is the one place this is stricter than before. `delegate_task` to a linked
+environment forwards the parent's inherited selection as an explicit one, so the box checks it. If
+the box's instance doesn't list the parent's model, or a declared option's value isn't in its list
+(`xhigh` against an older list), the delegation is now refused with the valid choices. Before, it
+launched, and the Claude adapter quietly fell back to the default effort. The caller fixes it with
+`target.model` or `target.options`. We prefer an early refusal to a silent downgrade.
+
+The check reads the registry's cached snapshot, which `delegate_task` already trusts. An instance
+signed in moments ago can be refused until its next probe. We accept that: the message names it
+and a retry after the probe works.
 
 A cloud server validates only once it runs this version. Until the Pair Cloud is updated, a bad
 selection still fails late there. Working selections behave the same either way.
@@ -138,12 +155,17 @@ list stops at 8 entries and adds "and N more". An instance is listed only when i
 | Unknown instance                          | `No provider instance "X" here. Ones that can run: HA (claudeAgent-rutvik-916a), HAP (claudeAgent-rutvik-3c9d), Claude (claudeAgent).`                    |
 | Instance can't run (unauthenticated, off) | `HA (claudeAgent-rutvik-916a) can't run here: Provider is not authenticated. Ones that can run: HAP (…), Claude (…).`                                     |
 | Model not on that instance                | `HA (claudeAgent-rutvik-916a) has no model "x". Its models: claude-opus-5-5 (Claude Opus 5.5), claude-sonnet-5-5 (Claude Sonnet 5.5), ….`                 |
-| Unknown option id or invalid value        | `claude-opus-5-5 on HA rejected options: Option effort must be one of: low, medium, high, xhigh, max, ultracode, ultrathink.` (`delegate_task`'s wording) |
+| Invalid option value (declared id)        | `claude-opus-5-5 on HA rejected options: Option effort must be one of: low, medium, high, xhigh, max, ultracode, ultrathink.` (`delegate_task`'s wording) |
 | Instance turned off for that project      | Unchanged: the launch already refuses it (`ThreadManagementProviderInstanceDisabledError`, mapped to `invalid_request`).                                  |
 | Cloud unreachable or link expired         | Unchanged from #58: `Could not start the session on <label>: <reason>`, with an expired link mapped as `capability_denied`.                               |
 
-Through the link, #58's `cloudFailure` already prefixes the cloud's message with "on \<label\>", so
-"here" reads correctly in context.
+Through the link, #58's `cloudFailure` prefixes the cloud's message with "on \<label\>", so "here"
+reads correctly in context. A cloud's `invalid_request` now reaches the bot as `invalid_request`
+with that message; before, every cloud refusal reached it as a generic "could not be completed".
+That applies to `bot_session_message` and `bot_session_respond` on a cloud session too, since they
+share `cloudFailure`.
+When the bot passed no `modelSelection` and the cloud refuses the model, the error adds that its
+role default can't run there and to pass `modelSelection`. The local check says the same.
 
 ## Design review
 
@@ -154,6 +176,22 @@ late failure on an omitted cloud selection should become an early one. This revi
 `delegate_task`'s, the default-instance rule is local-only, both paths check the launched
 selection, a null `environmentId` is left out, and the V2 adapter check is included. It agreed
 with declining a stored display label.
+
+## Backend review
+
+A staff backend-engineer reviewer rated the implementation 3.5/5 and blocked on three things:
+
+- the launch refused option ids the model doesn't declare, which breaks `delegate_task` to a linked
+  environment that forwards the parent's options;
+- the test fixtures listed no models, which hid that;
+- the replay test the plan promised was missing.
+
+All three are fixed and pinned by tests that fail without the fix. The re-review rates it 4/5. Its
+non-blocking follow-ups are folded in:
+
+- the refusal predicate lives next to the wording it matches and is tested against real output;
+- duplicates are checked on the full option list;
+- the version-skew trade-off above is written down.
 
 ## Model-facing text
 

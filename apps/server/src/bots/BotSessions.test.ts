@@ -9,7 +9,9 @@ import {
   MemberId,
   type Project,
   ProjectId,
+  OrchestratorMcpFailure,
   ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -28,6 +30,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { modelSelectionProblem } from "../provider/modelSelectionCheck.ts";
 import { readyProvider } from "../provider/ProviderRegistry.testkit.ts";
 import { BotService } from "./BotService.ts";
 import { NO_CLOUD_MESSAGE } from "./botCloud.ts";
@@ -108,6 +111,10 @@ const sessionsHarness = (input: {
   readonly cloudOnly?: boolean;
   readonly clouds?: ReadonlyArray<EnvironmentId>;
   readonly sessions?: ReadonlyArray<BotSession>;
+  /** This server's providers; default: the bot's own Claude. */
+  readonly providers?: ReadonlyArray<ServerProvider>;
+  /** The cloud's t3_thread_launch refuses with this message. */
+  readonly cloudRefuses?: string;
 }) => {
   const launches: Array<ThreadLaunch.ThreadLaunchRequest> = [];
   const forwarded: Array<Forwarded> = [];
@@ -188,6 +195,13 @@ const sessionsHarness = (input: {
               environmentId,
               params: params as Record<string, unknown>,
             });
+            if (input.cloudRefuses !== undefined)
+              return Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: input.cloudRefuses,
+                }),
+              );
             // The cloud answers with what the thread runs on.
             return Effect.succeed({
               threadId: cloudThreadId,
@@ -196,10 +210,10 @@ const sessionsHarness = (input: {
           },
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([claude]),
+          getProviders: Effect.succeed(input.providers ?? [claude]),
         }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-          list: () => Effect.succeed([claude.instanceId]),
+          list: () => Effect.succeed((input.providers ?? [claude]).map((p) => p.instanceId)),
         }),
         SecureRandom.layerWebCrypto,
       ),
@@ -252,8 +266,14 @@ describe("BotSessions.start", () => {
   it.effect("runs on the model the bot chose and records it, refusing one that can't run", () =>
     Effect.gen(function* () {
       const chosen = { ...model, options: [{ id: "effort", value: "high" }] };
-      const start = (modelSelection: BotSessions.BotSessionStartInput["modelSelection"]) => {
-        const harness = sessionsHarness({ jobProjectId: repoId });
+      const start = (
+        modelSelection: BotSessions.BotSessionStartInput["modelSelection"],
+        providers?: ReadonlyArray<ServerProvider>,
+      ) => {
+        const harness = sessionsHarness({
+          jobProjectId: repoId,
+          ...(providers === undefined ? {} : { providers }),
+        });
         return Effect.gen(function* () {
           const sessions = yield* BotSessions.BotSessions;
           return yield* sessions.start(bot.id, startInput({ modelSelection }));
@@ -273,7 +293,13 @@ describe("BotSessions.start", () => {
       }).pipe(Effect.flip);
       assert.strictEqual(refused.error.reason, "invalid-request");
       assert.include(refused.error.message, 'No provider instance "claudeAgent-ha" here.');
+      assert.notInclude(refused.error.message, "That is your worker model");
       assert.lengthOf(refused.launches, 0);
+
+      // The role default is checked too, and the bot is told it was its default.
+      const roleDefault = yield* start(undefined, []).pipe(Effect.flip);
+      assert.include(roleDefault.error.message, "That is your worker model");
+      assert.lengthOf(roleDefault.launches, 0);
     }),
   );
 
@@ -369,6 +395,31 @@ describe("BotSessions cloud sessions", () => {
         assert.include(error.message, expected);
         assert.lengthOf(harness.forwarded, 0);
         assert.lengthOf(harness.launches, 0);
+      }
+
+      // The cloud's own refusal reaches the bot with its words, plus whose model it was.
+      // What a cloud without this instance answers, worded by the shared check.
+      const refusal = `${modelSelectionProblem({
+        providers: [],
+        adapterInstanceIds: new Set(),
+        selection: model,
+      })} No thread was created.`;
+      for (const modelSelection of [undefined, model]) {
+        const harness = sessionsHarness({
+          jobProjectId: repoId,
+          clouds: [cloudId],
+          cloudRefuses: refusal,
+        });
+        const error = yield* Effect.gen(function* () {
+          const sessions = yield* BotSessions.BotSessions;
+          return yield* sessions.start(bot.id, startInput({ cloud: {}, modelSelection }));
+        }).pipe(Effect.provide(harness.layer), Effect.flip);
+        assert.strictEqual(error.reason, "invalid-request");
+        assert.include(error.message, `on Cloud ${cloudId}: ${refusal}`);
+        assert.strictEqual(
+          error.message.includes("That is your worker model"),
+          modelSelection === undefined,
+        );
       }
     }),
   );

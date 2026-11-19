@@ -119,12 +119,28 @@ export function modelSelectionProblem(input: {
     );
     return `${instanceName(provider)} has no model "${selection.model}". Its models: ${capped(listed)}.`;
   }
-  const invalid = invalidOptionSelections(
-    selection.options ?? [],
-    model?.capabilities?.optionDescriptors,
-  );
+  // Threads keep options their model doesn't declare (another version, a delegated parent's), and
+  // the launch passes them through as before; only declared ones are checked.
+  const descriptors = model?.capabilities?.optionDescriptors;
+  const options = selection.options ?? [];
+  const duplicates = invalidOptionSelections(options, undefined);
+  const invalid =
+    duplicates.length > 0
+      ? duplicates
+      : invalidOptionSelections(
+          options.filter(
+            (option) =>
+              descriptors === undefined ||
+              descriptors.some((descriptor) => descriptor.id === option.id),
+          ),
+          descriptors,
+        );
   if (invalid.length > 0) {
     return `${selection.model} on ${provider.displayName ?? provider.instanceId} rejected options: ${invalid.join(" ")}`;
   }
   return null;
 }
+
+/** Whether a refusal, possibly prefixed by a forwarder, came from `modelSelectionProblem`. */
+export const isModelSelectionRefusal = (message: string): boolean =>
+  /No provider instance "|\) can't run here: |\) has no model "| rejected options: /.test(message);

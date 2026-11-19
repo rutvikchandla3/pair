@@ -37,7 +37,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
-import { modelSelectionProblem } from "../provider/modelSelectionCheck.ts";
+import { isModelSelectionRefusal, modelSelectionProblem } from "../provider/modelSelectionCheck.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { BotService } from "./BotService.ts";
 import { type BotCloudTarget, loadBotLinkScope, resolveCloudTarget } from "./botCloud.ts";
@@ -92,6 +92,9 @@ export interface BotSessionStartInput {
 
 const roleModel = (bot: Bot, role: BotSessionRole): ModelSelection =>
   role === "worker" ? bot.models.worker : bot.models.reviewer;
+
+const roleDefaultHint = (role: BotSessionRole): string =>
+  `That is your ${role} model: pass modelSelection (orchestrator_capabilities lists what can), or ask the user to pick another under Models… in your menu.`;
 
 export interface BotRespondInput {
   readonly threadId: ThreadId;
@@ -191,7 +194,9 @@ const make = Effect.gen(function* () {
   const cloudFailure = (target: BotCloudTarget, what: string) => (error: OrchestratorMcpFailure) =>
     error.code === "capability_denied"
       ? new BotsError({ reason: "cloud-only", message: `${target.label}: ${error.message}` })
-      : unavailable(`${what} on ${target.label}: ${error.message}`);
+      : error.code === "invalid_request"
+        ? invalidRequest(`${what} on ${target.label}: ${error.message}`)
+        : unavailable(`${what} on ${target.label}: ${error.message}`);
 
   const startInCloud = Effect.fn("BotSessions.startInCloud")(function* (
     bot: Bot,
@@ -234,7 +239,15 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.tapError((error) => Effect.logWarning("bot cloud session launch failed", { error })),
-        Effect.mapError(cloudFailure(target, "Could not start the session")),
+        Effect.mapError((error) => {
+          const failure = cloudFailure(target, "Could not start the session")(error);
+          // Its role default holds this machine's ids, which the cloud may not have.
+          return input.modelSelection === undefined &&
+            error.code === "invalid_request" &&
+            isModelSelectionRefusal(error.message)
+            ? invalidRequest(`${failure.message} ${roleDefaultHint(input.role)}`)
+            : failure;
+        }),
       );
     const now = DateTime.formatIso(yield* DateTime.now);
     const session: BotSession = {
@@ -344,7 +357,7 @@ const make = Effect.gen(function* () {
             ? { type: "root" as const }
             : { type: "worktree" as const, baseRef, startFromOrigin: false };
       const modelSelection = input.modelSelection ?? roleModel(bot, input.role);
-      // The cloud's own t3_thread_launch checks a cloud session's selection.
+      // ThreadLaunchService doesn't check a selection; t3_thread_launch does, for cloud sessions.
       const problem = modelSelectionProblem({
         providers: yield* providers.getProviders,
         adapterInstanceIds: new Set(yield* adapters.list()),
@@ -353,7 +366,7 @@ const make = Effect.gen(function* () {
       if (problem !== null) {
         return yield* invalidRequest(
           input.modelSelection === undefined
-            ? `${problem} Your ${input.role} model can't run here: pass modelSelection, or ask the user to pick another under Models… in your menu.`
+            ? `${problem} ${roleDefaultHint(input.role)}`
             : problem,
         );
       }
