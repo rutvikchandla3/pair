@@ -56,19 +56,23 @@ export const descriptorOf = (
   },
 });
 
-interface ServeOptions {
+interface ServeOptions<RouteError = never> {
   /** Started cloud-only, as Pair Cloud is. */
   readonly cloudOnly?: boolean;
+  /** Its home directory, for tests that read the files it stores. Default: a new one. */
+  readonly home?: string;
+  /** HTTP routes it serves beside `/mcp`, such as attachment uploads. */
+  readonly routes?: Layer.Layer<never, RouteError, HttpRouter.HttpRouter>;
 }
 
-const layerConfig = (prefix: string, options: ServeOptions | undefined) =>
+const layerConfig = (prefix: string, options: ServeOptions<unknown> | undefined) =>
   Layer.effect(
     ServerConfig.ServerConfig,
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       return { ...config, cloudOnly: options?.cloudOnly ?? false };
     }),
-  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix })));
+  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), options?.home ?? { prefix })));
 
 /**
  * The environment a link points at, as it runs: its descriptor, MCP OAuth,
@@ -76,10 +80,10 @@ const layerConfig = (prefix: string, options: ServeOptions | undefined) =>
  * socket. The descriptor can be swapped, as when its address comes to answer
  * as another environment, and every bearer it receives is recorded.
  */
-export const servePeer = <E, R>(
+export const servePeer = <E, R, RouteError = never>(
   initial: ExecutionEnvironmentDescriptor,
   tools: Layer.Layer<never, E, R>,
-  options?: ServeOptions,
+  options?: ServeOptions<RouteError>,
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
@@ -132,6 +136,7 @@ export const servePeer = <E, R>(
         // A cloud-only peer's MCP needs one; these tests check links, not thread access.
         Layer.provide(ThreadAccess.layerTest()),
       ),
+      options?.routes ?? Layer.empty,
     ).pipe(
       Layer.provide(layerRecordBearers),
       Layer.provide(layerEnvironment),

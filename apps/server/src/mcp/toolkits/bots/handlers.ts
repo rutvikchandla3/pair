@@ -255,6 +255,7 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           task: params.task,
           cloud: params.cloud,
           modelSelection: params.modelSelection,
+          attachments: params.attachments,
         }),
       );
       return {
@@ -277,7 +278,9 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
     Effect.gen(function* () {
       const botId = yield* resolveBotId();
       const sessions = yield* BotSessions.BotSessions;
-      yield* mapError(sessions.message(botId, params.threadId, params.text));
+      yield* mapError(
+        sessions.message(botId, params.threadId, params.text, params.attachments ?? []),
+      );
       return { ok: true as const };
     }),
   ),
