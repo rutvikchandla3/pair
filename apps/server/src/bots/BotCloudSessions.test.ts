@@ -104,6 +104,7 @@ interface There {
   runStatus: string | null;
   pendingRequestIds: ReadonlyArray<RuntimeRequestId>;
   pendingRequestCount?: number;
+  archived?: boolean;
   items: ReadonlyArray<{ type: string; createdBy: "user" | "agent"; text?: string }>;
   error?: OrchestratorMcpFailure;
 }
@@ -113,7 +114,7 @@ const readResult = (there: There): OrchestratorMcpThreadReadResult =>
     thread: {
       threadId,
       status: there.status,
-      archived: false,
+      archived: there.archived ?? false,
       pendingRequestCount: there.pendingRequestCount ?? there.pendingRequestIds.length,
       latestRunId: runId,
       updatedAt: at,
@@ -276,6 +277,19 @@ describe("BotCloudSessions", () => {
       assert.include(state.wakes[0]!.text, `pass environmentId ${cloudId} to t3_thread_read`);
       assert.strictEqual(current().cloud?.state, "done");
       assert.strictEqual(current().cloud?.reportedRunId, runId);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("an archived session there keeps its finished state, marked archived", () => {
+    const { state, layer, sweep, current } = harness();
+    state.there = { ...state.there, status: "completed", runStatus: "completed", archived: true };
+    return Effect.gen(function* () {
+      yield* sweep;
+      assert.strictEqual(current().cloud?.state, "done");
+      assert.strictEqual(current().cloud?.archived, true);
+      state.there = { ...state.there, archived: false };
+      yield* sweep;
+      assert.strictEqual(current().cloud?.archived, undefined);
     }).pipe(Effect.provide(layer));
   });
 

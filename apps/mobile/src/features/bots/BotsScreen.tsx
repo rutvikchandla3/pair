@@ -380,7 +380,7 @@ function SessionRow(props: {
   const { row } = props;
   const action = !props.canArchive
     ? null
-    : props.archived
+    : row.jobArchived
       ? { id: "unarchive", title: "Unarchive job", image: "archivebox" }
       : row.jobFinished
         ? { id: "archive", title: "Archive job", image: "archivebox" }
@@ -395,7 +395,7 @@ function SessionRow(props: {
       }
       onAccessibilityAction={({ nativeEvent }) => {
         if (action !== null && nativeEvent.actionName === action.id) {
-          props.onArchive(!props.archived);
+          props.onArchive(!row.jobArchived);
         }
       }}
       onPress={props.onOpen}
@@ -430,7 +430,7 @@ function SessionRow(props: {
       shouldOpenOnLongPress
       actions={[action]}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === action.id) props.onArchive(!props.archived);
+        if (nativeEvent.event === action.id) props.onArchive(!row.jobArchived);
       }}
     >
       {pressable}

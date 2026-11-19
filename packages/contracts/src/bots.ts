@@ -238,6 +238,8 @@ export const BotCloudSession = Schema.Struct({
   stoppedThere: Schema.optional(Schema.Literal(true)),
   /** The user chose to stop following it while its cloud couldn't be reached. */
   unfollowed: Schema.optional(Schema.Literal(true)),
+  /** The thread there is archived; `state` stays what its last run left. */
+  archived: Schema.optional(Schema.Literal(true)),
 });
 export type BotCloudSession = typeof BotCloudSession.Type;
 
