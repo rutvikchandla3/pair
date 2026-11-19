@@ -193,7 +193,20 @@ const sessionsHarness = (input: {
             Effect.succeed({
               messages:
                 threadId === homeThreadId
-                  ? [{ role: "user", text: "See the screenshots.", attachments: input.chat ?? [] }]
+                  ? [
+                      {
+                        role: "user",
+                        createdBy: "user",
+                        text: "See the screenshots.",
+                        attachments: input.chat ?? [],
+                      },
+                      {
+                        role: "user",
+                        createdBy: "agent",
+                        text: "From a session.",
+                        attachments: [sentByAgent],
+                      },
+                    ]
                   : [],
             } as never),
         }),
@@ -285,6 +298,12 @@ const screenshot: ChatAttachment = {
   name: "screenshot.png",
   mimeType: "image/png",
   sizeBytes: screenshotBytes.length,
+};
+
+/** On a message an agent sent to the bot's chat, not the user. */
+const sentByAgent: ChatAttachment = {
+  ...screenshot,
+  id: ChatAttachmentId.make("thread-home-00000000-0000-4000-8000-000000000003"),
 };
 
 /** A temporary attachments directory holding the screenshot the user sent the bot. */
@@ -502,11 +521,16 @@ describe("BotSessions.start", () => {
         };
         const elsewherePath = resolveAttachmentPath({ attachmentsDir, attachment: elsewhere })!;
         yield* fileSystem.writeFile(elsewherePath, Uint8Array.from(screenshotBytes));
+        yield* fileSystem.writeFile(
+          resolveAttachmentPath({ attachmentsDir, attachment: sentByAgent })!,
+          Uint8Array.from(screenshotBytes),
+        );
         for (const reference of [
           "/etc/passwd",
           `${attachmentsDir}/../secret.png`,
           elsewhere.id,
           elsewherePath,
+          sentByAgent.id,
           "thread-home-00000000-0000-4000-8000-000000000009",
         ]) {
           for (const cloud of [undefined, {}]) {

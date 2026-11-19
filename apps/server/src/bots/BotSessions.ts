@@ -252,7 +252,10 @@ const make = Effect.gen(function* () {
         : yield* threads
             .getThreadRecords(bot.homeThreadId, ["messages"], { messageRoles: ["user"] })
             .pipe(Effect.mapError(() => unavailable("Could not read your chat's attachments.")));
-    const owned = (records?.messages ?? []).flatMap((message) => message.attachments);
+    // An agent's send to this thread is a user-role message too; only the user's own count.
+    const owned = (records?.messages ?? []).flatMap((message) =>
+      message.createdBy === "user" ? message.attachments : [],
+    );
     const attachments = yield* Effect.forEach(references, (reference) => {
       const asPath = path.resolve(reference);
       const found = owned.find(
