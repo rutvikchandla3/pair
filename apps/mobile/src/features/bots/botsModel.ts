@@ -22,7 +22,8 @@ export type BotSessionStateKind =
   | "stopped"
   | "paused"
   | "taken-over"
-  | "quiet";
+  | "quiet"
+  | "unreachable";
 
 /** The shell facts a session's state is derived from; a slice of `EnvironmentThreadShell`. */
 export interface BotSessionShell {
@@ -62,6 +63,34 @@ function sessionState(
   return { kind, label, trouble, updatedAt };
 }
 
+function cloudSessionState(
+  session: BotSession,
+  cloud: NonNullable<BotSession["cloud"]>,
+  botName: string,
+  nowMs: number,
+): BotSessionState {
+  const at = cloud.lastOutputAt;
+  switch (cloud.state) {
+    case "unreachable":
+      return sessionState("unreachable", `Can't reach ${cloud.label}`, true, at);
+    case "waiting":
+      return sessionState("waiting", `Waiting on ${botName}`, false, at);
+    case "failed":
+      return sessionState("failed", `${session.title} failed`, true, at);
+    case "stopped":
+      return sessionState("stopped", `${session.title} stopped`, true, at);
+    case "done":
+      return sessionState("done", "", false, at);
+    case "working": {
+      const updatedAt = Date.parse(at);
+      if (Number.isFinite(updatedAt) && nowMs - updatedAt >= BOT_QUIET_AFTER_MS) {
+        return sessionState("quiet", `${session.title} quiet ${relativeTime(at, nowMs)}`, true, at);
+      }
+      return sessionState("working", "", false, at);
+    }
+  }
+}
+
 /** One session's state from its thread shell; taken over wins over everything. */
 export function botSessionState(input: {
   readonly session: BotSession;
@@ -71,6 +100,10 @@ export function botSessionState(input: {
 }): BotSessionState {
   const { session, shell, botName, nowMs } = input;
   if (session.takenOver) return sessionState("taken-over", "You took over", true, null);
+  // A cloud session's shell is on the cloud; without it, the bot's server's last read stands.
+  if (shell === null && session.cloud !== undefined) {
+    return cloudSessionState(session, session.cloud, botName, nowMs);
+  }
   if (shell === null) return sessionState("working", "", false, null);
   const resetAt = shell.usageLimitResetAt;
   if (resetAt !== null && Date.parse(resetAt) > nowMs) {
@@ -123,7 +156,7 @@ export interface BotStatusLine {
 
 /** A session the bot is working on: neither finished nor failed. */
 function isWorkingState(state: BotSessionState): boolean {
-  return state.kind !== "done" && state.kind !== "failed";
+  return state.kind !== "done" && state.kind !== "failed" && state.kind !== "unreachable";
 }
 
 /** The newest session of the ask's job, else the job's title; null when the ask names neither. */
@@ -162,19 +195,26 @@ export function botStatusLine(input: {
   }
   if (open.length > 1) return { text: `${open.length} questions for you`, tone: "input" };
   const working = input.sessionStates.filter(isWorkingState).length;
-  if (working > 0) {
-    return { text: `${working} ${working === 1 ? "session" : "sessions"} working`, tone: "muted" };
+  const unreachable = input.sessionStates.filter((state) => state.kind === "unreachable").length;
+  if (working > 0 || unreachable > 0) {
+    const parts = [
+      ...(working === 0 ? [] : [`${working} ${working === 1 ? "session" : "sessions"} working`]),
+      ...(unreachable === 0 ? [] : [`${unreachable} can't be reached`]),
+    ];
+    return { text: parts.join(" · "), tone: "muted" };
   }
   return { text: "Nothing running", tone: "idle" };
 }
 
 /** Needs you, then failed sessions, then the bot's running work, then the last day's finished. */
-export type BotSessionBucket = "needs-you" | "working" | "failed" | "finished";
+export type BotSessionBucket = "needs-you" | "working" | "offline" | "failed" | "finished";
 
 const BUCKET_RANK: Readonly<Record<BotSessionBucket, number>> = {
   "needs-you": 0,
   failed: 1,
   working: 2,
+  // Not finished, and it may well still be running there.
+  offline: 2,
   finished: 3,
 };
 
@@ -195,6 +235,7 @@ function sessionBucket(
   }
   if (hasOpenAsk) return "needs-you";
   if (state.kind === "failed") return "failed";
+  if (state.kind === "unreachable") return "offline";
   return "working";
 }
 

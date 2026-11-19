@@ -1,13 +1,17 @@
 import {
+  type Bot,
   type BotId,
+  type BotJob,
   type BotJobId,
   type BotSession,
   type BotSessionRole,
   BotsError,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  type EnvironmentId,
   MessageId,
   type OrchestrationV2TurnItem,
+  type OrchestratorMcpFailure,
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -19,12 +23,20 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import { OrchestratorToolkit } from "../mcp/toolkits/orchestrator/tools.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
+import { ThreadToolkit } from "../mcp/toolkits/thread/tools.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import { BotService } from "./BotService.ts";
+import { type BotCloudTarget, loadBotLinkScope, resolveCloudTarget } from "./botCloud.ts";
 import { sessionTaskFooter } from "./botPersona.ts";
 
 const notFound = (message: string) => new BotsError({ reason: "not-found", message });
@@ -53,6 +65,15 @@ export interface BotSessionStartInput {
   readonly role: BotSessionRole;
   readonly title: BotSession["title"];
   readonly task: string;
+  /** Run on a Pair Cloud machine, checked out from `baseRef` on the remote. */
+  readonly cloud?:
+    | {
+        readonly environmentId?: EnvironmentId | undefined;
+        /** Default: the project's default branch. */
+        readonly baseRef?: string | undefined;
+        readonly branch?: string | undefined;
+      }
+    | undefined;
 }
 
 export interface BotRespondInput {
@@ -117,6 +138,13 @@ export class BotSessions extends Context.Service<
     ) => Effect.Effect<void, BotsError>;
     readonly respond: (botId: BotId, input: BotRespondInput) => Effect.Effect<void, BotsError>;
     readonly liveState: (threadId: ThreadId) => Effect.Effect<BotSessionLiveState, BotsError>;
+    /**
+     * Where `cloud` sessions would run now, from the stored links, or why they can't. Null on a
+     * server that runs cloud machines itself.
+     */
+    readonly cloudTarget: (
+      environmentId?: EnvironmentId,
+    ) => Effect.Effect<BotCloudTarget | null, BotsError>;
   }
 >()("t3/bots/BotSessions") {}
 
@@ -128,6 +156,90 @@ const make = Effect.gen(function* () {
   const git = yield* GitWorkflow.GitWorkflowService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const random = yield* SecureRandom.SecureRandom;
+  const forwarding = yield* PeerForwarding.PeerForwarding;
+  const links = yield* PeerLinks.PeerLinks;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
+    Effect.flatMap((environment) => environment.getEnvironmentId),
+  );
+
+  const linkScope = (bot: Bot) => loadBotLinkScope(threads, hereId, bot);
+
+  const cloudTarget: BotSessions["Service"]["cloudTarget"] = (environmentId) =>
+    cloudOnly ? Effect.succeed(null) : resolveCloudTarget(links, environmentId);
+
+  /** The cloud's own message, prefixed with where it came from, for the bot to relay. */
+  const cloudFailure = (target: BotCloudTarget, what: string) => (error: OrchestratorMcpFailure) =>
+    error.code === "capability_denied"
+      ? new BotsError({ reason: "cloud-only", message: `${target.label}: ${error.message}` })
+      : unavailable(`${what} on ${target.label}: ${error.message}`);
+
+  const startInCloud = Effect.fn("BotSessions.startInCloud")(function* (
+    bot: Bot,
+    job: BotJob,
+    project: { readonly id: BotSession["projectId"]; readonly title: string },
+    baseRef: string,
+    input: BotSessionStartInput & { readonly cloud: NonNullable<BotSessionStartInput["cloud"]> },
+  ) {
+    const target = yield* resolveCloudTarget(links, input.cloud.environmentId);
+    const { scope, activeRunId } = yield* linkScope(bot);
+    // The project there is the one with this project's repository, as delegate_task finds it.
+    const projectThere = yield* forwarding
+      .resolveProject(scope, target.environmentId, {
+        parentProjectId: project.id,
+        requested: undefined,
+        argument: "projectId",
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          invalidRequest(
+            `${target.label} has no single project for ${project.title}'s repository: ${error.message} Run the session here instead, or ask the user to add the project on ${target.label}.`,
+          ),
+        ),
+      );
+    const launched = yield* forwarding
+      .call(scope, ProjectToolkit.tools.t3_thread_launch, target.environmentId, {
+        projectId: projectThere,
+        title: input.title,
+        modelSelection: input.role === "worker" ? bot.models.worker : bot.models.reviewer,
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        workspaceStrategy: {
+          type: "cloud",
+          baseRef,
+          ...(input.cloud.branch === undefined ? {} : { branch: input.cloud.branch }),
+        },
+        message: `${input.task}${sessionTaskFooter({ bot, job, inWorktree: true })}`,
+        // A retry in the same bot turn finds the machine it started; a later turn gets a new one.
+        clientRequestId: `bot-session:${activeRunId ?? "idle"}:${input.title}`.slice(0, 256),
+      })
+      .pipe(
+        Effect.tapError((error) => Effect.logWarning("bot cloud session launch failed", { error })),
+        Effect.mapError(cloudFailure(target, "Could not start the session")),
+      );
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const session: BotSession = {
+      threadId: launched.threadId,
+      botId: bot.id,
+      jobId: job.id,
+      role: input.role,
+      title: input.title,
+      projectId: projectThere,
+      takenOver: false,
+      createdAt: now,
+      cloud: {
+        environmentId: target.environmentId,
+        label: target.label,
+        state: "working",
+        pendingRequest: null,
+        lastOutputAt: now,
+        reportedRunId: null,
+        reportedRequestIds: [],
+        position: 0,
+      },
+    };
+    return yield* botService.addSession(session);
+  });
 
   const loadBot = Effect.fn("BotSessions.loadBot")(function* (botId: BotId) {
     const bot = Option.getOrNull(yield* botService.getBot(botId));
@@ -163,6 +275,11 @@ const make = Effect.gen(function* () {
           "This job is not working; reopen it before starting sessions.",
         );
       }
+      if (input.cloud !== undefined && input.projectId === undefined && job.projectId === null) {
+        return yield* invalidRequest(
+          "A job with no project runs on this machine. Leave out cloud, or give the job a project.",
+        );
+      }
       const projectId =
         input.projectId ??
         job.projectId ??
@@ -184,6 +301,28 @@ const make = Effect.gen(function* () {
           (yield* git.currentBranch(root).pipe(Effect.orElseSucceed(() => null))) ??
           "main")
         : null;
+      const cloud = input.cloud;
+      if (cloud !== undefined) {
+        if (baseRef === null) {
+          return yield* invalidRequest(
+            `${project.title} is not a git repository, so it can't run on a cloud machine. Leave out cloud.`,
+          );
+        }
+        const cloudBase = cloud.baseRef ?? baseRef;
+        // This server runs cloud machines itself: an ordinary session here, on its own machine.
+        if (!cloudOnly)
+          return yield* startInCloud(bot, job, project, cloudBase, { ...input, cloud });
+      }
+      const workspaceStrategy =
+        cloud !== undefined
+          ? {
+              type: "cloud" as const,
+              baseRef: cloud.baseRef ?? baseRef ?? "main",
+              ...(cloud.branch === undefined ? {} : { branch: cloud.branch }),
+            }
+          : baseRef === null
+            ? { type: "root" as const }
+            : { type: "worktree" as const, baseRef, startFromOrigin: false };
       const launched = yield* launches
         .launch({
           commandId: CommandId.make(`server:bot-session:${yield* random.uuidV4()}`),
@@ -192,10 +331,7 @@ const make = Effect.gen(function* () {
           modelSelection: input.role === "worker" ? bot.models.worker : bot.models.reviewer,
           runtimeMode: "full-access",
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          workspaceStrategy:
-            baseRef === null
-              ? { type: "root" }
-              : { type: "worktree", baseRef, startFromOrigin: false },
+          workspaceStrategy,
           initialMessage: {
             text: `${input.task}${sessionTaskFooter({ bot, job, inWorktree })}`,
             attachments: [],
@@ -225,6 +361,18 @@ const make = Effect.gen(function* () {
   const message: BotSessions["Service"]["message"] = Effect.fn("BotSessions.message")(
     function* (botId, threadId, text) {
       const session = yield* requireSession(botId, threadId);
+      if (session.cloud !== undefined) {
+        const target = session.cloud;
+        const { scope } = yield* linkScope(yield* loadBot(botId));
+        yield* forwarding
+          .call(scope, OrchestratorToolkit.tools.t3_thread_send, target.environmentId, {
+            threadId,
+            message: text,
+            mode: "auto",
+          })
+          .pipe(Effect.mapError(cloudFailure(target, "Could not send the message")));
+        return;
+      }
       yield* threads
         .sendToThread({
           projectId: session.projectId,
@@ -246,7 +394,25 @@ const make = Effect.gen(function* () {
 
   const respond: BotSessions["Service"]["respond"] = Effect.fn("BotSessions.respond")(
     function* (botId, input) {
-      yield* requireSession(botId, input.threadId);
+      const session = yield* requireSession(botId, input.threadId);
+      if (session.cloud !== undefined) {
+        const target = session.cloud;
+        if (input.answers === undefined) {
+          return yield* invalidRequest(
+            `A session on ${target.label} can't be approved from here. Ask the user with bot_ask to open the session and approve it there.`,
+          );
+        }
+        const { scope } = yield* linkScope(yield* loadBot(botId));
+        yield* forwarding
+          .call(scope, ThreadToolkit.tools.t3_pending_request, target.environmentId, {
+            action: "respond",
+            threadId: input.threadId,
+            requestId: input.requestId,
+            answers: input.answers,
+          })
+          .pipe(Effect.mapError(cloudFailure(target, "Could not answer the session")));
+        return;
+      }
       yield* threads
         .dispatch({
           type: "runtime-request.respond",
@@ -292,7 +458,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return { start, message, respond, liveState } satisfies BotSessions["Service"];
+  return { start, message, respond, liveState, cloudTarget } satisfies BotSessions["Service"];
 });
 
 /** What the bot should read about a pending request: the question, or the command it waits on. */

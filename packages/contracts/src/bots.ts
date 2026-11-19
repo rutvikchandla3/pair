@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   IsoDateTime,
   MemberId,
   NonNegativeInt,
@@ -198,9 +199,46 @@ export type BotJob = typeof BotJob.Type;
 export const BotSessionRole = Schema.Literals(["worker", "reviewer"]);
 export type BotSessionRole = typeof BotSessionRole.Type;
 
+/** A cloud session's state as its server last read it, for clients that don't hold its shell. */
+export const BotCloudSessionState = Schema.Literals([
+  "working",
+  "waiting",
+  "done",
+  "failed",
+  "stopped",
+  "unreachable",
+]);
+export type BotCloudSessionState = typeof BotCloudSessionState.Type;
+
+/**
+ * Where a session on a linked Pair Cloud runs, and what the bot's server last read there. The
+ * bot's server follows it through the link; see docs/product/bots-cloud-sessions.md.
+ */
+export const BotCloudSession = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  state: BotCloudSessionState,
+  pendingRequest: Schema.NullOr(
+    Schema.Struct({ requestId: RuntimeRequestId, kind: Schema.String, text: Schema.String }),
+  ),
+  lastOutputAt: IsoDateTime,
+  /** The run whose end the bot already heard about. */
+  reportedRunId: Schema.NullOr(RunId),
+  /** Open requests the bot already heard about. */
+  reportedRequestIds: Schema.Array(RuntimeRequestId),
+  /** Timeline position read up to, for takeover. */
+  position: NonNegativeInt,
+  /** A stopped job's stop reached the cloud. */
+  stoppedThere: Schema.optional(Schema.Literal(true)),
+  /** The user chose to stop following it while its cloud couldn't be reached. */
+  unfollowed: Schema.optional(Schema.Literal(true)),
+});
+export type BotCloudSession = typeof BotCloudSession.Type;
+
 /**
  * A thread the bot started for a job. Its live state (working, waiting, done, failed, paused until,
- * quiet) is derived on the client from the thread shell it already has.
+ * quiet) is derived on the client from the thread shell it already has; a cloud session's client
+ * may not hold one, so it falls back to `cloud.state`.
  */
 export const BotSession = Schema.Struct({
   threadId: ThreadId,
@@ -208,10 +246,13 @@ export const BotSession = Schema.Struct({
   jobId: BotJobId,
   role: BotSessionRole,
   title: TrimmedNonEmptyString,
+  /** For a cloud session, the project there. */
   projectId: ProjectId,
   /** The user typed into it, so the bot stopped steering it until Hand back. */
   takenOver: Schema.Boolean,
   createdAt: IsoDateTime,
+  /** Absent: it runs on the bot's own server. */
+  cloud: Schema.optional(BotCloudSession),
 });
 export type BotSession = typeof BotSession.Type;
 

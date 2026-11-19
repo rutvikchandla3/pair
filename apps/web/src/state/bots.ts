@@ -106,3 +106,39 @@ export function readBotThreadIds(environmentId: EnvironmentId | null): ReadonlyS
 export function useBotsNow(): number {
   return Date.parse(`${useNowMinute()}:00.000Z`);
 }
+
+const cloudSessionPlacesFamily = Atom.family((environmentId: EnvironmentId) => {
+  let previousKey = "";
+  let previous: ReadonlyMap<string, string> = new Map();
+  return Atom.make((get) => {
+    const snapshot = AsyncResult.getOrElse(get(snapshotAtom(environmentId)), () => null);
+    const places = new Map<string, string>();
+    for (const session of snapshot?.sessions ?? []) {
+      const cloud = session.cloud;
+      if (cloud === undefined) continue;
+      places.set(
+        session.threadId,
+        cloud.state === "unreachable" ? `Can't reach ${cloud.label}` : `Runs on ${cloud.label}`,
+      );
+    }
+    const key = [...places].map((pair) => pair.join("\t")).join("\n");
+    if (key === previousKey) return previous;
+    previousKey = key;
+    previous = places;
+    return previous;
+  }).pipe(Atom.withLabel(`web-bot-cloud-session-places:${environmentId}`));
+});
+
+/**
+ * Where a bot's cloud session runs ("Runs on Pair Cloud", "Can't reach Pair Cloud"), for a link
+ * to it that this client can't open; null for anything else.
+ */
+export function useCloudSessionPlace(
+  environmentId: EnvironmentId | null,
+  threadId: string,
+): string | null {
+  const places = useAtomValue(
+    environmentId === null ? NO_SESSION_NAMES_ATOM : cloudSessionPlacesFamily(environmentId),
+  );
+  return places.get(threadId) ?? null;
+}

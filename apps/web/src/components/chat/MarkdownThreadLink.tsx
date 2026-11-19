@@ -9,6 +9,7 @@ import {
 } from "@t3tools/shared/threadLinks";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
+import { useCloudSessionPlace } from "../../state/bots";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
 import { BotStateGlyph } from "../bots/BotStateGlyph";
 import { threadChipState } from "../bots/bots.logic";
@@ -32,9 +33,14 @@ export function MarkdownThreadLink(props: {
   const refs = useThreadRefs(guess);
   const remote = useThreadShell(guess ? guessThreadLinkRef(props.link, refs) : null);
   const thread = local ?? remote;
+  // A bot's cloud session this client isn't connected to: say where it runs.
+  const cloudPlace = useCloudSessionPlace(
+    thread === null ? props.environmentId : null,
+    props.link.threadId,
+  );
   if (thread === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
-    return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
+    return <UnresolvedChip label={props.label ?? unknown} tooltip={cloudPlace ?? unknown} />;
   }
   const ref = { environmentId: thread.environmentId, threadId: thread.id };
   const title = thread.title.trim() || props.label || "Untitled thread";

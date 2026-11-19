@@ -1,6 +1,6 @@
 import type { Bot, BotsSnapshot, EnvironmentId } from "@t3tools/contracts";
 import { Link, useParams } from "@tanstack/react-router";
-import { ChevronRightIcon, PlusIcon } from "lucide-react";
+import { ChevronRightIcon, CloudIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -62,10 +62,14 @@ function SessionRow(props: {
   readonly selectedThreadId: string | null;
 }) {
   const { session } = props.row;
+  const cloud = session.cloud;
   return (
     <Link
       to="/$environmentId/$threadId"
-      params={{ environmentId: props.environmentId, threadId: session.threadId }}
+      params={{
+        environmentId: cloud?.environmentId ?? props.environmentId,
+        threadId: session.threadId,
+      }}
       aria-current={props.selectedThreadId === session.threadId ? "page" : undefined}
       className={cn(
         sessionRowClass,
@@ -73,9 +77,21 @@ function SessionRow(props: {
       )}
     >
       <span className="inline-flex w-3.5 shrink-0 justify-center">
-        <BotStateGlyph glyph={props.row.glyph} className="size-3.5" />
+        <BotStateGlyph
+          glyph={props.row.glyph}
+          className="size-3.5"
+          {...(cloud === undefined ? {} : { label: `Can't reach ${cloud.label}` })}
+        />
       </span>
       <span className="min-w-0 flex-1 truncate">{session.title}</span>
+      {cloud === undefined ? null : (
+        <CloudIcon
+          aria-label={`Runs on ${cloud.label}`}
+          className="size-3 shrink-0 text-sidebar-muted-foreground"
+        >
+          <title>{`Runs on ${cloud.label}`}</title>
+        </CloudIcon>
+      )}
       {props.row.finishedAt === null ? null : <SessionTime timestamp={props.row.finishedAt} />}
     </Link>
   );

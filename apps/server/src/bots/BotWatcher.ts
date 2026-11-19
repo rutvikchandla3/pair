@@ -194,6 +194,127 @@ const truncate = (text: string, limit = WAKE_TEXT_LIMIT) =>
 /** "HH:MM" from an ISO instant, for a timeline line. */
 const clockLabel = (iso: string) => iso.slice(11, 16);
 
+/** How a wake names a session; a cloud one says where it runs and how to read it there. */
+const sessionRef = (session: BotSession): string =>
+  session.cloud === undefined
+    ? `Session "${session.title}" (thread ${session.threadId})`
+    : `Session "${session.title}" (thread ${session.threadId}, on ${session.cloud.label}: pass environmentId ${session.cloud.environmentId} to t3_thread_read)`;
+
+type Bots = BotService["Service"];
+
+/** The timeline event and wake for a session run that ended, wherever it runs. */
+export const reportRunEnd = Effect.fnUntraced(function* (
+  bots: Bots,
+  session: BotSession,
+  job: BotJob,
+  end: RunEnd,
+) {
+  const title = session.title;
+  const at = sessionRef(session);
+  switch (end.kind) {
+    case "completed": {
+      yield* bots.addEvent({
+        botId: session.botId,
+        jobId: session.jobId,
+        kind: "session-finished",
+        text: `${title} finished`,
+        sessionThreadId: session.threadId,
+      });
+      if (!session.takenOver) {
+        yield* bots.publishWake({
+          botId: session.botId,
+          reason: "session-finished",
+          label: `${title} finished`,
+          text: `${at} finished. Read its report with t3_thread_read, then continue the job or finish it.`,
+        });
+      }
+      return;
+    }
+    case "usage-limit": {
+      const resetAt = end.resetAt ?? "";
+      yield* bots.addEvent({
+        botId: session.botId,
+        jobId: session.jobId,
+        kind: "session-failed",
+        text: `${title} paused until ${clockLabel(resetAt)}`,
+        sessionThreadId: session.threadId,
+      });
+      if (!session.takenOver) {
+        yield* bots.publishWake({
+          botId: session.botId,
+          reason: "session-usage-limit",
+          label: `${title} hit a usage limit`,
+          text: `${at} hit a usage limit until ${resetAt}. Move the work to another model with a new session, or wait.`,
+        });
+      }
+      return;
+    }
+    case "failed": {
+      yield* bots.addEvent({
+        botId: session.botId,
+        jobId: session.jobId,
+        kind: "session-failed",
+        text: `${title} failed`,
+        sessionThreadId: session.threadId,
+      });
+      if (!session.takenOver) {
+        const error = truncate(end.error ?? "no error reported");
+        yield* bots.publishWake({
+          botId: session.botId,
+          reason: "session-failed",
+          label: `${title} failed`,
+          text: `${at} failed: ${error}. Nudge it once with bot_session_message, or start a replacement.`,
+        });
+      }
+      return;
+    }
+    case "stopped": {
+      yield* bots.addEvent({
+        botId: session.botId,
+        jobId: session.jobId,
+        kind: "info",
+        text: `${title} stopped`,
+        sessionThreadId: session.threadId,
+      });
+      // The user stopped the job: no need to tell the bot about its sessions.
+      if (!session.takenOver && job.status === "working") {
+        yield* bots.publishWake({
+          botId: session.botId,
+          reason: "session-stopped",
+          label: `${title} stopped`,
+          text: `${at} stopped.`,
+        });
+      }
+      return;
+    }
+  }
+});
+
+/** The wake for a session's new question or approval. */
+export const reportRequest = (
+  bots: Bots,
+  session: BotSession,
+  request: { readonly id: string; readonly kind: string; readonly text: string | null },
+  advice = "Answer with bot_session_respond if your playbook covers it and no limit applies; otherwise ask the user with bot_ask.",
+) =>
+  bots.publishWake({
+    botId: session.botId,
+    reason: "session-request",
+    label: `${session.title} is waiting`,
+    text: `${sessionRef(session)} is waiting: ${request.kind} request ${request.id}: "${truncate(request.text ?? "no text")}". ${advice}`,
+  });
+
+/** Marks the session taken over and tells the bot to step back. */
+export const reportTakeover = Effect.fnUntraced(function* (bots: Bots, session: BotSession) {
+  yield* bots.setSessionTakenOver(session.threadId, true);
+  yield* bots.publishWake({
+    botId: session.botId,
+    reason: "session-taken-over",
+    label: `You typed in ${session.title}`,
+    text: `The user took over ${sessionRef(session).replace(/^Session/, "session")}. Leave it alone until they hand it back.`,
+  });
+});
+
 export class BotWatcher extends Context.Service<
   BotWatcher,
   {
@@ -253,85 +374,7 @@ const make = Effect.gen(function* () {
     yield* syncPullRequests(session, job, shell);
     const end = classifyRunEnd(event.payload.status, shell);
     if (end === null) return;
-    const title = session.title;
-    const at = `Session "${title}" (thread ${event.threadId})`;
-    switch (end.kind) {
-      case "completed": {
-        yield* bots.addEvent({
-          botId: session.botId,
-          jobId: session.jobId,
-          kind: "session-finished",
-          text: `${title} finished`,
-          sessionThreadId: event.threadId,
-        });
-        if (!session.takenOver) {
-          yield* bots.publishWake({
-            botId: session.botId,
-            reason: "session-finished",
-            label: `${title} finished`,
-            text: `${at} finished. Read its report with t3_thread_read, then continue the job or finish it.`,
-          });
-        }
-        return;
-      }
-      case "usage-limit": {
-        const resetAt = end.resetAt ?? "";
-        yield* bots.addEvent({
-          botId: session.botId,
-          jobId: session.jobId,
-          kind: "session-failed",
-          text: `${title} paused until ${clockLabel(resetAt)}`,
-          sessionThreadId: event.threadId,
-        });
-        if (!session.takenOver) {
-          yield* bots.publishWake({
-            botId: session.botId,
-            reason: "session-usage-limit",
-            label: `${title} hit a usage limit`,
-            text: `${at} hit a usage limit until ${resetAt}. Move the work to another model with a new session, or wait.`,
-          });
-        }
-        return;
-      }
-      case "failed": {
-        yield* bots.addEvent({
-          botId: session.botId,
-          jobId: session.jobId,
-          kind: "session-failed",
-          text: `${title} failed`,
-          sessionThreadId: event.threadId,
-        });
-        if (!session.takenOver) {
-          const error = truncate(end.error ?? "no error reported");
-          yield* bots.publishWake({
-            botId: session.botId,
-            reason: "session-failed",
-            label: `${title} failed`,
-            text: `${at} failed: ${error}. Nudge it once with bot_session_message, or start a replacement.`,
-          });
-        }
-        return;
-      }
-      case "stopped": {
-        yield* bots.addEvent({
-          botId: session.botId,
-          jobId: session.jobId,
-          kind: "info",
-          text: `${title} stopped`,
-          sessionThreadId: event.threadId,
-        });
-        // The user stopped the job: no need to tell the bot about its sessions.
-        if (!session.takenOver && job.status === "working") {
-          yield* bots.publishWake({
-            botId: session.botId,
-            reason: "session-stopped",
-            label: `${title} stopped`,
-            text: `${at} stopped.`,
-          });
-        }
-        return;
-      }
-    }
+    yield* reportRunEnd(bots, session, job, end);
   });
 
   const onRuntimeRequest = Effect.fnUntraced(function* (
@@ -351,12 +394,10 @@ const make = Effect.gen(function* () {
     );
     const job = Option.getOrNull(yield* bots.getJob(session.jobId));
     if (job === null) return;
-    const question = truncate(excerpt ?? "no text");
-    yield* bots.publishWake({
-      botId: session.botId,
-      reason: "session-request",
-      label: `${session.title} is waiting`,
-      text: `Session "${session.title}" (thread ${event.threadId}) is waiting: ${event.payload.kind} request ${event.payload.id}: "${question}". Answer with bot_session_respond if your playbook covers it and no limit applies; otherwise ask the user with bot_ask.`,
+    yield* reportRequest(bots, session, {
+      id: event.payload.id,
+      kind: event.payload.kind,
+      text: excerpt,
     });
     yield* Ref.update(pending, (entries) =>
       new Map(entries).set(key, {
@@ -373,13 +414,7 @@ const make = Effect.gen(function* () {
     session: BotSession,
   ) {
     if (session.takenOver || !isTakeoverMessage(event, session)) return;
-    yield* bots.setSessionTakenOver(event.threadId, true);
-    yield* bots.publishWake({
-      botId: session.botId,
-      reason: "session-taken-over",
-      label: `You typed in ${session.title}`,
-      text: `The user took over session "${session.title}" (thread ${event.threadId}). Leave it alone until they hand it back.`,
-    });
+    yield* reportTakeover(bots, session);
   });
 
   const handle: BotWatcher["Service"]["handle"] = Effect.fnUntraced(
@@ -466,6 +501,17 @@ const make = Effect.gen(function* () {
       for (const session of yield* bots.listSessions(bot.id)) {
         const job = Option.getOrNull(yield* bots.getJob(session.jobId));
         if (job === null) continue;
+        known.set(session.threadId, { session, job });
+        // A cloud session's shell is on the cloud; its follower keeps what it last read there.
+        if (session.cloud !== undefined) {
+          candidates.push({
+            threadId: session.threadId,
+            jobStatus: job.status,
+            active: session.cloud.state === "working",
+            lastOutputAt: Date.parse(session.cloud.lastOutputAt),
+          });
+          continue;
+        }
         const shell = yield* readShell(session.threadId);
         candidates.push({
           threadId: session.threadId,
@@ -474,7 +520,6 @@ const make = Effect.gen(function* () {
             shell !== null && (shell.activeRunId !== null || LIVE_RUN_STATUSES.has(shell.status)),
           lastOutputAt: shell === null ? now : lastOutputAt(shell),
         });
-        known.set(session.threadId, { session, job });
       }
     }
     const { due, woken } = quietSessions(candidates, now, yield* Ref.get(quietWoken));
@@ -494,7 +539,7 @@ const make = Effect.gen(function* () {
         botId: entry.session.botId,
         reason: "session-quiet",
         label: `${entry.session.title} is quiet`,
-        text: `Session "${entry.session.title}" (thread ${entry.session.threadId}) has had no new output for ${minutes}m. Ask it for a status with bot_session_message.`,
+        text: `${sessionRef(entry.session)} has had no new output for ${minutes}m. Ask it for a status with bot_session_message.`,
       });
     }
   });
