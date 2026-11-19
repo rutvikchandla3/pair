@@ -96,7 +96,11 @@ function SessionRow(props: {
       },
     });
   };
-  const action = props.archived ? "Unarchive job" : props.row.jobFinished ? "Archive job" : null;
+  const action = props.row.jobArchived
+    ? "Unarchive job"
+    : props.row.jobFinished
+      ? "Archive job"
+      : null;
   const cloud = session.cloud;
   return (
     <div className="group/bot-session relative">
@@ -150,11 +154,11 @@ function SessionRow(props: {
                   size="icon-micro"
                   variant="ghost-muted"
                   aria-label={`${action} ${session.title}`}
-                  onClick={() => void setArchived(!props.archived)}
+                  onClick={() => void setArchived(!props.row.jobArchived)}
                 />
               }
             >
-              {props.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+              {props.row.jobArchived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
             </TooltipTrigger>
             <TooltipPopup side="top">{action}</TooltipPopup>
           </Tooltip>

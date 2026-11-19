@@ -252,6 +252,8 @@ export interface BotSessionRow {
   readonly bucket: BotSessionBucket;
   /** The session's job is done or stopped, so the row offers Archive job. */
   readonly jobFinished: boolean;
+  /** The session's job is archived, so the row offers Unarchive job. */
+  readonly jobArchived: boolean;
 }
 
 export interface BotSessionRows {
@@ -259,7 +261,7 @@ export interface BotSessionRows {
   readonly rows: ReadonlyArray<BotSessionRow>;
   /** Finished longer ago than a day, newest first; behind "N earlier". */
   readonly earlier: ReadonlyArray<BotSessionRow>;
-  /** Sessions of archived jobs; after the earlier ones, behind the same disclosure. */
+  /** Sessions of archived jobs, and sessions archived on their cloud; behind the same disclosure. */
   readonly archived: ReadonlyArray<BotSessionRow>;
 }
 
@@ -299,9 +301,10 @@ export function botSessionRows(input: {
       state,
       bucket: sessionBucket(hasOpenAsk, state),
       jobFinished: job !== undefined && botJobFinished(job),
+      jobArchived: job !== undefined && job.archivedAt !== null,
     };
-    // A question on an archived job keeps it in the list.
-    if (job !== undefined && job.archivedAt !== null && !hasOpenAsk) archived.push(row);
+    // A question on the job keeps it in the list.
+    if ((row.jobArchived || session.cloud?.archived === true) && !hasOpenAsk) archived.push(row);
     else listed.push(row);
   });
   const ordered = listed.sort((left, right) => {

@@ -297,6 +297,8 @@ export interface BotSidebarSession {
   readonly finishedAt: string | null;
   /** The session's job is done or stopped, so the row offers Archive job. */
   readonly jobFinished: boolean;
+  /** The session's job is archived, so the row offers Unarchive job. */
+  readonly jobArchived: boolean;
 }
 
 export interface BotSidebarSessions {
@@ -304,7 +306,10 @@ export interface BotSidebarSessions {
   readonly rows: ReadonlyArray<BotSidebarSession>;
   /** Finished longer ago than 24 hours, newest first; behind "N earlier". */
   readonly earlier: ReadonlyArray<BotSidebarSession>;
-  /** Sessions of archived jobs, newest first; after the earlier ones, behind the same disclosure. */
+  /**
+   * Sessions of archived jobs, and sessions archived on their cloud, newest first; after the
+   * earlier ones, behind the same disclosure.
+   */
   readonly archived: ReadonlyArray<BotSidebarSession>;
 }
 
@@ -330,15 +335,10 @@ export function botSidebarSessions(
     openAsks(snapshot, botId).flatMap((ask) => (ask.jobId === null ? [] : [ask.jobId])),
   );
   const jobs = jobsById(snapshot);
-  const archivedJobIds = new Set<string>();
   const decorated = botSessions(snapshot, botId).map((session): BotSidebarSession => {
     const job = jobs.get(session.jobId);
     const shell = shellFor(shells, session.threadId);
     const glyph = botSessionGlyph(session, job, shell, openAskJobIds, now);
-    // A question on an archived job keeps it in the list.
-    if (job !== undefined && job.archivedAt !== null && !openAskJobIds.has(job.id)) {
-      archivedJobIds.add(job.id);
-    }
     return {
       session,
       glyph,
@@ -347,17 +347,22 @@ export function botSidebarSessions(
           ? (shell?.updatedAt ?? session.cloud?.lastOutputAt ?? job?.finishedAt ?? null)
           : null,
       jobFinished: job !== undefined && botJobFinished(job),
+      jobArchived: job !== undefined && job.archivedAt !== null,
     };
   });
+  // A question on the job keeps it in the list.
+  const isArchived = (row: BotSidebarSession): boolean =>
+    (row.jobArchived || row.session.cloud?.archived === true) &&
+    !openAskJobIds.has(row.session.jobId);
   const byGlyphThenNewest = (left: BotSidebarSession, right: BotSidebarSession): number =>
     GLYPH_ORDER[left.glyph] - GLYPH_ORDER[right.glyph] ||
     right.session.createdAt.localeCompare(left.session.createdAt);
   const newestFirst = (left: BotSidebarSession, right: BotSidebarSession): number =>
     (right.finishedAt ?? "").localeCompare(left.finishedAt ?? "");
   const archived = decorated
-    .filter((row) => archivedJobIds.has(row.session.jobId))
+    .filter(isArchived)
     .sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
-  const listed = decorated.filter((row) => !archivedJobIds.has(row.session.jobId));
+  const listed = decorated.filter((row) => !isArchived(row));
   const active = listed.filter((row) => row.glyph !== "done").sort(byGlyphThenNewest);
   const finished = listed.filter((row) => row.glyph === "done").sort(newestFirst);
   const recent = finished.filter((row) => {
