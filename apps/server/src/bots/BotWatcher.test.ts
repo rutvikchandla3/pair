@@ -6,9 +6,11 @@ import {
   type BotJob,
   EventId,
   MemberId,
+  MessageId,
   type OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -208,7 +210,7 @@ it("merges a session's pull requests into the job by number", () => {
 });
 
 it.effect(
-  "records a local session's thread archived with its real state, and clears it on unarchive",
+  "records a local session's archived thread state, refreshes it when the run ends, and clears it",
   () => {
     const sessionThreadId = ThreadId.make("thread:local-session");
     const instanceId = ProviderInstanceId.make("claudeAgent");
@@ -228,9 +230,10 @@ it.effect(
       forkedFrom: null,
       createdBy: "agent",
       creationSource: "web",
-      activeRunId: null,
-      latestRunId: null,
-      status: "failed",
+      activeRunId: RunId.make("run:1"),
+      latestRunId: RunId.make("run:1"),
+      activityRunStatus: "running",
+      status: "running",
       pendingRuntimeRequest: null,
       latestVisibleMessage: null,
       latestUserMessageAt: null,
@@ -293,8 +296,34 @@ it.effect(
           .pipe(Effect.map((s) => Option.getOrThrow(s).archived));
 
       yield* watcher.handle(event("thread.archived"));
-      assert.strictEqual(yield* archived(), "failed");
+      assert.strictEqual(yield* archived(), "working");
       assert.strictEqual(Option.getOrThrow(yield* service.getJob(job.id)).status, "working");
+
+      current = { ...current, activeRunId: null, activityRunStatus: null, status: "completed" };
+      yield* watcher.handle({
+        id: EventId.make("event:run.updated"),
+        type: "run.updated",
+        threadId: sessionThreadId,
+        occurredAt: now,
+        payload: {
+          id: RunId.make("run:1"),
+          threadId: sessionThreadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection: current.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:1"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      assert.strictEqual(yield* archived(), "done");
 
       current = { ...current, archivedAt: null };
       yield* watcher.handle(event("thread.unarchived"));
