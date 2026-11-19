@@ -40,7 +40,13 @@ import { BotAvatar } from "./BotAvatar";
 import { openBotDialog } from "./botDialogStore";
 import { BotMemoryPanel } from "./BotMemoryPanel";
 import { BotSettingsDialog } from "./BotSettingsDialog";
-import { botSessions, botStatusLine, sessionState, type ShellLookup } from "./bots.logic";
+import {
+  botSessions,
+  botStatusLine,
+  cloudSessionsStillRunning,
+  sessionState,
+  type ShellLookup,
+} from "./bots.logic";
 
 const EMBEDDED_PANEL: SideChatParentPanel = {
   openToolDiff: () => {},
@@ -115,6 +121,7 @@ export function BotPage(props: {
     const state = sessionState(session, shellMap.get(session.threadId) ?? null, now);
     return state.kind === "working" || state.kind === "quiet";
   }).length;
+  const cloudRunning = cloudSessionsStillRunning(sessions);
 
   const focusAsk = (runId: RunId | null) => {
     if (runId === null) return;
@@ -273,6 +280,7 @@ export function BotPage(props: {
               All {sessions.length} of its session{sessions.length === 1 ? "" : "s"} move into
               Threads ({runningSessions} {runningSessions === 1 ? "is" : "are"} still running and
               keep going). Its notes are deleted.
+              {cloudRunning === null ? null : ` ${cloudRunning}`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

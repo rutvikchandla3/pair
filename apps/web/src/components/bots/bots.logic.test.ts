@@ -20,6 +20,7 @@ import {
   botSidebarSessions,
   botStatusLine,
   botWorking,
+  cloudSessionsStillRunning,
   sessionState,
   threadChipState,
 } from "./bots.logic";
@@ -125,6 +126,25 @@ function bot(overrides: Partial<Bot> = {}): Bot {
   };
 }
 
+function cloudSession(
+  state: NonNullable<BotSession["cloud"]>["state"],
+  overrides: Partial<BotSession> = {},
+): BotSession {
+  return session({
+    cloud: {
+      environmentId: "env_cloud" as EnvironmentId,
+      label: "Pair Cloud",
+      state,
+      pendingRequest: null,
+      lastOutputAt: new Date(NOW).toISOString(),
+      reportedRunId: null,
+      reportedRequestIds: [],
+      position: 0,
+    },
+    ...overrides,
+  });
+}
+
 function snapshot(overrides: Partial<BotsSnapshot> = {}): BotsSnapshot {
   return {
     bots: [bot()],
@@ -162,6 +182,21 @@ describe("sessionState", () => {
 
   it("treats a missing shell as working", () => {
     expect(sessionState(session(), null, NOW).kind).toBe("working");
+  });
+
+  it("reads a cloud session without its shell from its last-read state", () => {
+    expect(sessionState(cloudSession("done"), undefined, NOW).kind).toBe("done");
+    expect(sessionState(cloudSession("unreachable"), undefined, NOW).kind).toBe("unreachable");
+    const quiet = cloudSession("working");
+    expect(sessionState(quiet, undefined, NOW + 31 * 60_000).kind).toBe("quiet");
+    // A client connected to the cloud holds the fresher shell.
+    expect(
+      sessionState(
+        cloudSession("unreachable"),
+        shell({ runtime: { status: "completed" } as never }),
+        NOW,
+      ).kind,
+    ).toBe("done");
   });
 });
 
@@ -218,6 +253,15 @@ describe("botStatusLine", () => {
       label: "1 session working · nothing needs you",
     });
     expect(botStatusLine(snapshot(), bot(), undefined, NOW).label).toBe("Nothing running");
+    const cut = snapshot({
+      sessions: [
+        cloudSession("working"),
+        cloudSession("unreachable", { threadId: ThreadId.make("cut") }),
+      ],
+    });
+    expect(botStatusLine(cut, bot(), undefined, NOW).label).toBe(
+      "1 session working · 1 can't be reached",
+    );
   });
 
   it("says working while the bot's own turn runs", () => {
@@ -302,6 +346,36 @@ describe("botSidebarSessions", () => {
       [ThreadId.make("done"), shell({ runtime: { status: "completed" } as never })],
     ]);
     expect(botSessionGlyph(done, shells.get(done.threadId), new Set([JOB]), NOW)).toBe("done");
+  });
+});
+
+describe("cloud sessions", () => {
+  it("shows an unreachable session offline, among the unfinished ones", () => {
+    const rows = botSidebarSessions(
+      snapshot({
+        sessions: [
+          cloudSession("done", { threadId: ThreadId.make("done") }),
+          cloudSession("unreachable", { threadId: ThreadId.make("cut") }),
+        ],
+      }),
+      BOT,
+      undefined,
+      NOW,
+    ).rows;
+    expect(rows.map((row) => [row.session.threadId, row.glyph])).toEqual([
+      ["cut", "offline"],
+      ["done", "done"],
+    ]);
+  });
+
+  it("warns on delete about cloud sessions that keep running there", () => {
+    expect(cloudSessionsStillRunning([session(), cloudSession("done")])).toBeNull();
+    expect(
+      cloudSessionsStillRunning([
+        cloudSession("working"),
+        cloudSession("unreachable", { threadId: ThreadId.make("cut") }),
+      ]),
+    ).toBe("2 sessions keep running on Pair Cloud.");
   });
 });
 

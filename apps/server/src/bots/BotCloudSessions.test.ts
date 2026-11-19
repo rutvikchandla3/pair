@@ -366,6 +366,23 @@ describe("BotCloudSessions", () => {
     });
   });
 
+  it.effect("stops following a session whose thread is gone there, without an outage", () => {
+    const { state, layer, sweep, current, reasons } = harness();
+    state.there = {
+      ...state.there,
+      error: new OrchestratorMcpFailure({ code: "thread_not_found", message: "Not found." }),
+    };
+    return Effect.gen(function* () {
+      yield* sweep;
+      yield* TestClock.adjust(BotCloudSessions.CLOUD_UNREACHABLE_AFTER_MS);
+      yield* sweep;
+      assert.strictEqual(current().cloud?.state, "stopped");
+      assert.isTrue(current().cloud?.unfollowed);
+      assert.deepStrictEqual(reasons(), []);
+      assert.lengthOf(state.asks, 0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("stops following an unreachable cloud's sessions when the user says so", () => {
     const { state, layer, sweep, current } = harness();
     state.sessions.set(threadId, { ...session, cloud: { ...cloud, state: "unreachable" } });

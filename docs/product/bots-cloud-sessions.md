@@ -24,7 +24,7 @@ it exactly as it does a local one.
 ### Should we build it?
 
 Yes, with one limit. The value is real and the pieces exist: links, forwarded MCP calls, cloud
-launches and a remote follower (`RemoteDelegation`). What does not hold up is "show *every*
+launches and a remote follower (`RemoteDelegation`). What does not hold up is "show _every_
 project on the cloud in `bot_brief`" as a separate concept. A bot already picks a project per job.
 A cloud session runs in **the same project's repository on the cloud**, matched by repository the
 way `delegate_task` does. So the bot does not need a second project list to choose from. It needs
@@ -41,7 +41,7 @@ to know which of its projects can run in the cloud. The plan narrows the brief c
 3. **Make it a `delegate_task` subagent of the bot's home thread.** That reuses `RemoteDelegation`
    whole. But a delegated task wakes its parent only when it ends: no asked, quiet or taken-over
    wakes. Its result also lands inside the home thread's turn, which breaks "the chat never waits
-   on the bot". Rejected. The *follow loop* pattern is reused; the subagent record is not.
+   on the bot". Rejected. The _follow loop_ pattern is reused; the subagent record is not.
 4. **Chosen: `bot_start_session` takes `cloud`, and a small follower polls the session through
    the link.** It turns what changed into the same wakes the local watcher sends.
 
@@ -50,8 +50,10 @@ to know which of its projects can run in the cloud. The plan narrows the brief c
 - **Coordinator pulls from remote workers.** CI runners such as GitHub Actions self-hosted runners,
   GitLab Runner and Buildkite agents talk to their coordinator by outbound long-poll, so workers
   behind NAT need no inbound route. The roles are swapped here: the cloud is always reachable and
-  the laptop is not. So the coordinator (the bot's server) does the outbound polling. It uses the
-  link's existing `t3_thread_wait` long-poll, which `PeerForwarding` already cuts into 50 s pieces.
+  the laptop is not. So the coordinator (the bot's server) does the outbound polling, with plain
+  reads over the link every 15 s. We considered the link's `t3_thread_wait` long-poll for faster
+  finish wakes. It only ends on a finished run, though, not on a question or a takeover, so the
+  periodic read was needed anyway, and one mechanism is simpler than two.
 - **Level-triggered reconciliation** (Kubernetes controllers). Each poll reads the remote thread's
   current state, compares it with the last state we recorded on the session, and acts only on the
   difference. A missed poll, a dropped connection or a server restart cannot lose a wake or send
@@ -59,9 +61,9 @@ to know which of its projects can run in the cloud. The plan narrows the brief c
   whose cloud session is still running gets a stop sent there.
 - **Lost-contact state instead of silence.** A GitHub Actions runner that stops reporting shows
   "lost communication with the server" instead of "running" forever. A cloud session we can't
-  reach shows *Can't reach*, and the bot is told once.
-- **Capped exponential backoff** for an unreachable peer. This is `RemoteDelegation`'s
-  `FollowRetrySchedule`: 2 s doubling, capped at 5 min.
+  reach shows _Can't reach_, and the bot is told once.
+- **Bounded retry cost** for an unreachable peer. One failed call ends that cloud's turn in the
+  sweep, so a dead cloud costs one request per 15 s per bot, not one per session.
 - **Idempotent remote launch.** The launch carries a `clientRequestId`, so a retry after a lost
   reply finds the same thread (`PeerForwarding` scopes the key per caller).
 
@@ -106,25 +108,25 @@ cloud?: {
 - **The project there** is the one with the same repository as the job's project
   (`PeerForwarding.resolveProject`, the `delegate_task` path). If no project there has that
   repository, or several do, the bot gets the same actionable error `delegate_task` gives.
-- **Not in the cloud:** jobs with no project (scratch work on *this* machine) and projects with no
+- **Not in the cloud:** jobs with no project (scratch work on _this_ machine) and projects with no
   git remote. The error says why.
 - The result gains `environmentId` and `where` ("this machine" or the cloud's label). `link` is
   formatted for that environment.
 
 Errors are written for the bot to relay:
 
-| Case | Message (to the bot) |
-| --- | --- |
+| Case                                 | Message (to the bot)                                                                                                                                                       |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | No cloud on this server, none linked | "This Pair server doesn't run cloud machines and no Pair Cloud is linked. Tell the user to link one in Settings → Connections, or start the session here without `cloud`." |
-| Several clouds linked, none named | "More than one Pair Cloud is linked: A (id), B (id). Pass cloud.environmentId." |
-| Link expired or revoked | The link's own message ("…link it again"), mapped as `capability_denied`. |
-| Cloud unreachable at launch | "Could not reach <label>: <reason>. Start it here instead, or try again." |
-| No matching repository there | `resolveProject`'s message (clone and create it there). |
-| Machine fails to start | Arrives later as a **failed** wake with the cloud's error, like any failed run. |
+| Several clouds linked, none named    | "More than one Pair Cloud is linked: A (id), B (id). Pass cloud.environmentId."                                                                                            |
+| Link expired or revoked              | The link's own message ("…link it again"), mapped as `capability_denied`.                                                                                                  |
+| Cloud unreachable at launch          | "Could not reach <label>: <reason>. Start it here instead, or try again."                                                                                                  |
+| No matching repository there         | `resolveProject`'s message (clone and create it there).                                                                                                                    |
+| Machine fails to start               | Arrives later as a **failed** wake with the cloud's error, like any failed run.                                                                                            |
 
 `bot_session_message` and `bot_session_respond` are unchanged for the bot. For a cloud session the
 server forwards them through the link: `t3_thread_send` with mode `auto`, and `t3_pending_request`
-`respond`. One gap: the link can answer a session's *question* but not approve a *permission*
+`respond`. One gap: the link can answer a session's _question_ but not approve a _permission_
 request, because `t3_pending_request` refuses approvals. Bot sessions run in full access, so these
 are rare. When one does come, the wake tells the bot to `bot_ask` the user to approve it in the
 session, and `bot_session_respond` with a `decision` returns that same instruction.
@@ -162,19 +164,19 @@ cloud?: {
 ```
 
 `projectId` keeps meaning "the project the session runs in", which for a cloud session is the
-project *there*. A local session has no `cloud` and behaves exactly as today.
+project _there_. A local session has no `cloud` and behaves exactly as today.
 
 ### Watcher
 
-A new `BotCloudSessions` follower beside `BotWatcher` (`apps/server/src/bots/`). It runs one fiber
-per cloud session whose job is working. A supervisor sweep on `BotWatcher`'s existing 60 s quiet
-tick starts missing fibers, so restarts and reopened jobs need no extra wiring. Each fiber:
+A new `BotCloudSessions` follower beside `BotWatcher` (`apps/server/src/bots/`). It is one sweep
+every 15 s over every bot's cloud sessions, reading a working or waiting session each sweep and a
+settled one every 60 s, so it catches a new run there (the user's own message, a hand-back). It
+holds no per-session fibers: a restart or a reopened job is just the next sweep. For each session
+due, it:
 
-1. If the last state was working, **long-polls** `t3_thread_wait` through the link for up to 60 s,
-   so a finished run wakes the bot within seconds. Otherwise it sleeps 30 s.
-2. **Reads** `t3_thread_read` (`view: messages`, after the stored `position`, a small page), plus
+1. **Reads** `t3_thread_read` (`view: messages`, after the stored `position`, a small page), plus
    `t3_pending_request list` while `pendingRequestCount > 0`.
-3. **Diffs** against the stored state and calls the same `BotService.addEvent` / `publishWake` as
+2. **Diffs** against the stored state and calls the same `BotService.addEvent` / `publishWake` as
    the local watcher, with the same reasons and wording:
    - run ended → finished / failed (with the cloud's error text) / usage limit / stopped
    - new pending request → asked (question text from `t3_pending_request read`)
@@ -183,7 +185,7 @@ tick starts missing fibers, so restarts and reopened jobs need no extra wiring. 
      `createdBy: "agent"`, `creationSource: "mcp"` (`OrchestratorMcpService.sendToThread`), and so
      is the launch's first message. A test pins this rule.
    - PR links on the thread → folded into the job, as `syncPullRequests` does today
-4. **Writes** the new state back only when it changed, so clients see no churn.
+3. **Writes** the new state back only when it changed, so clients see no churn.
 
 Quiet detection is the existing `quiet()` sweep. For a cloud session it reads `cloud.lastOutputAt`
 and `cloud.state` in place of the local shell, so "went quiet" has one implementation.
@@ -193,8 +195,8 @@ Pair Cloud: pass environmentId E to t3_thread_read) finished…`. The fold label
 unchanged ("X finished"). Session titles already tell the user which work it is, and a location
 suffix would only lengthen every label.
 
-**Reachability is tracked per cloud, not per session.** Every session fiber reports its call's
-outcome into one map keyed by `environmentId`. A cloud turns unreachable after 3 minutes of
+**Reachability is tracked per cloud, not per session.** Each sweep records every call's outcome
+in one map keyed by bot and `environmentId`, and a failed call ends that cloud's turn in the sweep. A cloud turns unreachable after 3 minutes of
 continuous failure across all its sessions, and the bot and the user each hear about it once per
 outage, not once per session.
 
@@ -207,7 +209,7 @@ outage, not once per session.
   with no new Inbox kind on any client:
 
   > **Can't reach Pair Cloud.** 2 sessions there can't be followed: Sidebar flicker, Rate limit.
-  > They may still be running. *Why:* the link expired. Link it again in Settings → Connections.
+  > They may still be running. _Why:_ the link expired. Link it again in Settings → Connections.
   > Option: "Stop following them"
 
   When the cloud answers again, the server resolves that Ask itself ("Pair Cloud is reachable
@@ -220,12 +222,13 @@ outage, not once per session.
   turn, so the Inbox opens the bot's chat at the bottom. The alert is per bot per cloud. Bots are
   single-user and a user rarely has two, so two bots on one broken cloud means two Asks. We accept
   that in v1.
+
 - **Cloud unlinked, or link expired or revoked** (`capability_denied`, or the link is gone): the
   cloud turns unreachable at once, with no 3-minute grace, because waiting won't fix it. The bot
   gets one wake ("Can't reach <label>: <reason>. The user has been asked to link it again; don't
-  start cloud sessions until it's back."), and the Ask above opens. The follower keeps retrying on
-  the capped backoff, so a renewed link resumes on its own.
-- **Network cut or cloud asleep:** retried quietly with backoff. Only after **3 minutes** of
+  start cloud sessions until it's back."), and the Ask above opens. The follower keeps trying each
+  sweep, so a renewed link resumes on its own.
+- **Network cut or cloud asleep:** retried quietly on the next sweep. Only after **3 minutes** of
   continuous failure does the cloud turn unreachable (one wake, one Ask). When it comes back, the
   server records an info event, resolves the Ask and reconciles. Anything that happened while we
   were cut off (finished, asked) wakes the bot then, once.
@@ -233,7 +236,7 @@ outage, not once per session.
   cloud's error ("Could not start the machine: …") and, as for local failures, is told to nudge
   once or start a replacement.
 - **Thread deleted there** (`thread_not_found`): the session is marked `stopped` with an event,
-  and the follower ends.
+  and the follower no longer reads it. The cloud answered, so this is not an outage.
 - **User takes over a cloud session:** detected from the user's own message in the timeline, the
   same rule as locally. The bot is told to step back. `bot_session_message`/`respond` refuse until
   **Hand back**, which is generic.
@@ -242,7 +245,7 @@ outage, not once per session.
   `t3_thread_interrupt { stop: true }` through the link (idempotent by key). It records
   `stoppedThere` and ends. When the cloud is reachable this takes seconds, the same as a local
   stop. An unreachable cloud keeps the stop owed until it answers, as `RemoteDelegation` does.
-  Meanwhile the row shows *Can't reach*, and the open Ask says the sessions "may still be
+  Meanwhile the row shows _Can't reach_, and the open Ask says the sessions "may still be
   running", so nothing claims a stop that hasn't happened.
 - **Launch reply lost:** the launch's `clientRequestId` is derived from the bot's current home-thread
   run and the session title. A retry in the same turn finds the same thread rather than booting a
@@ -254,36 +257,37 @@ outage, not once per session.
   confirming. Pause needs no change, because its copy already says sessions keep running.
 - **Approvals on a cloud session** (rare in full access): the bot can't approve them through the
   link, so it asks the user to approve it in the session. That needs a client connected to that
-  cloud, which is how cloud threads are opened today anyway. The `bot_ask` text says "Open
-  <link> to approve it".
+  cloud, which is how cloud threads are opened today anyway. The wake tells the bot to `bot_ask`
+  the user to open the session and approve it there.
 - **Questions on a cloud session** also show up right away in the cloud environment's own Inbox,
   for a client connected to it, with that environment's own notification. The cloud doesn't know
   a bot owns the thread, so it can't hold the question back for 10 minutes the way the bot's
   server does. So for a cloud session the user is told **at once** rather than after 10 minutes,
   and that holds while the bot is paused too ("questions come to your Inbox"). The bot's server
-  sends no second notification. It records the 10-minute escalation event in the bot's timeline,
-  as it does locally. We accept the earlier notice in v1: it errs toward telling the user.
+  sends no second notification, and records no 10-minute escalation event for it. We accept the
+  earlier notice in v1: it errs toward telling the user.
 
 ### UI (web, desktop, mobile)
 
 Clients stay dumb. They read the session's `cloud` field from the bot snapshot they already
 receive.
 
-- **Where it runs.** A cloud session's sidebar row (web, desktop) and Bots-tab row (mobile) shows a
-  small cloud icon, with the cloud's label as its tooltip or accessibility label. Local rows are
-  unchanged.
+- **Where it runs.** A cloud session's sidebar row (web, desktop) shows a small cloud icon titled
+  "Runs on <label>". Its Bots-tab row (mobile) shows the label as text, because phones have no
+  tooltips. Both open the thread in the cloud's environment. Local rows are unchanged.
 - **Live state.** When the client holds the cloud thread's shell (it is connected to that
   environment), state derives from the shell as today. Otherwise it uses `cloud.state`, so the row
   never shows a stuck spinner.
 - **Can't reach.** A new, distinct "offline" glyph (a cloud with a slash), not a muted failed
-  glyph, because the session may well be fine. Its label is **"Can't reach <label>"**. On mobile
-  the row's second line shows the text "On <label>" for a cloud session and "Can't reach <label>"
-  when unreachable, because phones have no tooltips.
+  glyph, because the session may well be fine. Its label is **"Can't reach <label>"**, which mobile
+  shows as the row's text.
 - **Header status line** (web bot header and mobile header) counts unreachable sessions: "2
   sessions working · 1 can't be reached". **Sort order:** an unreachable session sorts with the
   working ones, since it isn't finished.
-- **Thread link chips** in the bot's chat use the same session-state function, so the
-  `cloud.state` fallback reaches them too.
+- **Thread link chips** in the bot's chat resolve a cloud session's thread when the client is
+  connected to that cloud, and then show its live glyph. When it isn't, the chip stays
+  "unavailable", as any link this client can't open does, with the tooltip "Runs on <label>" or
+  "Can't reach <label>" in place of the generic one.
 - Opening a cloud session uses its `t3-thread://` link for that environment. A client that isn't
   connected to that environment gets the existing "connect this environment" path. We add nothing
   new there.
@@ -294,8 +298,8 @@ receive.
   instead of before it. Showing it beforehand would mean every client joining bot snapshots across
   environments, which is out of scope for this change.
 
-Product copy a user sees (to confirm with the maintainer): "On <label>" / tooltip "Runs on
-<label>", "Can't reach <label>", "… · 1 can't be reached", the server-opened Ask above, and the
+Product copy a user sees (to confirm with the maintainer): "<label>" on mobile rows, the "Runs on
+<label>" tooltip, "Can't reach <label>", "… · 1 can't be reached", the server-opened Ask above, and the
 Delete line "N sessions keep running on <label>".
 
 ## Not in this change

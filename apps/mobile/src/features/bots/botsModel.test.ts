@@ -6,6 +6,7 @@ import {
   type BotJobId,
   BotJobId as BotJobIdSchema,
   type BotSession,
+  type EnvironmentId,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -112,6 +113,31 @@ describe("botSessionState", () => {
       trouble: true,
       updatedAt: null,
     });
+  });
+
+  it("reads a cloud session without its shell from its last-read state", () => {
+    const cloudSession = (state: NonNullable<BotSession["cloud"]>["state"]) =>
+      session(BotJobIdSchema.make("job:1"), {
+        cloud: {
+          environmentId: "env:cloud" as EnvironmentId,
+          label: "Pair Cloud",
+          state,
+          pendingRequest: null,
+          lastOutputAt: "2026-11-18T11:59:00.000Z",
+          reportedRunId: null,
+          reportedRequestIds: [],
+          position: 0,
+        },
+      });
+    const read = (state: NonNullable<BotSession["cloud"]>["state"]) =>
+      botSessionState({ session: cloudSession(state), shell: null, botName: "Atlas", nowMs });
+    expect(read("unreachable")).toMatchObject({
+      kind: "unreachable",
+      label: "Can't reach Pair Cloud",
+      trouble: true,
+    });
+    expect(read("waiting").kind).toBe("waiting");
+    expect(read("done").kind).toBe("done");
   });
 
   it("an unloaded shell is working with nothing to say", () => {
@@ -229,6 +255,12 @@ describe("botStatusLine", () => {
       text: "1 session working",
       tone: "muted",
     });
+    expect(
+      botStatusLine({
+        ...base,
+        sessionStates: [state({ kind: "working" }), state({ kind: "unreachable" })],
+      }),
+    ).toEqual({ text: "1 session working · 1 can't be reached", tone: "muted" });
   });
 
   it("says nothing is running, and Paused when paused", () => {

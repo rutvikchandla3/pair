@@ -431,6 +431,21 @@ const make = Effect.gen(function* () {
                 ? CLOUD_ACTIVE_EVERY_MS
                 : CLOUD_SETTLED_EVERY_MS),
           );
+        } else if (outcome.error.code === "thread_not_found") {
+          // The cloud answered: only this session's thread is gone there.
+          reached = true;
+          yield* bots.setSessionCloud(session.threadId, {
+            ...cloud,
+            state: "stopped",
+            unfollowed: true,
+          });
+          yield* bots.addEvent({
+            botId: bot.id,
+            jobId: session.jobId,
+            kind: "info",
+            text: `${session.title} is gone from ${cloud.label}`,
+            sessionThreadId: session.threadId,
+          });
         } else {
           failure = outcome.error;
           // One failure speaks for the cloud; the rest of its sessions wait for the next sweep.
