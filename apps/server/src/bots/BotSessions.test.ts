@@ -308,6 +308,40 @@ describe("BotSessions.start", () => {
       assert.notInclude(refused.error.message, "That is your worker model");
       assert.lengthOf(refused.launches, 0);
 
+      // The bot's own choice may not carry an option its model doesn't declare.
+      const codex = readyProvider("codex", {
+        models: [
+          {
+            slug: "gpt-5.5",
+            name: "GPT-5.5",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [{ id: "xhigh", label: "Extra high" }],
+                },
+              ],
+            },
+          },
+        ],
+      });
+      const undeclared = yield* start(
+        {
+          instanceId: codex.instanceId,
+          model: "gpt-5.5",
+          options: [{ id: "effort", value: "xhigh" }],
+        },
+        [claude, codex],
+      ).pipe(Effect.flip);
+      assert.include(
+        undeclared.error.message,
+        "Unknown option effort; supported options: reasoningEffort.",
+      );
+      assert.lengthOf(undeclared.launches, 0);
+
       // The role default is checked too, and the bot is told it was its default.
       const roleDefault = yield* start(undefined, []).pipe(Effect.flip);
       assert.include(roleDefault.error.message, "That is your worker model");

@@ -90,6 +90,8 @@ export function modelSelectionProblem(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly adapterInstanceIds: ReadonlySet<ProviderInstanceId>;
   readonly selection: ModelSelection;
+  /** Also refuse option ids the model doesn't declare, for a selection made for this launch. */
+  readonly declaredOptionsOnly?: boolean;
 }): string | null {
   const { providers, adapterInstanceIds, selection } = input;
   const runnable = providers.filter(
@@ -129,11 +131,13 @@ export function modelSelectionProblem(input: {
     duplicates.length > 0
       ? duplicates
       : invalidOptionSelections(
-          options.filter(
-            (option) =>
-              descriptors === undefined ||
-              descriptors.some((descriptor) => descriptor.id === option.id),
-          ),
+          input.declaredOptionsOnly === true
+            ? options
+            : options.filter(
+                (option) =>
+                  descriptors === undefined ||
+                  descriptors.some((descriptor) => descriptor.id === option.id),
+              ),
           descriptors,
         );
   if (invalid.length > 0) {
@@ -153,16 +157,14 @@ export const checkModelSelection = Effect.fn("modelSelectionCheck.checkModelSele
     };
     readonly adapterInstanceIds: ReadonlySet<ProviderInstanceId>;
     readonly selection: ModelSelection;
+    readonly declaredOptionsOnly?: boolean;
   }) {
-    const { adapterInstanceIds, selection } = input;
-    const cached = yield* input.providers.getProviders;
-    const problem = modelSelectionProblem({ providers: cached, adapterInstanceIds, selection });
+    const { providers: registry, ...check } = input;
+    const cached = yield* registry.getProviders;
+    const problem = modelSelectionProblem({ ...check, providers: cached });
     if (problem === null) return { providers: cached, problem };
-    const providers = yield* input.providers.refreshInstance(selection.instanceId);
-    return {
-      providers,
-      problem: modelSelectionProblem({ providers, adapterInstanceIds, selection }),
-    };
+    const providers = yield* registry.refreshInstance(input.selection.instanceId);
+    return { providers, problem: modelSelectionProblem({ ...check, providers }) };
   },
 );
 

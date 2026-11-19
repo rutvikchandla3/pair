@@ -366,6 +366,9 @@ const make = Effect.gen(function* () {
         providers,
         adapterInstanceIds: new Set(yield* adapters.list()),
         selection: modelSelection,
+        // The bot built it from this server's capabilities, so an undeclared id is a mistake
+        // (Claude's effort sent to Codex) that would otherwise be silently ignored.
+        declaredOptionsOnly: input.modelSelection !== undefined,
       });
       if (problem !== null) {
         return yield* invalidRequest(
