@@ -5,7 +5,13 @@ import {
   type BotJob,
   botJobFinished,
   type BotSession,
+  type BotsSnapshot,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
 } from "@t3tools/contracts";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+
+import { AsyncResult } from "effect/reactivity";
 
 import { relativeTime } from "../../lib/time";
 
@@ -312,5 +318,106 @@ export function botSessionRows(input: {
     archived: archived.sort((left, right) =>
       right.session.createdAt.localeCompare(left.session.createdAt),
     ),
+  };
+}
+
+/** One atom key for an environment's session threads, so the shells are read as one value. */
+export function botSessionShellsKey(
+  environmentId: string | null,
+  threadIds: ReadonlyArray<string>,
+): string {
+  return environmentId === null ? "" : [environmentId, ...threadIds].join("\u0000");
+}
+
+export function parseBotSessionShellsKey(key: string): {
+  readonly environmentId: string;
+  readonly threadIds: ReadonlyArray<string>;
+} {
+  const [environmentId = "", ...threadIds] = key.split("\u0000");
+  return { environmentId, threadIds };
+}
+
+export type BotsEnvironmentStatus = "loading" | "offline" | "failed" | "loaded";
+
+/** A failed subscription that is retrying counts as pending, so a retry tap shows progress. */
+export function botsSnapshotOutcome(
+  result: AsyncResult.AsyncResult<unknown, unknown>,
+): "pending" | "success" | "failure" {
+  if (AsyncResult.isSuccess(result)) return "success";
+  return AsyncResult.isFailure(result) && !result.waiting ? "failure" : "pending";
+}
+
+/**
+ * A server's Bots state. The phase comes first: a subscription that loses its connection keeps
+ * its last value and waits, so only the phase can say the server is down.
+ */
+export function botsEnvironmentStatus(
+  phase: EnvironmentConnectionPhase,
+  outcome: "pending" | "success" | "failure",
+): BotsEnvironmentStatus {
+  switch (phase) {
+    case "offline":
+    case "error":
+    case "available":
+    case "unsupported":
+      return "offline";
+    case "connecting":
+    case "reconnecting":
+      return outcome === "failure" ? "failed" : "loading";
+    case "connected":
+      return outcome === "failure" ? "failed" : outcome === "success" ? "loaded" : "loading";
+  }
+}
+
+export interface BotsEnvironmentEntry {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly machineKind: EnvironmentMachineKind;
+  readonly status: BotsEnvironmentStatus;
+  /** The latest snapshot, kept while the server is down or its subscription failed. */
+  readonly snapshot: BotsSnapshot | null;
+  readonly canCreate: boolean;
+  readonly canArchive: boolean;
+}
+
+export interface BotsScreenGroup {
+  readonly entry: BotsEnvironmentEntry;
+  readonly bots: ReadonlyArray<Bot>;
+  readonly showHeader: boolean;
+}
+
+export interface BotsScreenModel {
+  readonly view: "spinner" | "empty" | "list";
+  readonly groups: ReadonlyArray<BotsScreenGroup>;
+  readonly createTargets: ReadonlyArray<BotsEnvironmentEntry>;
+  /** One linked server creates directly; with several, "+" names where the bot goes. */
+  readonly createMode: "none" | "direct" | "menu";
+}
+
+/** The Bots tab across every linked server: one group per server with bots or a problem. */
+export function botsScreenModel(
+  entries: ReadonlyArray<BotsEnvironmentEntry>,
+  catalogReady: boolean,
+): BotsScreenModel {
+  const groups = entries.flatMap((entry): BotsScreenGroup[] => {
+    const bots = entry.snapshot?.bots ?? [];
+    const down = entry.status === "offline" || entry.status === "failed";
+    if (bots.length === 0 && !down) return [];
+    return [{ entry, bots, showHeader: entries.length > 1 || down }];
+  });
+  const createTargets = entries.filter((entry) => entry.canCreate);
+  const view =
+    !catalogReady || entries.length === 0
+      ? "spinner"
+      : groups.length > 0
+        ? "list"
+        : entries.some((entry) => entry.status === "loading")
+          ? "spinner"
+          : "empty";
+  return {
+    view,
+    groups,
+    createTargets,
+    createMode: createTargets.length === 0 ? "none" : entries.length === 1 ? "direct" : "menu",
   };
 }

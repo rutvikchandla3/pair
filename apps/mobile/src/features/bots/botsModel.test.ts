@@ -1,4 +1,5 @@
 import {
+  type Bot,
   BotAskId,
   BotId,
   type BotAsk,
@@ -6,19 +7,28 @@ import {
   type BotJobId,
   BotJobId as BotJobIdSchema,
   type BotSession,
-  type EnvironmentId,
+  type BotsSnapshot,
+  EnvironmentId,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  type BotsEnvironmentEntry,
   type BotSessionShell,
   type BotSessionState,
   botSessionRows,
   botSessionState,
+  botSessionShellsKey,
+  botsEnvironmentStatus,
+  botsScreenModel,
+  botsSnapshotOutcome,
   botStatusLine,
   needsYouCount,
+  parseBotSessionShellsKey,
   timeOfDay,
 } from "./botsModel";
 
@@ -368,5 +378,169 @@ describe("timeOfDay", () => {
   it("formats the local time and passes an unparsable value through", () => {
     expect(timeOfDay(new Date(2024, 0, 1, 9, 5).toISOString())).toBe("09:05");
     expect(timeOfDay("nonsense")).toBe("nonsense");
+  });
+});
+
+describe("botSessionShellsKey", () => {
+  it.each([
+    { environmentId: "env:mac", threadIds: [] },
+    { environmentId: "env:mac", threadIds: ["thread:a", "thread:b"] },
+    { environmentId: null, threadIds: [] },
+  ])("reads back $threadIds.length thread ids", ({ environmentId, threadIds }) => {
+    expect(parseBotSessionShellsKey(botSessionShellsKey(environmentId, threadIds))).toEqual({
+      environmentId: environmentId ?? "",
+      threadIds,
+    });
+  });
+});
+
+describe("botsEnvironmentStatus", () => {
+  it.each([
+    { phase: "connected", outcome: "success", status: "loaded" },
+    { phase: "connected", outcome: "pending", status: "loading" },
+    { phase: "connected", outcome: "failure", status: "failed" },
+    { phase: "connecting", outcome: "pending", status: "loading" },
+    { phase: "reconnecting", outcome: "success", status: "loading" },
+    { phase: "reconnecting", outcome: "failure", status: "failed" },
+    // A dropped subscription keeps its last value; only the phase says the server is down.
+    { phase: "offline", outcome: "success", status: "offline" },
+    { phase: "error", outcome: "failure", status: "offline" },
+  ] as const)("$phase with $outcome is $status", ({ phase, outcome, status }) => {
+    expect(botsEnvironmentStatus(phase, outcome)).toBe(status);
+  });
+
+  it.each([
+    { result: AsyncResult.success(null), outcome: "success" },
+    { result: AsyncResult.initial(true), outcome: "pending" },
+    { result: AsyncResult.failure(Cause.fail("down")), outcome: "failure" },
+    // A retry tap restarts it: loading, not the same failure again.
+    { result: AsyncResult.failure(Cause.fail("down"), { waiting: true }), outcome: "pending" },
+  ])("a $outcome snapshot result", ({ result, outcome }) => {
+    expect(botsSnapshotOutcome(result)).toBe(outcome);
+  });
+});
+
+describe("botsScreenModel", () => {
+  const mac = EnvironmentId.make("env:mac");
+  const cloud = EnvironmentId.make("env:cloud");
+
+  function bot(id: string): Bot {
+    return {
+      id: BotId.make(id),
+      ownerId: "member:1" as Bot["ownerId"],
+      name: "Atlas",
+      color: "#6366f1",
+      shape: "round",
+      voice: "crisp",
+      charter: "",
+      instructions: "",
+      limits: [],
+      models: {} as Bot["models"],
+      homeThreadId: null,
+      homeProjectId: null,
+      paused: false,
+      lastSeenAt: null,
+      nextJobNumber: 1,
+      createdAt: "2026-11-18T09:00:00.000Z",
+      updatedAt: "2026-11-18T09:00:00.000Z",
+    };
+  }
+
+  function snapshot(bots: ReadonlyArray<Bot>): BotsSnapshot {
+    return { bots, jobs: [], sessions: [], asks: [], notes: [], events: [], revision: 1 };
+  }
+
+  function entry(
+    environmentId: EnvironmentId,
+    overrides: Partial<BotsEnvironmentEntry> = {},
+  ): BotsEnvironmentEntry {
+    return {
+      environmentId,
+      label: environmentId,
+      machineKind: "laptop",
+      status: "loaded",
+      snapshot: snapshot([]),
+      canCreate: true,
+      canArchive: true,
+      ...overrides,
+    };
+  }
+
+  const summary = (entries: ReadonlyArray<BotsEnvironmentEntry>, catalogReady = true) => {
+    const model = botsScreenModel(entries, catalogReady);
+    return {
+      view: model.view,
+      groups: model.groups.map((group) => [
+        group.entry.environmentId,
+        group.bots.length,
+        group.showHeader,
+      ]),
+      createMode: model.createMode,
+    };
+  };
+
+  it.each([
+    {
+      name: "one server with no bots is empty",
+      entries: [entry(mac)],
+      expected: { view: "empty", groups: [], createMode: "direct" },
+    },
+    {
+      name: "a second server's bots show, named, when the first has none",
+      entries: [entry(cloud), entry(mac, { snapshot: snapshot([bot("bot:atlas")]) })],
+      expected: { view: "list", groups: [[mac, 1, true]], createMode: "menu" },
+    },
+    {
+      name: "servers still connecting spin",
+      entries: [
+        entry(mac, { status: "loading", snapshot: null, canCreate: false }),
+        entry(cloud, { status: "loading", snapshot: null, canCreate: false }),
+      ],
+      expected: { view: "spinner", groups: [], createMode: "none" },
+    },
+    {
+      name: "an offline server keeps its bots under a header, and isn't a create target",
+      entries: [
+        entry(mac, {
+          status: "offline",
+          snapshot: snapshot([bot("bot:atlas")]),
+          canCreate: false,
+        }),
+        entry(cloud),
+      ],
+      expected: { view: "list", groups: [[mac, 1, true]], createMode: "menu" },
+    },
+    {
+      name: "a lone failed server says so instead of spinning",
+      entries: [entry(mac, { status: "failed", snapshot: null, canCreate: false })],
+      expected: { view: "list", groups: [[mac, 0, true]], createMode: "none" },
+    },
+    {
+      name: "a server that failed after loading keeps its bots",
+      entries: [
+        entry(mac, {
+          status: "failed",
+          snapshot: snapshot([bot("bot:atlas")]),
+          canCreate: false,
+        }),
+      ],
+      expected: { view: "list", groups: [[mac, 1, true]], createMode: "none" },
+    },
+    {
+      name: "a lone server's bots have no header",
+      entries: [entry(mac, { snapshot: snapshot([bot("bot:atlas"), bot("bot:nova")]) })],
+      expected: { view: "list", groups: [[mac, 2, false]], createMode: "direct" },
+    },
+    {
+      name: "no linked server spins",
+      entries: [],
+      expected: { view: "spinner", groups: [], createMode: "none" },
+    },
+  ])("$name", ({ entries, expected }) => {
+    expect(summary(entries)).toEqual(expected);
+  });
+
+  it("spins until the saved servers are read, instead of offering a first bot", () => {
+    expect(summary([entry(mac)], false).view).toBe("spinner");
   });
 });
