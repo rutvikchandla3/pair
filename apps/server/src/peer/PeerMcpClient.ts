@@ -292,6 +292,8 @@ const make = Effect.gen(function* () {
           ),
         )
         .pipe(
+          // The signed URL is a bearer credential; a client span would record it as url.full.
+          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
           Effect.mapError(
             () =>
               new OrchestratorMcpFailure({

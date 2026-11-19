@@ -21,9 +21,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as AssetSigner from "../assets/AssetSigner.ts";
+import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "../assets/AttachmentUpload.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -656,18 +658,31 @@ it.effect("a launch there carries attachments staged there, bytes and all", () =
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
       const scope = a.scopeOf("thread:laptop-full");
       const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
-      const staged = yield* a.forwarding.stageAttachments(scope, box.environmentId, [
-        {
-          attachment: {
-            type: "image",
-            id: ChatAttachmentId.make("thread-laptop-00000000-0000-4000-8000-000000000001"),
-            name: "screenshot.png",
-            mimeType: "image/png",
-            sizeBytes: bytes.length,
-          },
-          bytes,
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
         },
-      ]);
+      });
+      const staged = yield* a.forwarding
+        .stageAttachments(scope, box.environmentId, [
+          {
+            attachment: {
+              type: "image",
+              id: ChatAttachmentId.make("thread-laptop-00000000-0000-4000-8000-000000000001"),
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: bytes.length,
+            },
+            bytes,
+          },
+        ])
+        .pipe(Effect.withTracer(tracer));
+      // The signed upload URL is a bearer credential, so no span may carry it.
+      const traced = spans.flatMap((span) => [...span.attributes.values()].map(String));
+      expect(traced.filter((value) => value.includes(ATTACHMENT_UPLOAD_ROUTE_PREFIX))).toEqual([]);
       yield* a.forwarding.call(
         scope,
         ProjectToolkit.tools.t3_thread_launch,
