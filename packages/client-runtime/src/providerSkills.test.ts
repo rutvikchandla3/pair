@@ -189,10 +189,11 @@ describe("provider workspace snapshot refresh atom", () => {
     // A second composer on the same target shares the scan.
     registry.mount(family({ environmentId, instanceId: provider.instanceId, cwd }))();
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith(expect.anything(), {
-      environmentId,
-      input: { instanceId: provider.instanceId, cwd },
-    });
+    expect(run).toHaveBeenCalledWith(
+      expect.anything(),
+      { environmentId, input: { instanceId: provider.instanceId, cwd } },
+      {},
+    );
     responses.push(() => withSnapshot("2026-01-01T00:00:00.000Z"));
     await vi.advanceTimersByTimeAsync(0);
     registry.refresh(atom);
