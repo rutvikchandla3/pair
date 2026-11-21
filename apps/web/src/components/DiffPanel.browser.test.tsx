@@ -40,9 +40,11 @@ const state = vi.hoisted(() => ({
 vi.mock("~/state/server", async () => {
   const Atom = await import("effect/reactivity/Atom");
   const cloudLaunch = Atom.make(null);
+  const sandboxDrivers = Atom.make([]);
   return {
     serverEnvironment: { configValueAtom: () => state.config },
     environmentCloudLaunchAtom: () => cloudLaunch,
+    environmentSandboxDriversAtom: () => sandboxDrivers,
   };
 });
 vi.mock("~/state/review", () => ({
