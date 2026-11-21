@@ -105,6 +105,10 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("../components/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
 vi.mock("../features/threads/MessageAuthorName", () => ({ MessageAuthorName: () => null }));
+vi.mock("../features/lineage/ThreadLineageChrome", () => ({ ThreadLineagePillSpace: () => null }));
+vi.mock("../features/lineage/ThreadLineageNotice", () => ({ ThreadLineageNotice: () => null }));
+vi.mock("../features/lineage/useLineageMenu", () => ({ useCanForkThread: () => true }));
+vi.mock("../features/spaces/SpaceTask", () => ({ SpaceThreadBanner: () => null }));
 vi.mock("../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => createElement("span", null, children),
 }));
