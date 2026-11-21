@@ -33,8 +33,8 @@ export const validateAttachmentLimits = Effect.fn("AttachmentClaims.validateAtta
   },
 );
 
-export interface ClaimedAttachments {
-  readonly attachments: ReadonlyArray<ChatAttachment>;
+export interface ClaimedAttachments<A extends ChatAttachment = ChatAttachment> {
+  readonly attachments: ReadonlyArray<A>;
   readonly claimedPaths: ReadonlyArray<string>;
 }
 
@@ -66,9 +66,9 @@ export const releaseClaimedAttachments = Effect.fn("AttachmentClaims.releaseClai
 
 /** Copies preserve the pending retry source after failed bootstrap; the pending sweep reclaims it. */
 export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingAttachments")(
-  function* (input: {
+  function* <A extends ChatAttachment>(input: {
     readonly threadId: string;
-    readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly attachments: ReadonlyArray<A>;
   }) {
     yield* validateAttachmentLimits(input.attachments);
     if (
@@ -80,7 +80,7 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
       });
     }
     if (!input.attachments.some(attachmentIsPendingUpload)) {
-      return { attachments: input.attachments, claimedPaths: [] } satisfies ClaimedAttachments;
+      return { attachments: input.attachments, claimedPaths: [] } satisfies ClaimedAttachments<A>;
     }
     const serverConfig = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -117,7 +117,7 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
               message: `Attachment '${attachment.name}' cannot be sent: stored size does not match.`,
             });
           }
-          const normalized: ChatAttachment = {
+          const normalized: A = {
             ...attachment,
             id: ChatAttachmentId.make(claim.finalId),
             name:
@@ -168,6 +168,6 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
         }),
       { concurrency: 1 },
     ).pipe(Effect.onError(() => releaseClaimedAttachments(claimedPaths)));
-    return { attachments, claimedPaths } satisfies ClaimedAttachments;
+    return { attachments, claimedPaths } satisfies ClaimedAttachments<A>;
   },
 );

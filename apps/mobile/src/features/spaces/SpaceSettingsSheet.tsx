@@ -1,6 +1,6 @@
 import { type StaticScreenProps, StackActions, useNavigation } from "@react-navigation/native";
 import { isSpaceOwner, orderSpaceMembers } from "@t3tools/client-runtime/spaces";
-import type { MemberId, ProjectId } from "@t3tools/contracts";
+import type { MemberId, ProjectId, SpaceIcon } from "@t3tools/contracts";
 import { useState } from "react";
 import { View } from "react-native";
 
@@ -12,6 +12,7 @@ import { useTeamRoster } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   SpaceField,
+  SpaceIconField,
   SpaceMemberChecklist,
   SpacePairKeyField,
   SpaceRepositoriesField,
@@ -44,8 +45,11 @@ export function SpaceSettingsSheet(props: StaticScreenProps<SpaceSheetParams>) {
     setBusy(false);
     return reportSpaceResult(failure, result);
   };
-  const update = (patch: { name?: string; repositoryIds?: ReadonlyArray<ProjectId> }) =>
-    apply({ type: "update", spaceId: space.id, ...patch }, "Could not update the space");
+  const update = (patch: {
+    name?: string;
+    repositoryIds?: ReadonlyArray<ProjectId>;
+    icon?: SpaceIcon | null;
+  }) => apply({ type: "update", spaceId: space.id, ...patch }, "Could not update the space");
   const repositoriesChanged =
     repositories !== null &&
     (repositories.length !== space.repositoryIds.length ||
@@ -93,6 +97,9 @@ export function SpaceSettingsSheet(props: StaticScreenProps<SpaceSheetParams>) {
         onChangeText={setName}
         onBlur={saveName}
       />
+      {controls.canManage ? (
+        <SpaceIconField space={space} disabled={busy} onSave={(icon) => void update({ icon })} />
+      ) : null}
       <SpaceRepositoriesField
         environmentId={environmentId}
         value={repositories ?? space.repositoryIds}

@@ -9,23 +9,43 @@ import {
   spacePairOffHint,
   spaceMentionCandidates,
   spaceMentionQuery,
+  spacePostPreview,
 } from "@t3tools/client-runtime/spaces";
 import {
+  type ChatFileAttachment,
+  type ChatImageAttachment,
   type EnvironmentId,
   MessageId,
+  SPACE_POST_MAX_ATTACHMENTS,
   SPACE_QUOTE_MAX_LENGTH,
   type Space,
   type SpaceRoomEntry,
 } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
+import { TextInputWrapper } from "expo-paste-input";
 import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 
+import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { MemberAvatar } from "../../components/MemberAvatar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import * as Dialog from "../../components/ui/Dialog";
 import { IconButton } from "../../components/ui/IconButton";
+import {
+  prepareTurnAttachments,
+  releasePendingAttachmentUploads,
+} from "../../lib/attachmentUpload";
 import { cn } from "../../lib/cn";
+import {
+  type DraftComposerAttachment,
+  convertPastedImagesToAttachments,
+  pickComposerFiles,
+  pickComposerImages,
+} from "../../lib/composerImages";
+import { useNativePaste } from "../../lib/useNativePaste";
+import { useServerConfigs } from "../../state/entities";
 import { uuidv4 } from "../../lib/uuid";
 import {
   reportSpaceResult,
@@ -34,6 +54,7 @@ import {
   useTeamClaudeKeyStatus,
 } from "../../state/spaces";
 import { useTeamRoster } from "../../state/team";
+import { releaseUnusedComposerAttachmentFiles } from "../../state/use-composer-drafts";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { openSettings } from "../settings/settings-navigation";
 
@@ -66,12 +87,58 @@ export function SpaceComposer(props: {
   const [caret, setCaret] = useState(0);
   const [selection, setSelection] = useState<{ start: number; end: number } | undefined>();
   const [tokens, setTokens] = useState<ReadonlyArray<SpaceMentionToken>>([]);
+  const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerAttachment>>([]);
+  const capabilities = useServerConfigs().get(props.environmentId)?.environment.capabilities;
+  const [sending, setSending] = useState(false);
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const query = spaceMentionQuery(text, Math.min(caret, text.length));
   const candidates =
     query === null ? [] : spaceMentionCandidates(query.query, props.space, props.viewer);
   const mentions = resolveSpaceMentions(text, tokens);
   const hint = spaceComposerHint(mentions, props.viewer);
-  const canSend = text.trim().length > 0;
+  const canSend = (text.trim().length > 0 || attachments.length > 0) && !sending;
+  const full = attachments.length >= SPACE_POST_MAX_ATTACHMENTS;
+
+  const addAttachments = (added: ReadonlyArray<DraftComposerAttachment>) => {
+    const room = Math.max(0, SPACE_POST_MAX_ATTACHMENTS - attachments.length);
+    if (added.length > room) {
+      Dialog.alert(
+        "Too many attachments",
+        `A post can carry up to ${SPACE_POST_MAX_ATTACHMENTS} images and files.`,
+      );
+      void releaseUnusedComposerAttachmentFiles(added.slice(room));
+    }
+    if (room > 0 && added.length > 0) setAttachments([...attachments, ...added.slice(0, room)]);
+  };
+
+  const pickImages = async () => {
+    const result = await pickComposerImages({ existingCount: attachments.length });
+    addAttachments(result.images);
+    if (result.error !== null) Dialog.alert("Could not add images", result.error);
+  };
+
+  const pickFiles = async () => {
+    const result = await pickComposerFiles({
+      existingCount: attachments.length,
+      ...(capabilities?.fileAttachments?.maxUploadBytes === undefined
+        ? {}
+        : { maxBytes: capabilities.fileAttachments.maxUploadBytes }),
+    });
+    addAttachments(result.files);
+    if (result.error !== null) Dialog.alert("Could not add files", result.error);
+  };
+
+  const removeAttachment = (id: string) => {
+    const removed = attachments.filter((attachment) => attachment.id === id);
+    setAttachments(attachments.filter((attachment) => attachment.id !== id));
+    void releaseUnusedComposerAttachmentFiles(removed);
+  };
+
+  const onPaste = useNativePaste((uris) => {
+    void convertPastedImagesToAttachments({ uris, existingCount: attachments.length })
+      .then(addAttachments)
+      .catch(() => Dialog.alert("Could not paste", "The image could not be read."));
+  });
 
   const choose = (token: SpaceMentionToken) => {
     if (query === null) return;
@@ -86,13 +153,38 @@ export function SpaceComposer(props: {
 
   const send = async () => {
     const body = text.trim();
-    if (body.length === 0) return;
+    const sentAttachments = attachments;
+    if (body.length === 0 && sentAttachments.length === 0) return;
     const quote = props.quote;
     const sentTokens = tokens;
+    let uploaded: ReadonlyArray<ChatImageAttachment | ChatFileAttachment> = [];
+    let pending: ReadonlyArray<string> = [];
+    if (sentAttachments.length > 0) {
+      setSending(true);
+      const prepared = await prepareTurnAttachments({
+        environmentId: props.environmentId,
+        attachments: sentAttachments,
+        supportsImageUploads: true,
+      }).catch((error: unknown) => {
+        Dialog.alert(
+          "Could not upload attachments",
+          error instanceof Error && error.message.trim() !== "" ? error.message : "Try again.",
+        );
+        return null;
+      });
+      setSending(false);
+      if (prepared === null || prepared.status !== "ready") return;
+      uploaded = prepared.attachments.filter(
+        (attachment): attachment is ChatImageAttachment | ChatFileAttachment =>
+          !("dataUrl" in attachment),
+      );
+      pending = prepared.pendingAttachmentIds;
+    }
     textRef.current = "";
     setText("");
     setCaret(0);
     setTokens([]);
+    setAttachments([]);
     setDrafted(false);
     props.onQuoteChange(null);
     const result = await post({
@@ -103,15 +195,23 @@ export function SpaceComposer(props: {
         text: body,
         mentions,
         ...(quote === null ? {} : { quoteEntryId: quote.id }),
+        ...(uploaded.length === 0 ? {} : { attachments: uploaded }),
       },
     });
-    // Hand the draft back, mentions and quote too, unless a new one was started.
-    if (!reportSpaceResult("Could not post", result) && textRef.current === "") {
+    // The post holds its own copies; the pending uploads are only the source.
+    if (pending.length > 0)
+      void releasePendingAttachmentUploads(props.environmentId, pending).catch(() => {});
+    // Hand the draft back, mentions, attachments and quote too, unless a new one was started.
+    const posted = reportSpaceResult("Could not post", result);
+    if (!posted && textRef.current === "") {
       textRef.current = body;
       setText(body);
       setCaret(body.length);
       setTokens(sentTokens);
+      setAttachments((current) => (current.length === 0 ? sentAttachments : current));
       if (quote !== null) props.onQuoteChange(quote);
+    } else if (posted) {
+      void releaseUnusedComposerAttachmentFiles(sentAttachments);
     }
   };
 
@@ -170,7 +270,7 @@ export function SpaceComposer(props: {
               Replying to {props.viewer.nameOf(props.quote.authorId)}
             </Text>
             <Text numberOfLines={1} className="text-xs text-foreground-muted">
-              {props.quote.text.slice(0, SPACE_QUOTE_MAX_LENGTH)}
+              {spacePostPreview(props.quote).slice(0, SPACE_QUOTE_MAX_LENGTH)}
             </Text>
           </View>
           <IconButton
@@ -180,22 +280,50 @@ export function SpaceComposer(props: {
           />
         </View>
       )}
+      {attachments.length === 0 ? null : (
+        <View className="pb-2">
+          <ComposerAttachmentStrip
+            attachments={attachments}
+            imageSize={60}
+            imageBorderRadius={14}
+            removeButtonPlacement="gutter"
+            onPressPreview={setPreviewFile}
+            onRemove={removeAttachment}
+          />
+        </View>
+      )}
       <View className="flex-row items-end gap-2">
-        <TextInput
-          accessibilityLabel="Message the space"
-          multiline
-          placeholder="Message · @ to mention"
-          placeholderTextColorClassName="accent-foreground-muted"
-          value={text}
-          selection={selection}
-          onChangeText={(next) => {
-            textRef.current = next;
-            setText(next);
-            setSelection(undefined);
-          }}
-          onSelectionChange={(event) => setCaret(event.nativeEvent.selection.end)}
-          className="max-h-36 min-h-11 min-w-0 flex-1 rounded-[22px] border border-border-subtle bg-card px-4 py-2.5 text-base text-foreground"
+        <IconButton
+          icon="photo"
+          accessibilityLabel="Add images"
+          disabled={full || sending}
+          onPress={() => void pickImages()}
         />
+        {capabilities?.fileAttachments === undefined ? null : (
+          <IconButton
+            icon="doc.text"
+            accessibilityLabel="Attach files"
+            disabled={full || sending}
+            onPress={() => void pickFiles()}
+          />
+        )}
+        <TextInputWrapper onPaste={onPaste} style={{ flex: 1, minWidth: 0 }}>
+          <TextInput
+            accessibilityLabel="Message the space"
+            multiline
+            placeholder="Message · @ to mention"
+            placeholderTextColorClassName="accent-foreground-muted"
+            value={text}
+            selection={selection}
+            onChangeText={(next) => {
+              textRef.current = next;
+              setText(next);
+              setSelection(undefined);
+            }}
+            onSelectionChange={(event) => setCaret(event.nativeEvent.selection.end)}
+            className="max-h-36 min-h-11 min-w-0 flex-1 rounded-[22px] border border-border-subtle bg-card px-4 py-2.5 text-base text-foreground"
+          />
+        </TextInputWrapper>
         <IconButton
           icon="arrow.up"
           variant="primary"
@@ -233,6 +361,7 @@ export function SpaceComposer(props: {
           ) : null}
         </View>
       )}
+      <FilePreviewModal source={previewFile} onRequestClose={() => setPreviewFile(null)} />
     </View>
   );
 }

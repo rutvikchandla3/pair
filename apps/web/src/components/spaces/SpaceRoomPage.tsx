@@ -60,6 +60,7 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SpaceComposer } from "./SpaceComposer";
 import { SpaceConfirmDialog } from "./SpaceConfirmDialog";
 import { SpaceFeed } from "./SpaceFeed";
+import { SpaceMark } from "./SpaceMark";
 import { SpaceMembersPopover } from "./SpaceMembersPopover";
 import type { SpacePairFeedContext } from "./SpacePairFeed";
 import { SpaceRoomPanel } from "./SpaceRoomPanel";
@@ -285,7 +286,7 @@ function SpaceRoom(props: {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <WorkspacePageHeader electron={isElectron}>
             <div className="flex min-w-0 flex-1 items-center gap-2">
-              <UsersIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <SpaceMark space={space} size="md" />
               <h1 className="truncate font-medium text-sm">{space.name}</h1>
               {workspace.name === null && workspace.repositories === null ? null : (
                 <span className="hidden min-w-0 items-center gap-1 text-muted-foreground text-xs sm:flex">

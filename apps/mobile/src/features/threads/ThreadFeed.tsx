@@ -560,7 +560,7 @@ function MessageImage(props: {
   );
 }
 
-function MessageAttachmentImage(props: {
+export function MessageAttachmentImage(props: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
   readonly name: string;
@@ -656,7 +656,7 @@ function isMediaAttachment(attachment: ChatAttachment): boolean {
   );
 }
 
-function MessageAttachmentFile(props: {
+export function MessageAttachmentFile(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
   readonly onPressPreview: (source: FilePreviewSource) => void;

@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ChatAttachmentId,
   CommandId,
   EnvironmentId,
   MemberId,
@@ -16,14 +17,23 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import {
+  createPendingAttachmentId,
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPath,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as SpaceHandlers from "../mcp/toolkits/space/handlers.ts";
@@ -37,6 +47,7 @@ import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderRepl
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as SpaceIntake from "./SpaceIntake.ts";
 import * as SpaceService from "./SpaceService.ts";
 import * as SpaceWorkspaces from "./SpaceWorkspaces.ts";
@@ -138,8 +149,11 @@ const layer = SpaceService.layer.pipe(
       Layer.mock(SpaceWorkspaces.SpaceWorkspaces)({
         resolve: () => Effect.succeed({ projectId, created: false }),
       }),
+      DocumentText.layer,
     ),
   ),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-space-service-" })),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 const createSpace = (name: string) =>
@@ -193,7 +207,7 @@ const toolkitAs = (memberId: MemberId, threadId?: ThreadId) =>
     const toolkit = yield* SpaceToolkit.pipe(
       Effect.provide(McpToolAccess.HandlersLayer.layer(SpaceHandlers.layer)),
     );
-    return (name: "t3_space_manage" | "t3_space_task_status", params: unknown) =>
+    return (name: "t3_space_manage" | "t3_space_post" | "t3_space_task_status", params: unknown) =>
       toolkit.handle(name, params as never).pipe(
         Stream.unwrap,
         Stream.runCollect,
@@ -310,6 +324,70 @@ it.layer(layer)("SpaceService", (it) => {
 
       const left = yield* spaces.mutate(as(kousik), { type: "leave", spaceId: space.id });
       assert.isNull(left.space);
+    }),
+  );
+
+  it.effect("a post's attachments move into the room; a refused post leaves none behind", () =>
+    Effect.gen(function* () {
+      const spaces = yield* SpaceService.SpaceService;
+      const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+      const space = yield* createSpace("Screens");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pendingId = createPendingAttachmentId();
+      yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(`${attachmentsDir}/${pendingId}.png`, "png");
+      const image = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(pendingId),
+        name: "screen.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      };
+      const room = toSafeThreadAttachmentSegment(space.roomThreadId);
+      const inRoom = fileSystem
+        .readDirectory(attachmentsDir)
+        .pipe(Effect.map((names) => names.filter((name) => name.startsWith(`${room}-`))));
+
+      const denied = yield* Effect.flip(
+        spaces.post(as(hanad), {
+          spaceId: space.id,
+          messageId: MessageId.make("message:svc-image-denied"),
+          text: "look",
+          mentions: [],
+          attachments: [image],
+        }),
+      );
+      assert.strictEqual(denied.reason, "not-member");
+      assert.deepStrictEqual(yield* inRoom, []);
+
+      const { entry } = yield* spaces.post(as(kousik), {
+        spaceId: space.id,
+        messageId: MessageId.make("message:svc-image"),
+        text: "look",
+        mentions: [],
+        attachments: [image],
+      });
+      const [posted] = entry.type === "post" ? (entry.attachments ?? []) : [];
+      assert.strictEqual(parseThreadSegmentFromAttachmentId(posted!.id), room);
+      assert.isTrue(
+        yield* fileSystem.exists(resolveAttachmentPath({ attachmentsDir, attachment: posted! })!),
+      );
+
+      // An agent shares an upload with no text; it can't re-send one already in the room.
+      const agentPendingId = createPendingAttachmentId();
+      yield* fileSystem.writeFileString(`${attachmentsDir}/${agentPendingId}.png`, "png");
+      const call = yield* toolkitAs(kousik);
+      const shared = yield* call("t3_space_post", {
+        spaceId: space.id,
+        text: "",
+        attachments: [{ ...image, id: ChatAttachmentId.make(agentPendingId) }],
+      });
+      assert.property(shared, "entryId");
+      assert.deepInclude(
+        yield* call("t3_space_post", { spaceId: space.id, text: "", attachments: [posted!] }),
+        { code: "invalid_request" },
+      );
+      assert.lengthOf(yield* inRoom, 2);
     }),
   );
 

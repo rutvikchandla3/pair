@@ -1,9 +1,11 @@
 import {
+  SPACE_COLORS,
   type MemberId,
   type MessageId,
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type Space,
+  type SpaceColor,
   type SpaceAction,
   type SpaceId,
   type SpaceListResult,
@@ -340,6 +342,57 @@ export function orderSpaceMembers(
       if (b.memberId === space.ownerId) return 1;
       return Date.parse(a.joinedAt) - Date.parse(b.joinedAt);
     });
+}
+
+/** A post's text for one-line previews; a post with only attachments names them instead. */
+export function spacePostPreview(post: {
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<{ readonly type: string }> | undefined;
+}): string {
+  if (post.text.length > 0) return post.text;
+  const count = post.attachments?.length ?? 0;
+  if (count === 0) return "Attachment";
+  const images = post.attachments?.every((attachment) => attachment.type === "image") ?? false;
+  const noun = images ? "image" : "attachment";
+  return count === 1 ? `Shared an ${noun}` : `Shared ${count} ${noun}s`;
+}
+
+/** Hand-picked so white text reads on each, in light and dark themes. */
+export const SPACE_COLOR_VALUES: Record<SpaceColor, string> = {
+  red: "hsl(0, 62%, 50%)",
+  orange: "hsl(22, 80%, 48%)",
+  amber: "hsl(38, 85%, 42%)",
+  lime: "hsl(84, 60%, 36%)",
+  green: "hsl(142, 52%, 36%)",
+  teal: "hsl(174, 60%, 33%)",
+  sky: "hsl(199, 75%, 42%)",
+  blue: "hsl(217, 70%, 52%)",
+  indigo: "hsl(239, 55%, 56%)",
+  violet: "hsl(262, 52%, 54%)",
+  pink: "hsl(330, 62%, 50%)",
+  slate: "hsl(215, 16%, 42%)",
+};
+
+/** The space's color: the owner's pick, or one derived from its id so every client agrees. */
+export function spaceColor(space: Pick<Space, "id" | "icon">): SpaceColor {
+  if (space.icon !== undefined) return space.icon.color;
+  let hash = 0;
+  for (const char of space.id) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  return SPACE_COLORS[hash % SPACE_COLORS.length]!;
+}
+
+/** A space's tile: its emoji, or else its first letter or digit, on its color. */
+export function spaceMark(space: Pick<Space, "id" | "name" | "icon">): {
+  readonly glyph: string;
+  readonly emoji: boolean;
+  readonly color: string;
+} {
+  const emoji = space.icon?.emoji;
+  return {
+    glyph: emoji ?? (/[\p{L}\p{N}]/u.exec(space.name)?.[0] ?? "#").toUpperCase(),
+    emoji: emoji !== undefined,
+    color: SPACE_COLOR_VALUES[spaceColor(space)],
+  };
 }
 
 export function isSpaceOwner(space: Pick<Space, "ownerId">, memberId: MemberId | null): boolean {
