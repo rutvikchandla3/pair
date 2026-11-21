@@ -289,7 +289,10 @@ const PAIR_IDENTITY = {
 };
 const CONFLICT_MARKER = /^(?:<{7}|>{7})(?: |$)/m;
 
-const authorEnv = (author: LineageAuthor): NodeJS.ProcessEnv => ({
+/** Pair commits for the person, so a machine without a git identity can still commit. */
+export const authorEnv = (author: LineageAuthor) => ({
+  GIT_COMMITTER_NAME: PAIR_IDENTITY.GIT_COMMITTER_NAME,
+  GIT_COMMITTER_EMAIL: PAIR_IDENTITY.GIT_COMMITTER_EMAIL,
   GIT_AUTHOR_NAME: author.name,
   GIT_AUTHOR_EMAIL: author.email,
 });

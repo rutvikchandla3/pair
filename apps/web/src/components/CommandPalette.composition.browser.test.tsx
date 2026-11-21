@@ -68,6 +68,7 @@ vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => [],
   useThreadShells: () => [],
+  useQuietThreadShell: () => null,
   useVisibleThreadShells: () => [],
   useHiddenThreadKeys: () => new Set(),
   useAnyEnvironmentHiding: () => false,
@@ -82,6 +83,15 @@ vi.mock("../state/queries", async (original) => ({
     query,
     isPending: false,
   }),
+}));
+// The useAtomValue stub answers [] for atoms that are null until there is data.
+vi.mock("../state/bots", async (original) => ({
+  ...(await original<typeof import("../state/bots")>()),
+  useBotsSnapshot: () => null,
+}));
+vi.mock("../state/sandbox", async (original) => ({
+  ...(await original<typeof import("../state/sandbox")>()),
+  useForkToMachineOffer: () => null,
 }));
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),

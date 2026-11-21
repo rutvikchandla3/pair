@@ -908,7 +908,7 @@ const make = Effect.gen(function* () {
       lineageGit.commitAll({ cwd, author: brancher, message: "Work in progress" }),
     );
     const commits = [...lineage.toOffer.commits, ...(wip === null ? [] : [wip])];
-    const env = { GIT_AUTHOR_NAME: brancher.name, GIT_AUTHOR_EMAIL: brancher.email };
+    const env = LineageGit.authorEnv(brancher);
     const restore = gitHere(["cherry-pick", "--abort"]).pipe(
       Effect.andThen(gitHere(["reset", "--quiet", "--hard", wip ?? preHead ?? "HEAD"])),
       Effect.andThen(

@@ -685,9 +685,31 @@ export const make = Effect.gen(function* () {
               maxOutputBytes: 16 * 1024 * 1024,
             })
             .pipe(Effect.orElseSucceed(() => undefined));
+        // An argument, not stdin: outside a repository git exits before reading stdin, failing the write.
+        const checkIgnoreExitCode = (entryPath: string) =>
+          vcsProcess
+            .run({
+              operation: "WorkspaceEntries.list",
+              command: "git",
+              args: [
+                "-c",
+                "core.fsmonitor=false",
+                "check-ignore",
+                "-q",
+                "--",
+                entryPath.slice(gitPrefix.length),
+              ],
+              cwd: path.join(normalizedCwd, gitRoot),
+              allowNonZeroExit: true,
+              timeoutMs: 10_000,
+            })
+            .pipe(
+              Effect.map((result) => result.exitCode),
+              Effect.orElseSucceed(() => undefined),
+            );
         // Git refuses paths inside a submodule (128) but still answers for nested clones.
         for (const nestedGitRoot of nestedGitRoots) {
-          if ((yield* checkIgnore([`${nestedGitRoot}/.git`]))?.exitCode !== 128) continue;
+          if ((yield* checkIgnoreExitCode(`${nestedGitRoot}/.git`)) !== 128) continue;
           gitRoot = nestedGitRoot;
           gitPrefix = `${gitRoot}/`;
         }

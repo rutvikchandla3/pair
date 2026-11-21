@@ -81,6 +81,7 @@ const setup = Effect.fnUntraced(function* (options: { readonly enforced?: boolea
 const universalPayload = (threadId: string, root: string) => ({
   threadId,
   conversationThreadId: threadId,
+  sourceThreadId: threadId,
   cwd: root,
   worktreePath: root,
   path: root,

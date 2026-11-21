@@ -3055,6 +3055,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         state: "failed",
         ownerThreadId: ownerId,
         driverId: ComputeDriverId.make("docker"),
+        size: "default",
         runnerConnected: false,
         failureCode: "lost",
         retryable: true,

@@ -17,6 +17,8 @@ import type * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as LineageGit from "./LineageGit.ts";
 
+const PAIR_EMAIL = "pair@users.noreply.github.com";
+
 const makeLayerTest = (
   layerHosts: Layer.Layer<WorkspaceHosts.WorkspaceHosts, never, NodeServices.NodeServices>,
 ) =>
@@ -252,8 +254,8 @@ describe.each(hostLayers)("LineageGit on the %s host", (_hostKind, layerTest) =>
         yield* t.editLine(t.source, APP, 2, 'export const v2 = "kousik draft";');
         const start = yield* t.branchOff();
         assert.deepEqual(
-          (yield* t.git(t.source, ["log", "-1", "--format=%P%n%an%n%s", start])).split("\n"),
-          [sourceHead, "Kousik", "Kousik's work in progress, turn 1"],
+          (yield* t.git(t.source, ["log", "-1", "--format=%P%n%an%n%ce%n%s", start])).split("\n"),
+          [sourceHead, "Kousik", PAIR_EMAIL, "Kousik's work in progress, turn 1"],
         );
         assert.equal(yield* t.lineOf(t.branch, APP, 2), 'export const v2 = "kousik draft";');
         const again = yield* t.lineage
