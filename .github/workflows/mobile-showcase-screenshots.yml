@@ -108,7 +108,7 @@ jobs:
   android:
     name: Android phone, 7-inch tablet, and 10-inch tablet
     if: inputs.platform == 'all' || inputs.platform == 'android'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Capturing every palette multiplies the device matrix by six, and only the
     # one native build is shared between them.
     timeout-minutes: ${{ inputs.theme == 'all' && 300 || 60 }}
