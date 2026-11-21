@@ -87,7 +87,7 @@ const SpaceReadTool = Tool.make("t3_space_read", {
 const SpacePostTool = Tool.make("t3_space_post", {
   ...shared,
   description:
-    "Post to a space's room as your member. Mention members with `mentions`; an agent's post never asks @pair to reply. To share images or files, upload each with `t3_attachment_prepare_upload` and pass them in `attachments`; `text` may then be empty.",
+    "Post to a space's room as your member. Mention members with `mentions`; an agent's post never asks @pair to reply. `attachments` takes files from `t3_attachment_prepare_upload`; `text` may then be empty.",
   parameters: Schema.Struct({
     spaceId: SpaceId,
     text: SpacePostText,
