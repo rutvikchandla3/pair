@@ -1,10 +1,14 @@
 import { Button } from "../../components/ui/Button";
+import type { WorktreeSetupSnapshot, WorktreeSetupStage } from "@t3tools/contracts";
 import {
-  worktreeSetupStageLabel,
-  type WorktreeSetupSnapshot,
-  type WorktreeSetupStage,
-} from "@t3tools/contracts";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+  worktreeSetupAgentStarted,
+  worktreeSetupHeaderLabel,
+  worktreeSetupMachineRow,
+  worktreeSetupMachineWaiting,
+  worktreeSetupStageDetail,
+  worktreeSetupStageTitle,
+  type WorktreeSetupMachineRow,
+} from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -30,9 +34,14 @@ function elapsed(start: string | null, end: string | null, now: number) {
   return Number.isFinite(duration) ? formatDuration(Math.max(0, duration)) : null;
 }
 
-const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
+const icons: Record<
+  WorktreeSetupStage["status"] | WorktreeSetupMachineRow["status"],
+  AppSymbolName
+> = {
   pending: "circle",
-  running: "clock",
+  // The clock means waiting for a machine; a paused running row is not that.
+  waiting: "clock",
+  running: "circle.dashed",
   done: "checkmark",
   skipped: "minus",
   failed: "xmark",
@@ -52,27 +61,21 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const label =
     handedOff && working
       ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
-      : running
-        ? handedOff
-          ? "Setup continues…"
-          : "Setting up worktree…"
-        : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
-          : snapshot.phase === "failed"
-            ? "Worktree setup failed"
-            : failed
-              ? "Setup script failed"
-              : "Worktree ready";
+      : running && handedOff
+        ? "Setup continues…"
+        : worktreeSetupHeaderLabel(snapshot);
+  const machineRow = worktreeSetupMachineRow(snapshot, now);
 
   return (
     <View accessibilityLabel="Worktree setup" className="py-1">
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
         <HeaderLabel
           label={label}
-          active={(running || working) && !detailsOpen}
+          active={(working || (running && !worktreeSetupMachineWaiting(snapshot))) && !detailsOpen}
           failed={failed && !working}
         />
-        {!handedOff ? (
+        {/* While setup runs, only its active row ticks. */}
+        {!handedOff && !running ? (
           <Text
             className="text-2xs text-foreground-secondary"
             style={{ fontVariant: ["tabular-nums"] }}
@@ -126,13 +129,16 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
       </View>
       {!handedOff ? (
         <View className="pt-1 pb-2">
+          {machineRow ? (
+            <MachineRow row={machineRow} now={now} compact animate={!detailsOpen} />
+          ) : null}
           {snapshot.stages
             .filter((stage) => stage.id !== "agent")
             .map((stage) => (
               <StageRow
                 key={stage.id}
+                snapshot={snapshot}
                 stage={stage}
-                scriptName={snapshot.setupScript?.name ?? null}
                 now={now}
                 compact
                 animate={!detailsOpen}
@@ -200,6 +206,7 @@ function SetupDetailsSheet({
   const insets = useSafeAreaInsets();
   const [bodyHeight, setBodyHeight] = useState(0);
   const canCancel = snapshot.phase === "running" && !turnStarted;
+  const machineRow = worktreeSetupMachineRow(snapshot, now);
   return (
     <WorktreeSetupSheet height={bodyHeight} onClose={onClose}>
       <ScrollView
@@ -212,11 +219,12 @@ function SetupDetailsSheet({
           paddingBottom: Math.max(20, insets.bottom),
         }}
       >
+        {machineRow ? <MachineRow row={machineRow} now={now} /> : null}
         {snapshot.stages
           .filter((stage) => stage.id !== "agent")
           .map((stage) => (
             <View key={stage.id}>
-              <StageRow stage={stage} scriptName={snapshot.setupScript?.name ?? null} now={now} />
+              <StageRow snapshot={snapshot} stage={stage} now={now} />
               {stage.id === "setup-script" &&
               (stage.status === "running" || stage.status === "failed" || stage.tail.length > 0) ? (
                 <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
@@ -256,39 +264,86 @@ function SetupDetailsSheet({
   );
 }
 
-function StageRow({
-  stage,
-  scriptName,
+function MachineRow({
+  row,
   now,
   compact = false,
   animate = true,
 }: {
-  stage: WorktreeSetupStage;
-  scriptName: string | null;
+  row: WorktreeSetupMachineRow;
   now: number;
   compact?: boolean;
   animate?: boolean;
 }) {
-  const label =
-    stage.id === "setup-script"
-      ? (scriptName ?? worktreeSetupStageLabel(stage.id))
-      : worktreeSetupStageLabel(stage.id);
-  const detail =
-    stage.status === "pending"
-      ? null
-      : stage.status === "skipped"
-        ? (stage.detail ?? "skipped")
-        : stage.id === "checkout" && stage.status === "running" && stage.percent !== null
-          ? `${stage.percent}%`
-          : stage.detail;
+  return (
+    <View>
+      <SetupRow
+        label={row.label}
+        status={row.status}
+        detail={row.detail}
+        duration={row.status === "skipped" ? null : elapsed(row.startedAt, row.endedAt, now)}
+        compact={compact}
+        animate={animate}
+      />
+      {row.note ? (
+        <Text className="mb-1 ml-8 text-xs text-foreground-secondary">{row.note}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function StageRow({
+  snapshot,
+  stage,
+  now,
+  compact = false,
+  animate = true,
+}: {
+  snapshot: WorktreeSetupSnapshot;
+  stage: WorktreeSetupStage;
+  now: number;
+  compact?: boolean;
+  animate?: boolean;
+}) {
+  return (
+    <SetupRow
+      label={worktreeSetupStageTitle(snapshot, stage)}
+      status={stage.status}
+      detail={worktreeSetupStageDetail(snapshot, stage)}
+      duration={
+        stage.status === "pending" || stage.status === "skipped"
+          ? null
+          : elapsed(stage.startedAt, stage.endedAt, now)
+      }
+      compact={compact}
+      animate={animate}
+    />
+  );
+}
+
+function SetupRow({
+  label,
+  status,
+  detail,
+  duration,
+  compact,
+  animate,
+}: {
+  label: string;
+  status: WorktreeSetupStage["status"] | WorktreeSetupMachineRow["status"];
+  detail: string | null;
+  duration: string | null;
+  compact: boolean;
+  animate: boolean;
+}) {
   return (
     <View
-      accessibilityLabel={`${label}, ${stage.status}`}
+      accessibilityLabel={`${label}, ${status}`}
       className={compact ? "min-h-8 flex-row items-center" : "min-h-11 flex-row items-center"}
-      style={{ columnGap: 8, opacity: stage.status === "pending" ? 0.4 : 1 }}
+      style={{ columnGap: 8, opacity: status === "pending" ? 0.4 : 1 }}
     >
       <View className="w-6 items-center">
-        {stage.status === "running" && animate ? (
+        {status === "running" && animate ? (
           <AppActivityIndicator
             size="small"
             colorClassName="accent-icon-muted"
@@ -296,19 +351,19 @@ function StageRow({
           />
         ) : (
           <SymbolView
-            name={icons[stage.status]}
+            name={icons[status]}
             size={14}
             tintColorClassName={
-              stage.status === "failed"
+              status === "failed"
                 ? "accent-danger-foreground"
-                : stage.status === "warning"
+                : status === "warning"
                   ? "accent-warning-foreground"
                   : "accent-icon-muted"
             }
           />
         )}
       </View>
-      {stage.status === "running" && animate ? (
+      {status === "running" && animate ? (
         <ShimmeringWorkContent
           icon="clock"
           iconSubtleColor="transparent"
@@ -319,7 +374,7 @@ function StageRow({
         <Text
           numberOfLines={1}
           className={
-            stage.status === "failed"
+            status === "failed"
               ? "flex-1 text-sm text-danger-foreground"
               : "flex-1 text-sm text-foreground-secondary"
           }
@@ -328,16 +383,16 @@ function StageRow({
         </Text>
       )}
       {detail ? (
-        <Text numberOfLines={1} className="max-w-[25%] shrink text-2xs text-foreground-secondary">
+        <Text numberOfLines={1} className="max-w-[40%] shrink text-2xs text-foreground-secondary">
           {detail}
         </Text>
       ) : null}
-      {stage.status !== "pending" && stage.status !== "skipped" ? (
+      {duration ? (
         <Text
           className="text-2xs text-foreground-secondary"
           style={{ fontVariant: ["tabular-nums"] }}
         >
-          {elapsed(stage.startedAt, stage.endedAt, now)}
+          {duration}
         </Text>
       ) : null}
     </View>

@@ -27,6 +27,7 @@ import {
   type ProjectRoot,
   type RunId,
   type RuntimeMode,
+  type SandboxAdmissionReason,
   type SandboxId,
   type SandboxSize,
   type ScheduledTaskId,
@@ -305,6 +306,49 @@ const rebuildNotice = (checkout: SandboxCheckout) => {
     return `Rebuilt from the last saved commit on ${checkout.branch}: the machine's disk was lost. Uncommitted changes, ignored files and caches were not kept.`;
   }
   return `Checked out again from the remote: the machine's disk was lost and no copy of ${checkout.branch} was saved. Unpushed commits and uncommitted changes were not kept.`;
+};
+
+/** The machine row while it waits for a slot: a short reason, and a line only when it says more. */
+const MACHINE_WAITING_COPY: Readonly<
+  Record<SandboxAdmissionReason, { readonly detail: string; readonly note: string | null }>
+> = {
+  "team-cap": {
+    detail: "Team limit reached",
+    note: "Starts on its own when a team machine frees up.",
+  },
+  "member-cap": {
+    detail: "Your limit reached",
+    note: "Starts on its own when one of your machines stops.",
+  },
+  "rate-limit": { detail: "Starting soon", note: null },
+  draining: { detail: "Pair Cloud is updating", note: null },
+};
+
+/** Where a cloud checkout's code came from; several repositories report the slowest source. */
+const repositorySourceLabel = (
+  sources: ReadonlyArray<{
+    readonly restoredFrom: string | null;
+    readonly cloneSource: "image" | "origin" | "existing";
+  }>,
+): string | null => {
+  const labels: ReadonlyArray<string> = sources.map((source) =>
+    source.restoredFrom === "disk"
+      ? "Already on this machine"
+      : source.restoredFrom === "mirror" || source.restoredFrom === "seed"
+        ? "Restored from Pair Cloud"
+        : source.cloneSource === "origin"
+          ? "Cloned from origin"
+          : source.cloneSource === "image"
+            ? "Restored from team image"
+            : "Already on this machine",
+  );
+  const order = [
+    "Cloned from origin",
+    "Restored from Pair Cloud",
+    "Restored from team image",
+    "Already on this machine",
+  ];
+  return order.find((label) => labels.includes(label)) ?? null;
 };
 
 type WorkspaceCheckout = Effect.Success<
@@ -926,7 +970,12 @@ const make = Effect.gen(function* () {
         threadId,
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: input.workspaceStrategy.baseRef,
-        stages: ["fetch", "checkout", "setup-script", "agent"],
+        // A cloud checkout happens inside its fetch; its machine leads instead.
+        stages:
+          sandboxId === undefined
+            ? ["fetch", "checkout", "setup-script", "agent"]
+            : ["fetch", "setup-script", "agent"],
+        machine: sandboxId !== undefined,
         fiber: yield* Effect.fiber,
       });
     } else if (reused !== undefined) {
@@ -1000,6 +1049,26 @@ const make = Effect.gen(function* () {
                 phase,
               })
               .pipe(Effect.asVoid, Effect.mapError(mapError(input, "update-thread", threadId)));
+      let reportedWaitingPhase: string | null = null;
+      const machineWaiting = Effect.fn("ThreadLaunchService.machineWaiting")(function* (
+        phase: "sandbox-admission" | "sandbox-start",
+        reason: SandboxAdmissionReason | null,
+      ) {
+        yield* phase === "sandbox-admission"
+          ? setupTracker.machineStatus(
+              threadId,
+              "waiting",
+              reason === null ? undefined : MACHINE_WAITING_COPY[reason],
+            )
+          : setupTracker.machineStatus(threadId, "running");
+        if (phase === reportedWaitingPhase) return;
+        reportedWaitingPhase = phase;
+        yield* progress(phase);
+      });
+      // Never waited means the machine was already up, and its row stays hidden.
+      const machineReady = Effect.suspend(() =>
+        setupTracker.machineStatus(threadId, reportedWaitingPhase === null ? "skipped" : "done"),
+      );
       if (
         input.workspaceStrategy.type === "worktree" &&
         sandboxId !== undefined &&
@@ -1041,9 +1110,10 @@ const make = Effect.gen(function* () {
         yield* Effect.all(
           [
             fetchCheckouts,
-            CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: progress }).pipe(
+            CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: machineWaiting }).pipe(
               Effect.provide(cloudServices),
               Effect.mapError(mapError(input, "provision-worktree", threadId)),
+              Effect.tap(() => machineReady),
             ),
           ],
           { concurrency: "unbounded", discard: true },
@@ -1080,7 +1150,12 @@ const make = Effect.gen(function* () {
           );
           yield* recordNotInImage(input.commandId, threadId, sandboxId, titles.join(", "));
         }
-        yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        yield* setupTracker.stageStatus(
+          threadId,
+          "fetch",
+          "done",
+          repositorySourceLabel(checkout.roots),
+        );
         worktreePath = checkout.folder;
         branch = checkout.branch;
         if (checkout.created) {
@@ -1099,7 +1174,6 @@ const make = Effect.gen(function* () {
         }
         if (rebuilt) yield* recordRebuild(input.commandId, threadId, checkout);
         yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
-        yield* setupTracker.stageStatus(threadId, "checkout", "done");
       } else if (input.workspaceStrategy.type === "worktree" && sandboxId !== undefined) {
         const fetchCheckout = Option.isSome(pairCloudProjects)
           ? pairCloudProjects.value.fetchCheckout({
@@ -1112,9 +1186,10 @@ const make = Effect.gen(function* () {
         yield* Effect.all(
           [
             fetchCheckout,
-            CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: progress }).pipe(
+            CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: machineWaiting }).pipe(
               Effect.provide(cloudServices),
               Effect.mapError(mapError(input, "provision-worktree", threadId)),
+              Effect.tap(() => machineReady),
             ),
           ],
           { concurrency: "unbounded", discard: true },
@@ -1144,7 +1219,12 @@ const make = Effect.gen(function* () {
         if (checkout.cloneSource === "origin") {
           yield* recordNotInImage(input.commandId, threadId, sandboxId, project.title);
         }
-        yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        yield* setupTracker.stageStatus(
+          threadId,
+          "fetch",
+          "done",
+          repositorySourceLabel([checkout]),
+        );
         worktreeRepository = checkout.clonePath;
         worktreePath = checkout.worktreePath;
         branch = checkout.branch;
@@ -1153,7 +1233,6 @@ const make = Effect.gen(function* () {
           createdBranch = branch;
         }
         yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
-        yield* setupTracker.stageStatus(threadId, "checkout", "done");
       } else if (input.workspaceStrategy.type === "worktree" && threadRoots !== undefined) {
         if (runId !== null) {
           yield* threads
