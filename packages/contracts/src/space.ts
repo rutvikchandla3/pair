@@ -50,11 +50,12 @@ export const SPACE_COLORS = [
 export const SpaceColor = Schema.Literals(SPACE_COLORS);
 export type SpaceColor = typeof SpaceColor.Type;
 /** One emoji: a pictograph with its modifiers and joins, or a flag. */
+const SINGLE_EMOJI =
+  /^(?:\p{Regional_Indicator}\p{Regional_Indicator}|\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*(?:\u200D\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*)*)$/u;
+// A filter, not isPattern: the regex would otherwise land in the agent-facing MCP schema.
 export const SpaceEmoji = Schema.String.check(
   Schema.isMaxLength(32),
-  Schema.isPattern(
-    /^(?:\p{Regional_Indicator}\p{Regional_Indicator}|\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*(?:\u200D\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*)*)$/u,
-  ),
+  Schema.makeFilter((emoji: string) => SINGLE_EMOJI.test(emoji) || "Expected one emoji."),
 );
 /** What the owner picked; without one, clients derive a letter and color from the space. */
 export const SpaceIcon = Schema.Struct({
