@@ -32,6 +32,7 @@ const botsFailure = (error: BotsError): OrchestratorMcpFailure => {
     case "not-found":
       return new OrchestratorMcpFailure({ code: "task_not_found", message: error.message });
     case "invalid-request":
+    case "already-answered":
       return new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
     case "cloud-only":
       return new OrchestratorMcpFailure({ code: "capability_denied", message: error.message });

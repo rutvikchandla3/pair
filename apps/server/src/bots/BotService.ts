@@ -831,8 +831,14 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           const ask = Option.getOrNull(yield* db(store.getAsk(input.askId)));
           if (ask === null) return yield* notFound("That ask is gone.");
           const bot = yield* requireBot(caller, ask.botId);
-          // Answering again is how the user changes their answer.
+          // Answering again is how the user changes their answer, unless they only meant to answer.
           const changed = ask.status === "answered";
+          if (changed && input.ifOpen === true) {
+            return yield* new BotsError({
+              reason: "already-answered",
+              message: "That question was already answered.",
+            });
+          }
           if (changed && input.kind === "bot-decides" && ask.answerKind === "bot-decides") {
             return yield* invalidRequest("You already let the bot decide that.");
           }

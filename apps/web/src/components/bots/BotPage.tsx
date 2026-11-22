@@ -1,9 +1,9 @@
-import type { BotAskId, EnvironmentId, RunId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { BotsError, type BotAskId, type EnvironmentId, type RunId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
-  ChevronRightIcon,
   CpuIcon,
-  MessageCircleQuestionIcon,
   MoreHorizontalIcon,
   PauseIcon,
   PencilIcon,
@@ -11,7 +11,8 @@ import {
   SparklesIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useState } from "react";
+import * as Schema from "effect/Schema";
+import { useEffect, useState } from "react";
 
 import type { BotChatOptions } from "../chat/botChat";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -36,19 +37,30 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/men
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastCommandFailure } from "../team/toastCommandFailure";
+import { toastManager } from "../ui/toast";
 import { BotAvatar } from "./BotAvatar";
 import { openBotDialog } from "./botDialogStore";
 import { BotMemoryPanel } from "./BotMemoryPanel";
+import {
+  BotQuestionsPopover,
+  questionCountLabel,
+  type BotAnswer,
+  type BotAnswerOutcome,
+} from "./BotQuestionsPopover";
 import { BotSettingsDialog } from "./BotSettingsDialog";
 import {
+  askAbout,
   botFacePose,
   botSessions,
   botStatusLine,
   cloudSessionsStillRunning,
   jobSessionState,
   jobsById,
+  openAsks,
   type ShellLookup,
 } from "./bots.logic";
+
+const isBotsError = Schema.is(BotsError);
 
 const EMBEDDED_PANEL: SideChatParentPanel = {
   openToolDiff: () => {},
@@ -60,6 +72,8 @@ export function BotPage(props: {
   readonly environmentId: EnvironmentId;
   readonly botId: string;
   readonly askId: BotAskId | null;
+  readonly questionsOpen: boolean;
+  readonly onQuestionsOpenChange: (open: boolean) => void;
 }) {
   const snapshot = useBotsSnapshot(props.environmentId);
   const navigate = useNavigate();
@@ -81,6 +95,24 @@ export function BotPage(props: {
   const pause = useAtomCommand(botsEnvironment.pause);
   const resume = useAtomCommand(botsEnvironment.resume);
   const remove = useAtomCommand(botsEnvironment.remove);
+  const answerAsk = useAtomCommand(botsEnvironment.answerAsk, { reportFailure: false });
+  const canAnswer = useAtomValue(botsEnvironment.answerAsk.permissionAtom(props.environmentId));
+  // Whether the panel has shown a question since it opened; only then does it show its empty state.
+  const [panelHadQuestions, setPanelHadQuestions] = useState(false);
+  const openCount =
+    snapshot === null
+      ? null
+      : snapshot.asks.filter((ask) => ask.botId === props.botId && ask.status === "open").length;
+  if (props.questionsOpen && (openCount ?? 0) > 0 && !panelHadQuestions) {
+    setPanelHadQuestions(true);
+  }
+  if (!props.questionsOpen && panelHadQuestions) setPanelHadQuestions(false);
+  const staleQuestionsUrl = props.questionsOpen && openCount === 0 && !panelHadQuestions;
+  const { onQuestionsOpenChange } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops a ?questions URL that has nothing to show, so a later ask doesn't pop the panel open
+  useEffect(() => {
+    if (staleQuestionsUrl) onQuestionsOpenChange(false);
+  }, [staleQuestionsUrl, onQuestionsOpenChange]);
 
   if (snapshot === null) {
     return (
@@ -132,13 +164,32 @@ export function BotPage(props: {
   }).length;
   const cloudRunning = cloudSessionsStillRunning(sessions);
 
-  const focusAsk = (runId: RunId | null) => {
-    if (runId === null) return;
+  const questions = openAsks(snapshot, bot.id).map((ask) => ({
+    ask,
+    about: askAbout(snapshot, ask),
+  }));
+
+  const focusAsk = (runId: RunId) => {
     setFocusState((current) => ({
       runId,
       nonce: (current?.nonce ?? 0) + 1,
       askId: current?.askId ?? null,
     }));
+  };
+
+  const answer = async (input: BotAnswer): Promise<BotAnswerOutcome> => {
+    const result = await answerAsk({
+      environmentId: props.environmentId,
+      input: { ...input, remember: false, ifOpen: true },
+    });
+    if (result._tag === "Success") return "answered";
+    const error = squashAtomCommandFailure(result);
+    if (isBotsError(error) && error.reason === "already-answered") {
+      toastManager.add({ type: "info", title: "Already answered elsewhere" });
+      return "answered";
+    }
+    toastCommandFailure("Could not send your answer", result);
+    return "failed";
   };
 
   const togglePause = async () => {
@@ -172,16 +223,18 @@ export function BotPage(props: {
             <TooltipPopup side="bottom">{bot.charter}</TooltipPopup>
           </Tooltip>
         )}
-        {status.kind === "needs" ? (
-          <button
-            type="button"
-            onClick={() => focusAsk(status.focusRunId)}
-            className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-input-foreground text-xs whitespace-nowrap hover:bg-accent"
-          >
-            <MessageCircleQuestionIcon className="size-3" />
-            {status.label}
-            <ChevronRightIcon className="size-3" />
-          </button>
+        {status.kind === "needs" || (props.questionsOpen && !staleQuestionsUrl) ? (
+          <BotQuestionsPopover
+            environmentId={props.environmentId}
+            botName={bot.name}
+            canAnswer={canAnswer}
+            label={status.kind === "needs" ? status.label : questionCountLabel(0)}
+            questions={questions}
+            open={props.questionsOpen && !staleQuestionsUrl}
+            onOpenChange={props.onQuestionsOpenChange}
+            onAnswer={answer}
+            onShowInChat={focusAsk}
+          />
         ) : (
           <span className="truncate text-muted-foreground text-xs whitespace-nowrap">
             {status.label}
