@@ -55,7 +55,7 @@ so does the code those Macs already hold. A team that wants its laptops locked d
 | ------------------------------ | ------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------- |
 | **A. Pair Cloud on a team VM** | A VM the team runs, in any cloud or on its own hardware (Pair's dogfood is a GCE VM) | Docker on that VM, or a Docker host through `DOCKER_HOST`   | Coder, E2B Embed                                                            | M2                   |
 | **B. BYOC**                    | The customer's VPC, installed by the kit: Google Cloud first, then AWS               | VMs in private subnets of that VPC: GCE instances, then EC2 | Coder, self-managed Buildkite                                               | M5                   |
-| **C. Hosted machines**         | A cloud-only server the team runs, at a public `https://` address                    | boat.dev sandboxes, in boat's EU cloud                      | Conductor on Vercel                                                         | M8                   |
+| **C. Hosted machines**         | A cloud-only server the team runs, at a public `https://` address                    | boat.dev sandboxes in boat's EU cloud, or Agent37 instances | Conductor on Vercel                                                         | M8, M9               |
 | Pair-hosted control plane      | Pair                                                                                 | The customer's account; runners dial out to Pair            | Ona runners, E2B BYOC, GitHub Actions self-hosted runners, Buildkite hybrid | Rejected (section 7) |
 
 A and B run the same cloud-only server, launch gate and lifecycle. They differ in where machines
@@ -73,7 +73,7 @@ This replaces the BYOC tiers table in [conductor-cloud.md](../conductor-cloud.md
 | 2a     | Customer AWS account | EC2 driver (offering B)                        | Full VM                          | Teams whose code and credentials must stay in their account | M5, after GCP                                |
 | 2b     | Customer GCP project | GCE driver                                     | Full VM                          | The same, on GCP                                            | M5, first                                    |
 | 3      | Customer cloud       | Kubernetes driver                              | gVisor or Kata                   | Enterprises with a platform team                            | Later, by demand                             |
-| Hosted | A team VM            | boat.dev driver (offering C)                   | Vendor VM                        | Fastest Conductor-like setup                                | M8                                           |
+| Hosted | A team VM            | boat.dev or Agent37 driver (offering C)        | Vendor VM                        | Fastest Conductor-like setup                                | M8, M9                                       |
 | Embed  | Customer cloud       | E2B Embed node, through an E2B driver          | Firecracker microVM              | Small teams that want fast boots in their account           | Later, only with an E2B driver               |
 
 ### What leaves the customer's account

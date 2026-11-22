@@ -85,6 +85,11 @@ forwards). Workers are Opus at medium effort. All seven rows are landed: 7.1 (a6
 them. **The core of the M7 pass passed on `.15` on 2026-11-11; most of its steps are still owed**:
 see [M7 on real hardware](#m7-on-real-hardware-2026-11-11-vm-provider-dev-releases-v14-and-v15).
 
+**M9 Agent37 hosted machines, built 2026-11-22:** [m9-agent37.md](./m9-agent37.md), one PR against
+`feat/pair`. It passes the contract suite against an in-process fake and, on a free-credit Agent37
+workspace, the `T3_TEST_AGENT37` live run and Settings → Cloud **Test** on a cloud-only dev server.
+Owed: a cloud thread turn, a team image build and a `vm` machine outside the US.
+
 **M8 boat.dev hosted machines, built 2026-11-13:** [m8-boat.md](./m8-boat.md), approved by the
 maintainer with the decisions in its §20, built on `feat/boat-hosted-machines` as one PR against
 `feat/pair`. There is no boat account yet: the driver is built against boat's documented API and
