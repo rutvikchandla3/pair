@@ -1,7 +1,15 @@
+import { it as effectIt } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 
-import { BRIEF_TOKEN_CAP, composeBrief, estimateTokens } from "./botBrief.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import { BRIEF_TOKEN_CAP, composeBrief, estimateTokens, loadBrief } from "./botBrief.ts";
 import { at, heavyBriefInput } from "./botFixtures.testkit.ts";
+import { BotSessions } from "./BotSessions.ts";
+import { BotService } from "./BotService.ts";
 
 describe("composeBrief", () => {
   it("keeps a heavy bot's brief under its cap and still accounts for every open job and note", () => {
@@ -47,5 +55,37 @@ describe("composeBrief", () => {
     ]);
     // Open Asks are always listed: they wait on the user.
     expect(brief.openAsks.length + brief.moreAsks).toBe(30);
+
+    // A changed bot (say a note the user deleted) gets the whole brief: a diff can't show removals.
+    const changedBot = { ...input.bot, updatedAt: at(2_000) };
+    const whole = composeBrief({ ...input, bot: changedBot, since: at(1_500) });
+    expect(whole.since).toBeNull();
+    expect(whole).toEqual(composeBrief({ ...input, bot: changedBot, since: null }));
   });
+});
+
+effectIt.effect("shows a change stamped before a brief's reads but committed after them", () => {
+  const input = heavyBriefInput();
+  const job = input.jobs[0]!;
+  let snapshotJobs = [job];
+  const layer = Layer.mergeAll(
+    Layer.mock(BotService)({
+      snapshotForBot: () =>
+        Effect.sync(
+          () =>
+            ({ bots: [input.bot], jobs: snapshotJobs, sessions: [], asks: [], notes: [] }) as never,
+        ),
+      listAllBots: () => Effect.succeed([input.bot]),
+    }),
+    Layer.mock(BotSessions)({ cloudTarget: () => Effect.succeed(null) }),
+    Layer.mock(ProjectService.ProjectService)({ listShells: () => Effect.succeed([]) }),
+  );
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(at(2_000))));
+    const first = yield* loadBrief(input.bot.id, { since: null });
+    // The writer stamped it a second before that brief, and it committed after the brief read.
+    snapshotJobs = [{ ...job, headline: "Moved on", updatedAt: at(2_000 - 1 / 60) }];
+    const next = yield* loadBrief(input.bot.id, { since: first.asOf });
+    expect(next.jobs.map((entry) => entry.headline)).toEqual(["Moved on"]);
+  }).pipe(Effect.provide(layer));
 });

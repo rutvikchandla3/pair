@@ -111,7 +111,7 @@ export interface BriefInput {
 }
 
 const after = (iso: string | null | undefined, since: string | null): boolean =>
-  since === null || (iso != null && iso > since);
+  since === null || (iso != null && iso >= since);
 
 /** A session's last message is worth reading once its run has ended: a report or an error. */
 const endedStatus = (status: string): boolean => status !== "working";
@@ -146,7 +146,10 @@ const briefSession = (input: BriefSessionInput, since: string | null) => {
  * lines instead of everything again.
  */
 export const composeBrief = (input: BriefInput) => {
-  const { bot, since } = input;
+  const { bot } = input;
+  // A diff can't show what was removed, so any change to the bot (a note the user deleted, its
+  // settings, a new job) gets the whole brief.
+  const since = after(bot.updatedAt, input.since) ? null : input.since;
   const sessionsByJob = new Map<string, Array<BriefSessionInput>>();
   for (const entry of input.sessions) {
     const list = sessionsByJob.get(entry.session.jobId) ?? [];
@@ -260,9 +263,18 @@ export const composeBrief = (input: BriefInput) => {
 
 export type Brief = ReturnType<typeof composeBrief>;
 
+/** Writers stamp a change just before it commits, so each `since` re-reads this much before it. */
+const SINCE_OVERLAP_MS = 5_000;
+
 /** Stored times are ISO strings, so `since` compares as one; anything unreadable gets the whole brief. */
 const normalizeSince = (since: string | null): string | null =>
-  since === null ? null : Option.getOrNull(Option.map(DateTime.make(since), DateTime.formatIso));
+  since === null
+    ? null
+    : Option.getOrNull(
+        Option.map(DateTime.make(since), (at) =>
+          DateTime.formatIso(DateTime.subtract(at, { milliseconds: SINCE_OVERLAP_MS })),
+        ),
+      );
 
 const stoppedState = { status: "stopped", pendingRequest: null, lastAssistantText: null };
 
@@ -274,6 +286,8 @@ export const loadBrief = Effect.fn("bots.loadBrief")(function* (
   const bots = yield* BotService.BotService;
   const projects = yield* ProjectService.ProjectService;
   const sessions = yield* BotSessions.BotSessions;
+  // Before any read: a change that lands during them shows again next time.
+  const now = DateTime.formatIso(yield* DateTime.now);
   const snapshot = yield* bots.snapshotForBot(botId);
   const bot = snapshot.bots[0];
   if (bot === undefined) {
@@ -341,7 +355,7 @@ export const loadBrief = Effect.fn("bots.loadBrief")(function* (
         workspaceRoot: shell.workspaceRoot,
       })),
     cloud,
-    now: DateTime.formatIso(yield* DateTime.now),
+    now,
     since: normalizeSince(options.since),
   });
 });
