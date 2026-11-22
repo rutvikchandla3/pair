@@ -38,9 +38,10 @@ import * as ThreadAccess from "../team/ThreadAccess.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
+  OrchestratorProjectionError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { ProjectionStoreThreadNotFoundError, ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { assertCommandAccess, dispatchCommand, stopSandboxById } from "./ThreadMessageIntake.ts";
 
 function member(id: string, overrides: Partial<MemberRecord> = {}): MemberRecord {
@@ -86,9 +87,27 @@ const layerFailingDispatchHandler =
     );
   };
 
+// The intake reads a thread's record; other checks still read its shell.
+const threadReads = (shell: (id: ThreadId) => Effect.Effect<unknown>) => ({
+  getThreadShell: shell as never,
+  getThreadRecords: ((id: ThreadId) =>
+    shell(id).pipe(
+      Effect.flatMap((thread) =>
+        thread === null
+          ? Effect.fail(
+              new OrchestratorProjectionError({
+                threadId: id,
+                cause: new ProjectionStoreThreadNotFoundError({ threadId: id }),
+              }),
+            )
+          : Effect.succeed({ thread: { deletedAt: null, ...(thread as object) } }),
+      ),
+    )) as never,
+});
+
 const layerFailingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
-    getThreadShell: () => Effect.succeed(null),
+    ...threadReads(() => Effect.succeed(null)),
     dispatch: layerFailingDispatchHandler(captured),
   });
 
@@ -238,7 +257,7 @@ it.effect("releases claimed copies when the command was already rejected", () =>
     }).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(null),
+          ...threadReads(() => Effect.succeed(null)),
           dispatch: (command) =>
             Effect.fail(
               new OrchestratorCommandPreviouslyRejectedError({
@@ -306,7 +325,7 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
     }).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(null),
+          ...threadReads(() => Effect.succeed(null)),
           dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
         }),
       ),
@@ -377,7 +396,7 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
     const retry = yield* dispatchCommand(command).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(null),
+          ...threadReads(() => Effect.succeed(null)),
           dispatch: (dispatched) => {
             captured.push(dispatched);
             return Effect.succeed({ sequence: 1, storedEvents: [] });
@@ -427,7 +446,7 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     const captured: OrchestrationV2ServerCommand[] = [];
     const layerGuestShare = Layer.mock(ThreadManagementService.ThreadManagementService)({
       dispatch: layerFailingDispatchHandler(captured),
-      getThreadShell: () => Effect.succeed(null),
+      ...threadReads(() => Effect.succeed(null)),
       // Only the share is read.
       getThreadSnapshotWindow: () =>
         Effect.succeed({
@@ -478,12 +497,13 @@ it.effect(
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               dispatch: layerFailingDispatchHandler(captured),
               // Carol's side chat shares the machine of Bob's thread.
-              getThreadShell: (id) =>
+              ...threadReads((id) =>
                 Effect.succeed({
                   ownerId: MemberId.make(id === sideChatId ? "member-carol" : "member-bob"),
                   sandboxId,
                   sandbox: { state: "ready", ownerThreadId: threadId },
                 } as never),
+              ),
             }),
           ),
           Effect.flip,
@@ -576,6 +596,9 @@ it.effect.each([
   ["task", "thread.model-selection.set", "member-carol", "space_task_owner_only"],
   ["task", "thread.model-selection.set", "member-bob", "dispatched"],
   ["task", "message.dispatch", "member-carol", "dispatched"],
+  // Like the shell they replaced, a deleted or missing thread's rules never apply.
+  ["deleted room", "message.dispatch", "member-bob", "dispatched"],
+  ["missing", "message.dispatch", "member-bob", "dispatched"],
 ] as const)("a space %s takes %s from %s: %s", ([kind, type, actor, outcome]) =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("thread-space");
@@ -626,11 +649,20 @@ it.effect.each([
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: layerFailingDispatchHandler(captured),
-          getThreadShell: () =>
-            Effect.succeed({
-              ownerId: MemberId.make("member-bob"),
-              space: { kind, spaceId: "spc_0123456789abcdef0123" },
-            } as never),
+          ...threadReads(() =>
+            Effect.succeed(
+              kind === "missing"
+                ? null
+                : ({
+                    ownerId: MemberId.make("member-bob"),
+                    space: {
+                      kind: kind === "deleted room" ? "room" : kind,
+                      spaceId: "spc_0123456789abcdef0123",
+                    },
+                    ...(kind === "deleted room" ? { deletedAt: NOW } : {}),
+                  } as never),
+            ),
+          ),
         }),
       ),
       Effect.flip,
@@ -674,11 +706,12 @@ it.effect.each([
         Effect.provide(
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             dispatch: layerFailingDispatchHandler(captured),
-            getThreadShell: () =>
+            ...threadReads(() =>
               Effect.succeed({
                 ownerId: threadOwner === null ? null : MemberId.make(threadOwner),
                 ...(hasMachine ? { sandboxId: SandboxId.make("sbx_0123456789abcdef0123") } : {}),
               } as never),
+            ),
           }),
         ),
         Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
@@ -763,7 +796,7 @@ it.effect.each([
         Effect.provide(
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             dispatch: layerFailingDispatchHandler(captured),
-            getThreadShell: () =>
+            ...threadReads(() =>
               Effect.succeed({
                 id: threadId,
                 ownerId: holder === null ? null : MemberId.make(holder),
@@ -771,6 +804,7 @@ it.effect.each([
                 lineage: { sideChat: kind === "send" || kind === "mode" },
                 ...(hasMachine ? { sandboxId: SandboxId.make("sbx_0123456789abcdef0123") } : {}),
               } as never),
+            ),
           }),
         ),
         Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
@@ -818,13 +852,14 @@ it.effect.each([
           }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             dispatch: layerFailingDispatchHandler(captured),
-            getThreadShell: () =>
+            ...threadReads(() =>
               Effect.succeed({
                 id: ownerThreadId,
                 ownerId: MemberId.make("member-bob"),
                 sandboxId: SandboxId.make("sbx_0123456789abcdef0123"),
                 sandbox: { state: "ready", ownerThreadId },
               } as never),
+            ),
           }),
         ),
       ),
