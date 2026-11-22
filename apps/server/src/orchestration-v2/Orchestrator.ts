@@ -1294,7 +1294,7 @@ function lastDeliveredRunForProviderThread(
   );
 }
 
-/** How many of a thread's newest runs a message dispatch reads before falling back to all of them. */
+/** How many of a thread's newest runs a dispatch or queued start reads before reading them all. */
 const DISPATCH_RECENT_RUNS = 50;
 
 /**
@@ -1311,14 +1311,12 @@ export function dispatchNeedsFullHistory(
   projection: OrchestrationV2ThreadProjection,
   recentRuns: number,
 ): boolean {
-  const floor = projection.runs.map((run) => run.ordinal).toSorted((a, b) => b - a)[recentRuns - 1];
+  const floor = newestRunsFloor(projection, recentRuns);
   // Fewer runs than the window: the store read them all.
   if (floor === undefined) return false;
   const activeProviderThread = projection.providerThreads.find(
     (candidate) => candidate.id === projection.thread.activeProviderThreadId,
   );
-  const newest = (run: OrchestrationV2Run | null | undefined) =>
-    run != null && run.ordinal >= floor;
   return (
     command.usageLimitContinuationOfRunId !== undefined ||
     command.sourcePlanRef !== undefined ||
@@ -1328,13 +1326,72 @@ export function dispatchNeedsFullHistory(
     (activeProviderThread !== undefined &&
       activeProviderThread.providerInstanceId !==
         (command.modelSelection ?? projection.thread.modelSelection).instanceId) ||
-    !newest(latestExecutedRun(projection.runs)) ||
     // A wake's notification item drops `modelSwitch`, so its latest shown run is never read.
-    (command.notification === undefined && !newest(latestShownRun(projection))) ||
-    !newest(latestStartedRun(projection.runs)) ||
+    latestRunsOlderThan(projection, floor, command.notification === undefined) ||
     !projection.messages.some(
       (message) => message.role === "user" && !isNativeMaintenanceCommand(message),
     )
+  );
+}
+
+/**
+ * Whether starting `queuedRun` from a `recentRuns` read must re-read every run: a provider or
+ * model change and a handoff from another provider read across all runs, and so do a queued run
+ * older than the newest runs (every run after it counts) and a latest answer from an older run.
+ */
+export function queuedStartNeedsFullHistory(
+  projection: OrchestrationV2ThreadProjection,
+  queuedRun: OrchestrationV2Run,
+  recentRuns: number,
+): boolean {
+  const floor = newestRunsFloor(projection, recentRuns);
+  if (floor === undefined) return false;
+  const modelSelection = queuedRunModelSelection(projection, queuedRun);
+  const activeProviderThread = projection.providerThreads.find(
+    (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+  );
+  const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
+  return (
+    queuedRun.ordinal < floor ||
+    threadHasImportedHistory(projection.thread.historyOrigin) ||
+    !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+    (activeProviderThread !== undefined &&
+      activeProviderThread.providerInstanceId !== modelSelection.instanceId) ||
+    latestHandoffRun === undefined ||
+    latestHandoffRun.ordinal < floor ||
+    latestHandoffRun.providerInstanceId !== modelSelection.instanceId ||
+    latestRunsOlderThan(
+      projection,
+      floor,
+      projection.messages.find((message) => message.id === queuedRun.userMessageId)
+        ?.notification === undefined,
+    )
+  );
+}
+
+/** The lowest ordinal among the newest `recentRuns` runs; undefined when there are fewer. */
+function newestRunsFloor(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs">,
+  recentRuns: number,
+): number | undefined {
+  return projection.runs.map((run) => run.ordinal).toSorted((a, b) => b - a)[recentRuns - 1];
+}
+
+/**
+ * The store keeps the newest runs ahead of omitted ones, so a latest answer must be one of them.
+ * `readsShownRun` is false for a notification, whose item never shows a model switch.
+ */
+function latestRunsOlderThan(
+  projection: OrchestrationV2ThreadProjection,
+  floor: number,
+  readsShownRun: boolean,
+): boolean {
+  const newest = (run: OrchestrationV2Run | null | undefined) =>
+    run != null && run.ordinal >= floor;
+  return (
+    !newest(latestExecutedRun(projection.runs)) ||
+    (readsShownRun && !newest(latestShownRun(projection))) ||
+    !newest(latestStartedRun(projection.runs))
   );
 }
 
@@ -2177,7 +2234,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
-      const projection = yield* readCommandProjection(threadId);
+      const recentProjection = yield* readCommandProjection(threadId, {
+        limit: DISPATCH_RECENT_RUNS,
+        runIds: [],
+      });
+      // Queued runs are active, so the recent read always holds the one to start.
+      const recentQueuedRun =
+        options?.queuedRunId === undefined
+          ? nextQueuedRun(recentProjection)
+          : recentProjection.runs.find((run) => run.id === options.queuedRunId);
+      const projection =
+        recentQueuedRun !== undefined &&
+        queuedStartNeedsFullHistory(recentProjection, recentQueuedRun, DISPATCH_RECENT_RUNS)
+          ? yield* readCommandProjection(threadId)
+          : recentProjection;
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||

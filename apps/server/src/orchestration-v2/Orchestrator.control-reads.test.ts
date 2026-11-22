@@ -677,6 +677,7 @@ const recentRunsProjection = (
       userMessageId: MessageId.make(`message:recent:${ordinal}`),
       contextHandoffId: null,
       modelSelection,
+      providerInstanceId: modelSelection.instanceId,
       startedAt: queued ? null : at(ordinal * 10),
       completedAt: queued ? null : at(ordinal * 10 + 5),
     };
@@ -730,6 +731,92 @@ it.each([
 ] as const)("dispatch re-reads every run for %s", (_, edit, command, expected) => {
   assert.equal(
     Orchestrator.dispatchNeedsFullHistory(command, recentRunsProjection(edit), 2),
+    expected,
+  );
+});
+
+it.each([
+  ["a queued run among the newest", {}, 5, modelSelection.model, false],
+  ["a queued run older than the newest", {}, 1, modelSelection.model, true],
+  ["a queued run on another model", {}, 5, "gpt-5.5", true],
+  [
+    "a queued run after a provider switch",
+    { providerInstance: "claude" },
+    5,
+    modelSelection.model,
+    true,
+  ],
+  [
+    "a queued wake after an older run that ended last",
+    { firstEndsLast: true, wake: true },
+    5,
+    modelSelection.model,
+    true,
+  ],
+  [
+    "a latest handoff run from another provider",
+    { newestFrom: "claude" },
+    5,
+    modelSelection.model,
+    true,
+  ],
+  ["imported history", { historyOrigin: "v1_import" }, 5, modelSelection.model, true],
+  ["an older latest shown run", { newest: "hidden" }, 5, modelSelection.model, true],
+  [
+    "a queued wake, not for an older latest shown run",
+    { newest: "hidden", wake: true },
+    5,
+    modelSelection.model,
+    false,
+  ],
+] as const)("a queued start re-reads every run for %s", (_, edit, ordinal, model, expected) => {
+  const queuedRun = {
+    id: RunId.make(`run:recent:queued:${ordinal}`),
+    ordinal,
+    status: "queued",
+    userMessageId: MessageId.make(`message:recent:queued:${ordinal}`),
+    contextHandoffId: null,
+    modelSelection: { ...modelSelection, model },
+    providerInstanceId: modelSelection.instanceId,
+    startedAt: null,
+    completedAt: null,
+  } as unknown as OrchestrationV2ThreadProjection["runs"][number];
+  const { wake, firstEndsLast, newestFrom, historyOrigin, ...projectionEdit } = {
+    wake: false,
+    firstEndsLast: false,
+    newestFrom: undefined,
+    historyOrigin: undefined,
+    ...edit,
+  };
+  const recent = recentRunsProjection(projectionEdit);
+  const projection = {
+    ...recent,
+    thread: { ...recent.thread, historyOrigin },
+    runs: recent.runs.map((run) =>
+      run.ordinal === 1 && firstEndsLast
+        ? { ...run, completedAt: DateTime.makeUnsafe(60 * 60_000) }
+        : run.ordinal === 4 && newestFrom !== undefined
+          ? { ...run, providerInstanceId: ProviderInstanceId.make(newestFrom) }
+          : run,
+    ),
+  };
+  const wakeMessage = {
+    id: queuedRun.userMessageId,
+    role: "user",
+    text: "[Pair] wake",
+    attachments: [],
+    notification: { source: { kind: "system" }, outcome: "updated", summary: "Woke" },
+  } as unknown as OrchestrationV2ThreadProjection["messages"][number];
+  assert.equal(
+    Orchestrator.queuedStartNeedsFullHistory(
+      {
+        ...projection,
+        runs: [...projection.runs, queuedRun],
+        messages: wake ? [...projection.messages, wakeMessage] : projection.messages,
+      },
+      queuedRun,
+      2,
+    ),
     expected,
   );
 });
