@@ -1,4 +1,5 @@
 import {
+  type Agent37SandboxDriver,
   type BoatSandboxDriver,
   ComputeDriverId,
   type ComputeDriverKind,
@@ -8,6 +9,8 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  agent37DriverFormError,
+  agent37DriverFromForm,
   boatDriverFormError,
   boatDriverFromForm,
   defaultDriverIdOf,
@@ -216,6 +219,98 @@ describe("boatDriverFromForm", () => {
       size: "large",
       runningCap: 4,
       types: { default: "large" },
+    });
+  });
+});
+
+describe("agent37DriverFormError", () => {
+  const blank = {
+    label: "Agent37",
+    apiKey: "sk_live_key",
+    runnerUrl: "https://pair.example.com",
+    size: "default",
+    runningCap: "",
+    region: "us",
+    instanceType: "default",
+    baseImage: "",
+    hasSavedKey: false,
+  } as const;
+  it.each<{
+    readonly name: string;
+    readonly form: Partial<Parameters<typeof agent37DriverFormError>[0]>;
+    readonly refused: boolean;
+  }>([
+    { name: "a new driver with a key and an https runner URL", form: {}, refused: false },
+    {
+      name: "an edit that keeps the saved key",
+      form: { apiKey: "", hasSavedKey: true },
+      refused: false,
+    },
+    { name: "a new driver with no key", form: { apiKey: " " }, refused: true },
+    { name: "no runner URL", form: { runnerUrl: "" }, refused: true },
+    { name: "an http runner URL", form: { runnerUrl: "http://pair.example.com" }, refused: true },
+    { name: "a cap of 0", form: { runningCap: "0" }, refused: true },
+    { name: "a VM in the US", form: { instanceType: "vm" }, refused: false },
+    { name: "a VM in the EU", form: { region: "eu", instanceType: "vm" }, refused: false },
+    { name: "a container in the EU", form: { region: "eu" }, refused: true },
+    { name: "a container in India", form: { region: "ap-south" }, refused: true },
+  ])("$name", ({ form, refused }) => {
+    expect(agent37DriverFormError({ ...blank, ...form }) !== null).toBe(refused);
+  });
+});
+
+describe("agent37DriverFromForm", () => {
+  const SAVED_KEY = "saved-key";
+  it("keeps the saved key and omits the defaults", () => {
+    const id = ComputeDriverId.make("agent37");
+    const initial: Agent37SandboxDriver = {
+      kind: "agent37",
+      id,
+      label: "Agent37",
+      apiKey: SAVED_KEY,
+      runnerUrl: "https://pair.example.com",
+      region: "eu",
+      instanceType: "vm",
+      baseImage: "ghcr.io/team/sandbox:1",
+      size: "large",
+      runningCap: 4,
+    };
+    const form = {
+      label: " Agent37 US ",
+      apiKey: "",
+      runnerUrl: "https://runner.pair.example.com",
+      size: "default",
+      runningCap: "",
+      region: "us",
+      instanceType: "default",
+      baseImage: " ",
+    } as const;
+    expect(agent37DriverFromForm(initial, id, form)).toEqual({
+      kind: "agent37",
+      id,
+      label: "Agent37 US",
+      apiKey: SAVED_KEY,
+      runnerUrl: "https://runner.pair.example.com",
+    });
+    expect(
+      agent37DriverFromForm(null, id, {
+        ...form,
+        apiKey: " sk_live_new ",
+        region: "ap-south",
+        instanceType: "vm",
+        baseImage: "ghcr.io/team/sandbox:2",
+        runningCap: "2",
+      }),
+    ).toEqual({
+      kind: "agent37",
+      id,
+      label: "Agent37 US",
+      apiKey: "sk_live_new",
+      runnerUrl: "https://runner.pair.example.com",
+      region: "ap-south",
+      instanceType: "vm",
+      baseImage: "ghcr.io/team/sandbox:2",
+      runningCap: 2,
     });
   });
 });
