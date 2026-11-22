@@ -126,7 +126,7 @@ export const composeSeed = (input: {
     lines.unshift(line);
   }
   return [
-    "[Pair] This chat now runs on a fresh session, so your earlier turns are not in it. Start from what follows instead.",
+    "[Pair] This chat now runs on a fresh session, so your earlier turns are not in it. Start from what follows instead, and search anything older with bot_recall.",
     `Your brief as of ${input.brief.asOf} (pass that as since to bot_brief):\n${JSON.stringify(input.brief)}`,
     lines.length === 0
       ? "This chat has no earlier messages."

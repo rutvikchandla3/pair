@@ -220,8 +220,9 @@ Unchanged from v3 except where noted.
   escalates stale requests).
 - **MCP tools** for the home thread only: `bot_brief`, **`bot_job_create` (new)**,
   `bot_job_update`, `bot_start_session` (now also returns the session's `t3-thread://` link),
-  `bot_session_message`, `bot_session_respond`, `bot_ask`, `bot_ask_resolve`, `bot_learn`, and
-  **`bot_forget` (new)**.
+  `bot_session_message`, `bot_session_respond`, `bot_ask`, `bot_ask_resolve`, `bot_learn`,
+  **`bot_forget` (new)**, and `bot_recall`, which searches what the brief no longer shows: the
+  chat's earlier messages, every job's request and report, answered Asks and all notes.
 - **Persona** rewritten for chat-first: the chat is the only screen; never do the work yourself
   (anything that runs a command, edits a file, browses or logs in is a session, sorted by the kind
   of work, not its size, since models judge "small" differently); turn requests into jobs; link

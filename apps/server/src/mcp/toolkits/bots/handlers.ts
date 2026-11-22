@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { loadBrief } from "../../../bots/botBrief.ts";
+import { loadRecall } from "../../../bots/botRecall.ts";
 import * as BotSessions from "../../../bots/BotSessions.ts";
 import * as BotService from "../../../bots/BotService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -303,6 +304,13 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
         }),
       );
       return { noteId: note.id };
+    }),
+  ),
+
+  bot_recall: McpToolAccess.reads((params) =>
+    Effect.gen(function* () {
+      const botId = yield* resolveBotId();
+      return yield* mapError(loadRecall(botId, params.query, params.limit ?? 8));
     }),
   ),
 

@@ -480,6 +480,46 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
     }),
   );
 
+  it.effect("searches one thread's own finished messages, best match first, then newest", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:own-chat");
+      yield* createProject(project);
+      const home = ThreadId.make("thread:own-chat");
+      const other = ThreadId.make("thread:other-chat");
+      yield* Effect.forEach(
+        [
+          thread(home, project),
+          message(home, "home-old", "user", "the rate limit is per member", { minute: 1 }),
+          message(home, "home-new", "assistant", "set the rate limit to 60", { minute: 5 }),
+          message(home, "home-partial", "user", "rates limited elsewhere", { minute: 9 }),
+          message(home, "home-wake", "user", "[Pair] rate limit session finished", {
+            minute: 7,
+            createdBy: "agent",
+          }),
+          thread(other, project),
+          message(other, "other", "user", "rate limit in another chat", { minute: 8 }),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const hits = yield* search.searchThreadMessages({
+        threadId: home,
+        query: "rate limit",
+        limit: 5,
+      });
+      assert.deepEqual(
+        hits.map((hit) => [hit.messageId, hit.source]),
+        [
+          ["home-new", "assistant"],
+          ["home-old", "user"],
+          ["home-partial", "user"],
+        ],
+      );
+    }),
+  );
+
   it.effect("ranks a thread about the word above a passing mention", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;

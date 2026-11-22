@@ -43,12 +43,13 @@ const BRIEF_LIMITS = {
   charterChars: 1_500,
   projectsChars: 3_500,
   asksChars: 4_000,
+  recentAnswers: 5,
   askChars: 300,
   optionChars: 120,
 } as const;
 
 /** The most a heavy bot's brief comes to, as `estimateTokens` counts: its budgets and their keys. */
-export const BRIEF_TOKEN_CAP = 12_500;
+export const BRIEF_TOKEN_CAP = 13_500;
 
 /** Items in order until their JSON reaches `budget` characters; the rest are left out. */
 const withinBudget = <A>(items: ReadonlyArray<A>, budget: number): Array<A> => {
@@ -258,6 +259,18 @@ export const composeBrief = (input: BriefInput) => {
     })),
     openAsks,
     moreAsks: input.asks.filter((ask) => ask.status === "open").length - openAsks.length,
+    // An answered Ask leaves openAsks; its answer stays here a while.
+    recentAnswers: input.asks
+      .filter((ask) => ask.status === "answered" && after(ask.answeredAt, since))
+      .toSorted((left, right) => (right.answeredAt ?? "").localeCompare(left.answeredAt ?? ""))
+      .slice(0, BRIEF_LIMITS.recentAnswers)
+      .map((ask) => ({
+        askId: ask.id,
+        jobId: ask.jobId,
+        question: clip(ask.question, BRIEF_LIMITS.askChars),
+        answer: ask.answer === null ? null : clip(ask.answer, BRIEF_LIMITS.askChars),
+        answeredAt: ask.answeredAt,
+      })),
   };
 };
 
