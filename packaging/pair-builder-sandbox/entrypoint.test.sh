@@ -32,6 +32,12 @@ check() {
 
 in_t3() { docker exec --user t3 "$1" sh -c "$2"; }
 
+eval "$(grep -E '^redact_url\(\)' "$here/entrypoint.sh")"
+check "clone URLs are logged without their credentials" \
+  "$(redact_url https://x-access-token:$secret@github.com/o/r.git)" "https://***@github.com/o/r.git"
+check "clone URLs without credentials are logged as they are" \
+  "$(redact_url git@github.com:o/r.git) $(redact_url file:///srv/r.git)" "git@github.com:o/r.git file:///srv/r.git"
+
 # Two bare repositories the container clones over file://.
 make_fixture() {
   mkdir -p "$fixtures/fixtures"

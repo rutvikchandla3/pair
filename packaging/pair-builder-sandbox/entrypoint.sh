@@ -37,6 +37,9 @@ log() {
   printf 'pair-builder-entrypoint: %s\n' "$*" >&2
 }
 
+# A clone URL can carry a token as userinfo; logs show `***@` instead.
+redact_url() { sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@#\1***@#' <<<"$1"; }
+
 user_home() {
   getent passwd "$1" | cut -d: -f6
 }
@@ -97,12 +100,12 @@ clone_into() {
   mkdir -p "$target"
   if dir_is_empty "$target"; then
     while :; do
-      log "cloning $url into $target (attempt $attempt)"
+      log "cloning $(redact_url "$url") into $target (attempt $attempt)"
       if git clone --quiet -- "$url" "$target"; then
         return 0
       fi
       if [ "$attempt" -ge "$CLONE_ATTEMPTS" ]; then
-        log "could not clone $url; giving up"
+        log "could not clone $(redact_url "$url"); giving up"
         return 1
       fi
       # git removes a failed clone's files, but not a directory it did not create.
@@ -111,7 +114,7 @@ clone_into() {
       attempt=$((attempt + 1))
     done
   fi
-  log "fetching $url into non-empty $target"
+  log "fetching $(redact_url "$url") into non-empty $target"
   git -C "$target" init --quiet
   git -C "$target" remote add origin "$url"
   git -C "$target" fetch --quiet origin
