@@ -2077,11 +2077,16 @@ const recentTurnStartContext = (
     readonly runCount?: number;
     readonly continuation?: true;
     readonly newestOnOtherThread?: true;
+    readonly newestOnFreshThread?: true;
+    readonly newestUnstarted?: true;
+    readonly firstStartsLast?: true;
+    readonly lineage?: true;
     readonly newestTurn?: "interrupted";
     readonly newestMessage?: "/compact";
   } = {},
 ) => {
   const providerThreadId = ProviderThreadId.make("provider-thread:recent");
+  const freshThreadId = ProviderThreadId.make("provider-thread:fresh");
   const runs = Array.from({ length: edit.runCount ?? 5 }, (_, index) => {
     const ordinal = index + 1;
     const newest = ordinal === 4;
@@ -2092,10 +2097,15 @@ const recentTurnStartContext = (
       providerThreadId:
         newest && edit.newestOnOtherThread
           ? ProviderThreadId.make("provider-thread:other")
-          : providerThreadId,
+          : ordinal >= 4 && edit.newestOnFreshThread
+            ? freshThreadId
+            : providerThreadId,
       userMessageId: MessageId.make(`message:recent:${ordinal}`),
       activeAttemptId: RunAttemptId.make(`attempt:recent:${ordinal}`),
-      startedAt: DateTime.makeUnsafe(ordinal * 60_000),
+      startedAt:
+        newest && edit.newestUnstarted
+          ? null
+          : DateTime.makeUnsafe((ordinal === 1 && edit.firstStartsLast ? 10 : ordinal) * 60_000),
       completedAt: ordinal === 5 ? null : DateTime.makeUnsafe(ordinal * 60_000 + 30_000),
       ...(newest && edit.continuation
         ? { restartContinuationOfRunId: RunId.make("run:recent:1") }
@@ -2125,6 +2135,7 @@ const recentTurnStartContext = (
         ownerNodeId: null,
         nativeThreadRef: { driver: "codex", nativeId: "native", strength: "strong" },
       },
+      { id: freshThreadId, ownerNodeId: null, nativeThreadRef: null },
     ],
     messages: [
       { id: MessageId.make("message:recent:5"), text: "hello" },
@@ -2132,6 +2143,7 @@ const recentTurnStartContext = (
         ? []
         : [{ id: MessageId.make("message:recent:4"), text: edit.newestMessage }]),
     ],
+    ...(edit.lineage ? { lineage: { notices: [], openUpdate: null } } : {}),
   } as unknown as OrchestrationV2ThreadProjection;
 };
 
@@ -2143,6 +2155,14 @@ it.each([
   ["an older latest earlier run", { newestOnOtherThread: true }, true],
   ["no prompted newest run", { newestTurn: "interrupted" }, true],
   ["a /compact newest run", { newestMessage: "/compact" }, true],
+  ["an older latest native run, for a slash command", { newestOnFreshThread: true }, true],
+  ["an older latest start on the provider thread", { newestUnstarted: true }, true],
+  ["lineage notes, with the latest start among the newest", { lineage: true }, false],
+  [
+    "lineage notes, after an older run started last",
+    { lineage: true, firstStartsLast: true },
+    true,
+  ],
 ] as const)("turn start re-reads every run for %s", (_, edit, expected) => {
   expect(
     ProviderTurnStart.turnStartNeedsFullHistory(
