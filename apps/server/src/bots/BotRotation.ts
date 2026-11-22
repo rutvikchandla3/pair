@@ -112,7 +112,8 @@ const speaker = (message: OrchestrationV2ConversationMessage) =>
  * when they run long. Built from stored state each time, never from the last session.
  */
 export const composeSeed = (input: {
-  readonly brief: Brief;
+  /** Null when it could not be loaded: the bot reads it itself. */
+  readonly brief: Brief | null;
   readonly messages: ReadonlyArray<OrchestrationV2ConversationMessage>;
 }): string => {
   const lines: Array<string> = [];
@@ -127,7 +128,9 @@ export const composeSeed = (input: {
   }
   return [
     "[Pair] This chat now runs on a fresh session, so your earlier turns are not in it. Start from what follows instead, and search anything older with bot_recall.",
-    `Your brief as of ${input.brief.asOf} (pass that as since to bot_brief):\n${JSON.stringify(input.brief)}`,
+    input.brief === null
+      ? "Your brief could not be loaded for this seed. Call bot_brief first."
+      : `Your brief as of ${input.brief.asOf} (pass that as since to bot_brief):\n${JSON.stringify(input.brief)}`,
     lines.length === 0
       ? "This chat has no earlier messages."
       : `The last ${lines.length} messages of this chat, oldest first:\n${lines.join("\n\n")}`,
@@ -165,8 +168,12 @@ const make = Effect.gen(function* () {
         flush: input.messageId.startsWith(FLUSH_MESSAGE_PREFIX),
       });
       if (!due) return null;
+      // Rotate without the brief rather than resume: the old session would flush again.
       const brief = yield* loadBrief(BotId.make(botId), { since: null }).pipe(
         Effect.provide(briefContext),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("bot session seed has no brief", { cause }).pipe(Effect.as(null)),
+        ),
       );
       const recent = yield* projections.getRecentMessages(input.threadId, SEED_MESSAGES * 2);
       const runIds = [...new Set(recent.flatMap((message) => message.runId ?? []))];
