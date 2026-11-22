@@ -8,6 +8,7 @@ import {
   type OrchestrationV2Sandbox,
   ProjectId,
   type ProviderInstanceId,
+  type SandboxAdmissionReason,
   SandboxFailure,
   SandboxId,
   type SandboxImageBuildRef,
@@ -233,14 +234,17 @@ export const awaitSandboxReady = Effect.fn("CloudPreparation.awaitSandboxReady")
   E,
 >(input: {
   readonly sandboxId: SandboxId;
-  readonly onWaiting: (phase: WaitingPhase) => Effect.Effect<void, E>;
+  readonly onWaiting: (
+    phase: WaitingPhase,
+    reason: SandboxAdmissionReason | null,
+  ) => Effect.Effect<void, E>;
 }) {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const owner = (yield* projections.getSandbox(input.sandboxId))?.ownerThreadId;
   if (owner === undefined) return yield* Effect.die(`No machine ${input.sandboxId}.`);
   const afterSequence = yield* threads.getThreadEventSequence(owner);
-  let phase: WaitingPhase | null = null;
+  let waiting: string | null = null;
   const settle = Effect.fnUntraced(function* (record: OrchestrationV2Sandbox) {
     if (record.state === "ready") return Option.some(record);
     if (record.state === "failed" || record.state === "destroyed") {
@@ -251,9 +255,10 @@ export const awaitSandboxReady = Effect.fn("CloudPreparation.awaitSandboxReady")
       });
     }
     const next: WaitingPhase = record.admission === null ? "sandbox-start" : "sandbox-admission";
-    if (next !== phase) {
-      phase = next;
-      yield* input.onWaiting(next);
+    const reason = record.admission?.reason ?? null;
+    if (`${next}:${reason}` !== waiting) {
+      waiting = `${next}:${reason}`;
+      yield* input.onWaiting(next, reason);
     }
     return Option.none<OrchestrationV2Sandbox>();
   });

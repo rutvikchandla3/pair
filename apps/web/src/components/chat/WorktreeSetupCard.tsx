@@ -1,13 +1,17 @@
+import type { WorktreeSetupSnapshot, WorktreeSetupStage } from "@t3tools/contracts";
 import {
-  worktreeSetupStageLabel,
-  type WorktreeSetupSnapshot,
-  type WorktreeSetupStage,
-} from "@t3tools/contracts";
+  worktreeSetupHeaderLabel,
+  worktreeSetupMachineRow,
+  worktreeSetupStageDetail,
+  worktreeSetupStageTitle,
+  type WorktreeSetupMachineRow,
+} from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   CheckIcon,
   CircleAlertIcon,
   CircleIcon,
+  ClockIcon,
   LaptopIcon,
   MinusIcon,
   TerminalIcon,
@@ -63,9 +67,15 @@ function Elapsed({
   return live ? <LiveElapsed startedAt={startedAt} /> : null;
 }
 
-function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
+function StageIcon({
+  status,
+}: {
+  status: WorktreeSetupStage["status"] | WorktreeSetupMachineRow["status"];
+}) {
   const className = "size-4 shrink-0 stroke-2";
   switch (status) {
+    case "waiting":
+      return <ClockIcon aria-hidden className={className} />;
     case "done":
       return <CheckIcon aria-hidden className={className} />;
     case "running":
@@ -81,7 +91,9 @@ function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
   }
 }
 
-function stageRowClassName(status: WorktreeSetupStage["status"]): string {
+function stageRowClassName(
+  status: WorktreeSetupStage["status"] | WorktreeSetupMachineRow["status"],
+): string {
   switch (status) {
     case "failed":
       return "text-destructive-foreground";
@@ -89,6 +101,7 @@ function stageRowClassName(status: WorktreeSetupStage["status"]): string {
       return "text-warning-foreground";
     case "pending":
       return "text-secondary-label opacity-40";
+    case "waiting":
     case "running":
     case "skipped":
     case "done":
@@ -109,27 +122,12 @@ function ShimmerOverlay({ children }: { children: ReactNode }) {
   );
 }
 
-function headerLabel(snapshot: WorktreeSetupSnapshot): string {
-  switch (snapshot.phase) {
-    case "running":
-      return "Setting up worktree…";
-    case "done":
-      return snapshot.stages.some((stage) => stage.status === "failed")
-        ? "Worktree ready, setup script failed"
-        : "Worktree ready";
-    case "failed":
-      return "Worktree setup failed";
-    case "cancelled":
-      return "Worktree setup cancelled";
-  }
-}
-
 function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   const running = snapshot.phase === "running";
   const failed = snapshot.phase === "failed";
   const finishedWithFailedStage =
     snapshot.phase === "done" && snapshot.stages.some((stage) => stage.status === "failed");
-  const text = headerLabel(snapshot);
+  const text = worktreeSetupHeaderLabel(snapshot);
   const tone = failed
     ? "text-destructive-foreground"
     : finishedWithFailedStage
@@ -158,28 +156,91 @@ function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   );
 }
 
+/** Ticks only while the machine boots, for its "Taking longer than usual". */
+function LiveMachineRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+  const row = worktreeSetupMachineRow(snapshot, useNowSecond());
+  return row === null ? null : <MachineRow row={row} setupRunning setupEndedAt={null} />;
+}
+
+function MachineRow({
+  row,
+  setupRunning,
+  setupEndedAt,
+}: {
+  row: WorktreeSetupMachineRow;
+  setupRunning: boolean;
+  setupEndedAt: string | null;
+}) {
+  const running = row.status === "running";
+  return (
+    <>
+      <WorkLogRow
+        data-worktree-setup-stage="machine"
+        data-worktree-setup-status={row.status}
+        icon={
+          <span className="text-icon-muted">
+            <StageIcon status={row.status} />
+          </span>
+        }
+        label={
+          <span
+            ref={running ? observeVisibleAnimation : undefined}
+            className={cn("relative block truncate", stageRowClassName(row.status))}
+          >
+            {row.label}
+            {running ? <ShimmerOverlay>{row.label}</ShimmerOverlay> : null}
+          </span>
+        }
+        trailing={
+          <>
+            {row.detail ? (
+              <span className="min-w-0 truncate text-xs text-muted-foreground tabular-nums">
+                {row.detail}
+              </span>
+            ) : null}
+            {row.status !== "skipped" ? (
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums empty:hidden">
+                <Elapsed
+                  startedAt={row.startedAt}
+                  endedAt={row.endedAt ?? setupEndedAt}
+                  live={setupRunning}
+                />
+              </span>
+            ) : null}
+          </>
+        }
+      />
+      {row.note ? <p className="mb-1 ml-8 text-xs text-muted-foreground">{row.note}</p> : null}
+    </>
+  );
+}
+
+function SetupMachineRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+  const setupRunning = snapshot.phase === "running";
+  if (setupRunning && snapshot.machine?.status === "running") {
+    return <LiveMachineRow snapshot={snapshot} />;
+  }
+  // Only a booting machine reads the clock, so any time works for the rest.
+  const row = worktreeSetupMachineRow(snapshot, 0);
+  return row === null ? null : (
+    <MachineRow row={row} setupRunning={setupRunning} setupEndedAt={snapshot.endedAt} />
+  );
+}
+
 function StageRow({
+  snapshot,
   stage,
   setupRunning,
   setupEndedAt,
-  scriptName,
 }: {
+  snapshot: WorktreeSetupSnapshot;
   stage: WorktreeSetupStage;
   setupRunning: boolean;
   setupEndedAt: string | null;
-  scriptName: string | null;
 }) {
-  const label =
-    stage.id === "setup-script" && scriptName ? scriptName : worktreeSetupStageLabel(stage.id);
+  const label = worktreeSetupStageTitle(snapshot, stage);
   const running = stage.status === "running";
-  const trailing =
-    stage.status === "pending"
-      ? null
-      : stage.status === "skipped"
-        ? (stage.detail ?? "skipped")
-        : stage.id === "checkout" && running && stage.percent !== null
-          ? `${stage.percent}%`
-          : stage.detail;
+  const trailing = worktreeSetupStageDetail(snapshot, stage);
   return (
     <WorkLogRow
       data-worktree-setup-stage={stage.id}
@@ -248,6 +309,11 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
 }
 
 function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
+  const cloud = snapshot.machine !== undefined;
+  const repository = cloud
+    ? (snapshot.stages.find((stage) => stage.id === "fetch" && stage.status === "done")?.detail ??
+      null)
+    : null;
   return (
     <dl className="mt-1 mb-1.5 ml-8 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
       {snapshot.branch ? (
@@ -266,7 +332,14 @@ function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
           </dd>
         </>
       ) : null}
-      {snapshot.worktreePath ? (
+      {repository ? (
+        <>
+          <dt className="text-foreground/80">Repository</dt>
+          <dd className="min-w-0 truncate">{repository}</dd>
+        </>
+      ) : null}
+      {/* A cloud path is inside the machine; Open terminal is the way in. */}
+      {snapshot.worktreePath && !cloud ? (
         <>
           <dt className="text-foreground/80">Path</dt>
           <dd className="min-w-0 font-mono">
@@ -291,7 +364,7 @@ function CollapsedSummaryRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) 
       : snapshot.stages.some((stage) => stage.id === "setup-script" && stage.status === "failed")
         ? "failed"
         : "done";
-  const label = headerLabel(snapshot);
+  const label = worktreeSetupHeaderLabel(snapshot);
   return (
     <WorkLogRow
       data-worktree-setup-stage="summary"
@@ -338,13 +411,14 @@ export function WorktreeSetupCard({
         <CollapsedSummaryRow snapshot={snapshot} />
       ) : (
         <div className={showHeader ? "pt-1.5" : undefined}>
+          <SetupMachineRow snapshot={snapshot} />
           {snapshot.stages.map((stage) => (
             <div key={stage.id}>
               <StageRow
+                snapshot={snapshot}
                 stage={stage}
                 setupRunning={running}
                 setupEndedAt={snapshot.endedAt}
-                scriptName={snapshot.setupScript?.name ?? null}
               />
               {stage.id === "setup-script" && showTail ? (
                 <OutputTail lines={stage.tail} failed={stage.status === "failed"} />

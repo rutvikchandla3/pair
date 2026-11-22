@@ -37,6 +37,25 @@ export const WorktreeSetupStage = Schema.Struct({
 });
 export type WorktreeSetupStage = typeof WorktreeSetupStage.Type;
 
+export const WorktreeSetupMachineStatus = Schema.Literals([
+  "waiting",
+  "running",
+  "done",
+  "skipped",
+  "failed",
+]);
+export type WorktreeSetupMachineStatus = typeof WorktreeSetupMachineStatus.Type;
+
+/** A cloud launch's machine: waiting for a slot, then booting. `skipped` without `startedAt` is hidden: not checked yet, or already up. */
+export const WorktreeSetupMachine = Schema.Struct({
+  status: WorktreeSetupMachineStatus,
+  startedAt: Schema.NullOr(IsoDateTime),
+  endedAt: Schema.NullOr(IsoDateTime),
+  detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_DETAIL_MAX_LENGTH))),
+  note: Schema.NullOr(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_DETAIL_MAX_LENGTH))),
+});
+export type WorktreeSetupMachine = typeof WorktreeSetupMachine.Type;
+
 export const WorktreeSetupPhase = Schema.Literals(["running", "done", "failed", "cancelled"]);
 export type WorktreeSetupPhase = typeof WorktreeSetupPhase.Type;
 
@@ -56,6 +75,8 @@ export const WorktreeSetupSnapshot = Schema.Struct({
     }),
   ),
   stages: Schema.Array(WorktreeSetupStage),
+  /** Set on every cloud launch; a field rather than a stage so older clients' strict stage ids still decode. */
+  machine: Schema.optionalKey(WorktreeSetupMachine),
   error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_ERROR_MAX_LENGTH))),
   sequence: NonNegativeInt,
 });
