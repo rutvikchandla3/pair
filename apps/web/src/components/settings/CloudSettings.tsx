@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type Agent37SandboxDriver,
   type BoatSandboxDriver,
   type ComputeDriverId,
   ComputeDriverKind,
@@ -80,6 +81,9 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
+  type Agent37DriverForm,
+  agent37DriverFormError,
+  agent37DriverFromForm,
   type BoatDriverForm,
   boatDriverFormError,
   boatDriverFromForm,
@@ -177,6 +181,17 @@ type DriverForm =
 
 type DriverCheck = SandboxDriverCheckResult | "running" | { readonly error: string };
 
+const AGENT37_REGION_LABELS: Readonly<Record<Agent37DriverForm["region"], string>> = {
+  us: "US",
+  eu: "EU",
+  "ap-south": "India",
+};
+
+const AGENT37_INSTANCE_TYPE_LABELS: Readonly<Record<Agent37DriverForm["instanceType"], string>> = {
+  default: "Container (gVisor)",
+  vm: "VM",
+};
+
 const PLAIN_DOCKER_WARNING =
   "Plain Docker isn't a security boundary. Agents here can reach the host's Docker network and kernel, and private threads aren't isolated from other members. Use rootless Docker or gVisor on this host.";
 
@@ -224,6 +239,13 @@ function driverSummary(
         return [
           COMPUTE_DRIVER_KIND_LABELS.boat,
           driver.organization ?? null,
+          driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
+        ];
+      case "agent37":
+        return [
+          COMPUTE_DRIVER_KIND_LABELS.agent37,
+          driver.region === undefined ? null : AGENT37_REGION_LABELS[driver.region],
+          driver.instanceType === "vm" ? AGENT37_INSTANCE_TYPE_LABELS.vm : null,
           driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
         ];
     }
@@ -503,6 +525,28 @@ function CloudEnvironmentSettings({
                     size="sm"
                     variant="outline"
                     onClick={() => setForm({ mode: "add", kind: "boat" })}
+                  >
+                    Add
+                  </Button>
+                }
+              />
+              <SettingsRow
+                title={
+                  <span className="flex items-center gap-2">
+                    <ComputeDriverIcon
+                      kind="agent37"
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                    {COMPUTE_DRIVER_KIND_LABELS.agent37}
+                  </span>
+                }
+                description="Sandboxes in your Agent37 workspace, billed per minute to its wallet. Needs a public https:// address."
+                control={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setForm({ mode: "add", kind: "agent37" })}
                   >
                     Add
                   </Button>
@@ -789,6 +833,14 @@ function CloudEnvironmentSettings({
           onCancel={() => setForm(null)}
           onSave={saveDriver}
         />
+      ) : formKind === "agent37" ? (
+        <Agent37DriverDialog
+          key={form?.mode === "edit" ? form.id : "add"}
+          initial={editing?.kind === "agent37" ? editing : null}
+          id={editing?.id ?? nextDriverId(drivers, "agent37")}
+          onCancel={() => setForm(null)}
+          onSave={saveDriver}
+        />
       ) : null}
     </>
   );
@@ -903,6 +955,43 @@ function SizeSelect({
         {(["small", "default", "large"] as const).map((option) => (
           <SelectItem key={option} value={option}>
             {SANDBOX_SIZE_LABELS[option]}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
+
+/** Options in `labels` order. */
+function ChoiceSelect<Value extends string>({
+  id,
+  label,
+  labels,
+  value,
+  onChange,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly labels: Readonly<Record<Value, string>>;
+  readonly value: Value;
+  readonly onChange: (value: Value) => void;
+}) {
+  const isOption = (next: unknown): next is Value =>
+    typeof next === "string" && Object.hasOwn(labels, next);
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        if (isOption(next)) onChange(next);
+      }}
+    >
+      <SelectTrigger id={id} size="sm" aria-label={label}>
+        <SelectValue>{labels[value]}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="start" alignItemWithTrigger={false}>
+        {Object.entries<string>(labels).map(([option, text]) => (
+          <SelectItem key={option} value={option}>
+            {text}
           </SelectItem>
         ))}
       </SelectPopup>
@@ -1318,6 +1407,149 @@ function BoatDriverDialog({
           <div className="pt-3">
             {text("organization", "Organization", "The key's own wallet", {
               hint: "Sent as X-Boat-Org, so machines bill this organization's wallet.",
+            })}
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
+    </DriverDialog>
+  );
+}
+
+function Agent37DriverDialog({
+  initial,
+  id,
+  onSave,
+  onCancel,
+}: {
+  readonly initial: Agent37SandboxDriver | null;
+  readonly id: ComputeDriverId;
+  readonly onSave: (driver: Agent37SandboxDriver) => Promise<void>;
+  readonly onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState<Agent37DriverForm>({
+    label: initial?.label ?? COMPUTE_DRIVER_KIND_LABELS.agent37,
+    apiKey: "",
+    runnerUrl: initial?.runnerUrl ?? "",
+    size: initial?.size ?? "default",
+    runningCap: initial?.runningCap?.toString() ?? "",
+    region: initial?.region ?? "us",
+    instanceType: initial?.instanceType ?? "default",
+    baseImage: initial?.baseImage ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+  const hasSavedKey =
+    initial !== null && (typeof initial.apiKey !== "string" || initial.apiKey !== "");
+  const error = agent37DriverFormError({ ...draft, hasSavedKey });
+  const field = (name: string) => `cloud-driver-${id}-${name}`;
+  const text = (
+    name: Exclude<keyof Agent37DriverForm, "size" | "runningCap" | "region" | "instanceType">,
+    label: string,
+    placeholder: string,
+    options: { readonly hint?: string; readonly password?: boolean } = {},
+  ) => (
+    <DialogField id={field(name)} label={label} hint={options.hint}>
+      <Input
+        id={field(name)}
+        size="sm"
+        type={options.password ? "password" : undefined}
+        autoComplete={options.password ? "off" : undefined}
+        placeholder={placeholder}
+        spellCheck={false}
+        value={draft[name]}
+        onChange={(event) => setDraft({ ...draft, [name]: event.target.value })}
+      />
+    </DialogField>
+  );
+  const advanced = [
+    draft.region === "us" ? null : AGENT37_REGION_LABELS[draft.region],
+    draft.instanceType === "default" ? null : AGENT37_INSTANCE_TYPE_LABELS[draft.instanceType],
+    draft.baseImage.trim() === "" ? null : draft.baseImage.trim(),
+  ].filter((part) => part !== null);
+
+  return (
+    <DriverDialog
+      title={initial ? `Edit ${initial.label}` : "Add Agent37 driver"}
+      description="Sandboxes in your Agent37 workspace, billed per minute to its wallet. Machines dial this server over the internet."
+      error={error}
+      saving={saving}
+      onCancel={onCancel}
+      onSubmit={async () => {
+        setSaving(true);
+        await onSave(agent37DriverFromForm(initial, id, draft));
+        setSaving(false);
+      }}
+    >
+      {text("label", "Name", "")}
+      {text(
+        "apiKey",
+        "API key",
+        hasSavedKey ? "Saved. Paste a new key to replace it" : "sk_live_…",
+        {
+          password: true,
+        },
+      )}
+      {text("runnerUrl", "Runner URL", "https://pair.example.com", {
+        hint: "An https:// address of this server that Agent37 machines reach.",
+      })}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DialogField id={field("size")} label="Machine size">
+          <SizeSelect
+            id={field("size")}
+            value={draft.size}
+            onChange={(size) => setDraft({ ...draft, size })}
+          />
+        </DialogField>
+        <DialogField
+          id={field("runningCap")}
+          label="Machines at once"
+          hint="Automatic uses the driver's default."
+        >
+          <MachinesAtOnceField
+            id={field("runningCap")}
+            value={draft.runningCap}
+            onChange={(runningCap) => setDraft({ ...draft, runningCap })}
+          />
+        </DialogField>
+      </div>
+      <Collapsible defaultOpen={advanced.length > 0}>
+        <CollapsibleTrigger className="group flex items-center gap-1.5 rounded-md text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
+          />
+          Advanced
+          <span className="font-normal group-data-panel-open:hidden">
+            {advanced.length === 0 ? "Region, instance type, base image" : advanced.join(" · ")}
+          </span>
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div className="grid gap-4 pt-3">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <DialogField id={field("region")} label="Region">
+                <ChoiceSelect
+                  id={field("region")}
+                  label="Region"
+                  labels={AGENT37_REGION_LABELS}
+                  value={draft.region}
+                  onChange={(region) => setDraft({ ...draft, region })}
+                />
+              </DialogField>
+              <DialogField
+                id={field("instanceType")}
+                label="Instance type"
+                hint="A VM costs 2.5x a container's compute. EU and India run only VMs."
+              >
+                <ChoiceSelect
+                  id={field("instanceType")}
+                  label="Instance type"
+                  labels={AGENT37_INSTANCE_TYPE_LABELS}
+                  value={draft.instanceType}
+                  onChange={(instanceType) => setDraft({ ...draft, instanceType })}
+                />
+              </DialogField>
+            </div>
+            {text("baseImage", "Base image", "Pair's sandbox image", {
+              hint: "A public linux/amd64 image to import in place of Pair's published sandbox image.",
             })}
           </div>
         </CollapsiblePanel>

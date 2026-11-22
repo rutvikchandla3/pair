@@ -1,5 +1,5 @@
 import type { ComputeDriverKind } from "@t3tools/contracts";
-import { CloudIcon } from "lucide-react";
+import { CloudIcon, ContainerIcon } from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
 
 type IconProps = SVGProps<SVGSVGElement>;
@@ -33,6 +33,8 @@ const ICON_BY_KIND: Record<ComputeDriverKind, FunctionComponent<IconProps>> = {
   docker: DockerIcon,
   gce: GoogleCloudIcon,
   boat: BoatIcon,
+  // No published brand mark to borrow; Agent37's machines are containers.
+  agent37: ContainerIcon,
 };
 
 /** Null: a driver this client cannot name, shown as a plain cloud. */

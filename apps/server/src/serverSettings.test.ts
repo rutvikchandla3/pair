@@ -387,9 +387,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         organization: "team_123",
         types: { large: "xlarge" },
       } as const;
+      const agent37 = {
+        kind: "agent37",
+        id: "agent37",
+        label: "Agent37",
+        apiKey: "sk_live_member_never_sees",
+        runnerUrl: "https://pair.example.com",
+        region: "eu",
+        instanceType: "vm",
+        baseImage: "ghcr.io/example/sandbox:2",
+      } as const;
       const settings = yield* decodeServerSettings({
         sandbox: {
-          drivers: [driver, { kind: "docker", id: "local", label: "This machine" }, gce, boat],
+          drivers: [
+            driver,
+            { kind: "docker", id: "local", label: "This machine" },
+            gce,
+            boat,
+            agent37,
+          ],
           defaultDriverId: "remote",
           baseImage: "ghcr.io/example/sandbox:1",
           env: [{ name: "TEAM_TOKEN", value: "team-secret", sensitive: true }],
@@ -408,6 +424,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         { kind: "gce", id: "gce", label: "Google Cloud", size: "small", runningCap: 20 },
         // The picker's sizes; nothing secret.
         { kind: "boat", id: "boat", label: "boat.dev", apiKey: "", types: { large: "xlarge" } },
+        { kind: "agent37", id: "agent37", label: "Agent37", apiKey: "" },
       ]);
       const memberGce = member?.drivers.find((entry) => entry.kind === "gce");
       for (const key of [
@@ -426,6 +443,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         { kind: "docker", id: "local", label: "This machine" },
         gce,
         { ...boat, apiKey: SECRET_REDACTED },
+        { ...agent37, apiKey: SECRET_REDACTED },
       ]);
       for (const view of [admin, member]) {
         assert.equal(view?.defaultDriverId, "remote");
@@ -1553,6 +1571,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
                 label: "boat.dev",
                 apiKey: "boat-secret",
               },
+              [ComputeDriverId.make("agent37")]: {
+                kind: "agent37",
+                id: ComputeDriverId.make("agent37"),
+                label: "Agent37",
+                apiKey: "agent37-secret",
+              },
             },
             env: [{ name: "SANDBOX_TOKEN", value: "sandbox-env-secret", sensitive: true }],
           },
@@ -1572,6 +1596,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "quota-secret",
           "expo-secret",
           "boat-secret",
+          "agent37-secret",
           "sandbox-env-secret",
           "project-env-secret",
         ];
@@ -1954,7 +1979,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(strictSecretReferencePaths(ServerSettings.ast), [
         "easDeviceHosts.[].accessToken",
         "usageLimitSources.*.managementKey",
-        // Shipped clients drop a boat driver whole: they decode no `boat` kind.
+        // Shipped clients drop a boat or agent37 driver whole: they decode neither kind.
+        "sandbox.drivers.[].apiKey",
         "sandbox.drivers.[].apiKey",
       ]);
     }),

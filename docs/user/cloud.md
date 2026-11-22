@@ -52,7 +52,8 @@ Engine VMs as machines instead: add a **Google Cloud** driver. These machines ha
 Docker and Docker Compose, so agents and setup scripts can run containers. Container machines do not.
 
 A Pair Cloud server at a public `https://` address can run machines on boat.dev instead, billed
-to your boat account: see [Run machines on boat.dev](./pair-cloud.md#run-machines-on-boatdev).
+to your boat account: see [Run machines on boat.dev](./pair-cloud.md#run-machines-on-boatdev). Or
+on Agent37, billed to its wallet: see [Run machines on Agent37](./pair-cloud.md#run-machines-on-agent37).
 
 With more than one driver, new machines start on the first one until you choose another:
 choose **Use for new machines** in its row's **⋯** menu. Machines already running stay where they are.
@@ -121,8 +122,8 @@ command palette, or run `t3 thread fork <thread> --machine large`. Pair copies t
 uncommitted changes and installed dependencies included, onto a new machine of the size you pick,
 and puts the fork on a new branch (`<branch>-fork` unless you name one), so the two machines never
 push the same branch. The fork starts from the thread's latest finished turn; wait for a running
-turn to end first. It works on boat.dev and Google Cloud machines, not on Docker, and not yet for
-workspace threads. A fork on its own machine is private to you, like a new thread.
+turn to end first. It works on boat.dev and Google Cloud machines, not on Docker or Agent37, and
+not yet for workspace threads. A fork on its own machine is private to you, like a new thread.
 
 On a Cloud server, scheduled and webhook tasks that start a new thread run in Cloud too, from the
 task's base branch on `origin`. Turn on **Discard the machine when the run settles** in the task to
@@ -224,8 +225,9 @@ While it sleeps, its files, search and Changes are read-only and show as of the 
 after a wake, typing in one starts a new shell.
 
 A machine that sleeps for 7 days with every thread archived, or goes 14 days with no activity on any
-of its threads, has its disk deleted and shows as **Machine discarded**. On Compute Engine and
-boat.dev, a machine whose threads are all archived has its disk deleted as soon as it stops. Its
+of its threads, has its disk deleted and shows as **Machine discarded**. On Compute Engine,
+boat.dev and Agent37, a machine whose threads are all archived has its disk deleted as soon as it
+stops. Its
 threads stay readable, and waking one rebuilds the machine from the server's copy of its work. The
 agent starts a new session there with the conversation so far
 ([handoffs](./portable-handoffs.md)). Admins change both in **Settings → Cloud → Compute**.

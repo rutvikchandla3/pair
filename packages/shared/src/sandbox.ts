@@ -106,6 +106,13 @@ export const GCE_MACHINE_SPECS: Readonly<Record<SandboxSize, MachineSpec>> = {
   large: { vcpus: 8, memoryGb: 32 },
 };
 
+/** Agent37's instance shapes stop at 4 vCPU, so Large adds memory, not cores. */
+export const AGENT37_MACHINE_SPECS: Readonly<Record<SandboxSize, MachineSpec>> = {
+  small: { vcpus: 2, memoryGb: 4 },
+  default: { vcpus: 4, memoryGb: 8 },
+  large: { vcpus: 4, memoryGb: 16 },
+};
+
 export const boatMachineType = (
   driver: Extract<SandboxDriverInstance, { readonly kind: "boat" }>,
   size: SandboxSize,
@@ -121,7 +128,9 @@ export function sandboxDriverSizes(
       ? BOAT_MACHINE_SPECS[boatMachineType(driver, size)]
       : driver.kind === "gce"
         ? GCE_MACHINE_SPECS[size]
-        : DOCKER_MACHINE_SPECS[size]),
+        : driver.kind === "agent37"
+          ? AGENT37_MACHINE_SPECS[size]
+          : DOCKER_MACHINE_SPECS[size]),
   }));
 }
 

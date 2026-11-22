@@ -461,6 +461,7 @@ export const COMPUTE_DRIVER_KIND_LABELS: Readonly<Record<ComputeDriverKind, stri
   docker: "Docker",
   gce: "Google Cloud",
   boat: "boat.dev",
+  agent37: "Agent37",
 };
 
 /** Null when the server predates `driverId` on the summary or the driver was removed. */

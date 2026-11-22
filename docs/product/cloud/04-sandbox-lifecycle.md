@@ -640,7 +640,7 @@ boat.dev is the first hosted vendor (M8, the maintainer's pick of 2026-11-13); i
 [m8-boat.md](./implementation/m8-boat.md). Vercel Sandbox and E2B stay below as reference, retrieved
 2026-11-06, for a team boat can't serve; section 8 compares them. Lifetime recycling (section 3)
 and periodic token rotation (03) stay Later: boat has no session cap, and a machine gets a fresh
-token on every wake.
+token on every wake. Agent37 is the second (M9, [m9-agent37.md](./implementation/m9-agent37.md)).
 
 #### boat.dev (M8)
 
@@ -664,6 +664,23 @@ kept at least 14 days only, so Pair's default `asleepAfterDays` is 14; starts ar
 plan (the $20 plan allows 12 a minute, 60 an hour and 200 a day); SOC 2 is in progress; a young YC
 company. Strengths: by far the cheapest (`large`, 8 vCPU and 16 GB, is $0.072 an hour), full VMs
 with Docker inside, no session cap, and `noEnv` keeps the boat account's own secrets out.
+
+#### Agent37 (M9)
+
+[Agent37ComputeDriver.ts](../../../apps/server/src/sandbox/compute/Agent37ComputeDriver.ts) runs
+each machine as one Agent37 instance of Pair's own sandbox image: a gVisor container by default, or
+a microVM. There is no image build: the base is a workspace template Agent37 copies from the
+published image, with an entrypoint that waits for a bootstrap. Agent37 has no idempotency key and
+allows duplicate names, so `create` looks the backend name up first and deletes copies a cut-short
+create left. The bootstrap goes in one root `exec` once the instance runs, never in `env`, which
+Agent37 stores and replays. `stop` and `start` answer at once; `start` recreates the container, so
+each boot starts clean. Team images are stopped forks: a fork copies the whole disk.
+
+Gaps: no Docker inside machines; sizes stop at 4 vCPU; a workspace runs only as much memory at once
+as its top-ups allow (40 GB at first); nightly backups of every disk unless support turns them off;
+the enrollment secret is visible in the exec's command line for its few milliseconds. Strengths:
+cheaper still per running hour, imports the image Pair already publishes, US, EU and India regions,
+and stopped disks are kept until deleted.
 
 #### Vercel Sandbox
 

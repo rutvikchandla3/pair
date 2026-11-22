@@ -1,4 +1,5 @@
 import {
+  type Agent37SandboxDriver,
   type BoatSandboxDriver,
   ComputeDriverId,
   type ComputeDriverKind,
@@ -187,6 +188,75 @@ export function boatDriverFromForm(
     apiKey: apiKey === "" ? (initial?.apiKey ?? "") : apiKey,
     runnerUrl: form.runnerUrl.trim(),
     ...(organization === "" ? {} : { organization }),
+    ...(form.size === "default" ? {} : { size: form.size }),
+    ...(runningCap === "" ? {} : { runningCap: Number(runningCap) }),
+  };
+}
+
+export interface Agent37DriverForm {
+  readonly label: string;
+  /** Empty keeps the saved key. */
+  readonly apiKey: string;
+  readonly runnerUrl: string;
+  readonly size: SandboxSize;
+  readonly runningCap: string;
+  readonly region: NonNullable<Agent37SandboxDriver["region"]>;
+  readonly instanceType: NonNullable<Agent37SandboxDriver["instanceType"]>;
+  /** Empty is Pair's published sandbox image. */
+  readonly baseImage: string;
+}
+
+export function agent37DriverFormError(
+  input: Agent37DriverForm & { readonly hasSavedKey: boolean },
+): string | null {
+  const runnerUrl = input.runnerUrl.trim();
+  const runningCap = input.runningCap.trim();
+  if (input.label.trim() === "") return "Name the driver.";
+  if (input.apiKey.trim() === "" && !input.hasSavedKey) return "Paste an Agent37 API key.";
+  if (runnerUrl === "")
+    return "Agent37 machines need a runner URL: an https:// address of this server they can reach.";
+  // The enrollment secret and the machine's token cross the internet.
+  if (!/^https:\/\/./.test(runnerUrl)) return "The runner URL must start with https://.";
+  if (runningCap !== "" && !/^[1-9]\d*$/.test(runningCap))
+    return "Enter a whole number of machines, 1 or more.";
+  if (input.region !== "us" && input.instanceType === "default")
+    return "Agent37 runs only VM instances outside the US. Pick VM, or the US region.";
+  return null;
+}
+
+const unshownAgent37Keys = ({
+  kind: _kind,
+  id: _id,
+  label: _label,
+  apiKey: _apiKey,
+  runnerUrl: _runnerUrl,
+  size: _size,
+  runningCap: _runningCap,
+  region: _region,
+  instanceType: _instanceType,
+  baseImage: _baseImage,
+  ...unshown
+}: Agent37SandboxDriver) => unshown;
+
+/** Keys the form does not show survive an edit, and so does the saved key. */
+export function agent37DriverFromForm(
+  initial: Agent37SandboxDriver | null,
+  id: ComputeDriverId,
+  form: Agent37DriverForm,
+): Agent37SandboxDriver {
+  const apiKey = form.apiKey.trim();
+  const runningCap = form.runningCap.trim();
+  const baseImage = form.baseImage.trim();
+  return {
+    ...(initial === null ? {} : unshownAgent37Keys(initial)),
+    kind: "agent37",
+    id,
+    label: form.label.trim(),
+    apiKey: apiKey === "" ? (initial?.apiKey ?? "") : apiKey,
+    runnerUrl: form.runnerUrl.trim(),
+    ...(form.region === "us" ? {} : { region: form.region }),
+    ...(form.instanceType === "default" ? {} : { instanceType: form.instanceType }),
+    ...(baseImage === "" ? {} : { baseImage }),
     ...(form.size === "default" ? {} : { size: form.size }),
     ...(runningCap === "" ? {} : { runningCap: Number(runningCap) }),
   };

@@ -1278,10 +1278,33 @@ export const BoatSandboxDriver = Schema.Struct({
 });
 export type BoatSandboxDriver = typeof BoatSandboxDriver.Type;
 
+/** An Agent37 workspace's instances (m9-agent37.md). Every key past `label` is optional, so the member view decodes. */
+export const Agent37SandboxDriver = Schema.Struct({
+  kind: Schema.Literal("agent37"),
+  id: ComputeDriverId,
+  label: TrimmedNonEmptyString,
+  size: Schema.optionalKey(SandboxSize),
+  runningCap: Schema.optionalKey(PositiveInt),
+  apiKey: SettingsSecretValue.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("")),
+    secretSetting,
+  ),
+  /** Required by the driver and `https://`, checked by the form, `health` and `create`, never here. */
+  runnerUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Absent: `us`. `eu` and `ap-south` run only `vm` instances. */
+  region: Schema.optionalKey(Schema.Literals(["us", "eu", "ap-south"])),
+  /** Absent: `default`, a gVisor container; `vm` is a microVM at 2.5x the compute rate. */
+  instanceType: Schema.optionalKey(Schema.Literals(["default", "vm"])),
+  /** A public linux/amd64 image to import in place of the published sandbox image. */
+  baseImage: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type Agent37SandboxDriver = typeof Agent37SandboxDriver.Type;
+
 export const SandboxDriverInstance = Schema.Union([
   DockerSandboxDriver,
   GceSandboxDriver,
   BoatSandboxDriver,
+  Agent37SandboxDriver,
 ]);
 export type SandboxDriverInstance = typeof SandboxDriverInstance.Type;
 

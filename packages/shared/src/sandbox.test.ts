@@ -108,5 +108,18 @@ describe("cloudMachineSizes", () => {
       { size: "large", vcpus: 16, memoryGb: 32, default: true },
     ]);
     expect(cloudMachineSizes(DEFAULT_SERVER_SETTINGS)).toEqual([]);
+    const agent37 = {
+      kind: "agent37",
+      id: ComputeDriverId.make("agent37"),
+      label: "Agent37",
+      apiKey: "",
+    } as const;
+    // Its shapes stop at 4 vCPU.
+    expect(
+      cloudMachineSizes({
+        ...DEFAULT_SERVER_SETTINGS,
+        sandbox: { drivers: [agent37] },
+      }).at(-1),
+    ).toEqual({ size: "large", vcpus: 4, memoryGb: 16 });
   });
 });

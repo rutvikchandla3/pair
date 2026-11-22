@@ -185,6 +185,51 @@ What to know:
   Puppeteer, pip) are fetched again on a new machine. Containers the recipe leaves running start in
   every machine made from the image.
 
+## Run machines on Agent37
+
+[Agent37](https://www.agent37.com) can run your cloud machines too: each machine is a sandbox
+running Pair's own machine image, billed per minute while it runs and for its disk alone while it
+sleeps. You need:
+
+- A Pair Cloud server reachable at a public `https://` address.
+- An Agent37 workspace used only by this server, with money in its wallet (the $5 starter credit
+  works for a trial).
+- An API key from Agent37's dashboard. If you give it an IP allowlist, include this server's
+  address. A key with an expiry date stops working after that day.
+
+In **Settings → Cloud**, choose **Add driver**, then **Agent37**, paste the key and set the
+**Runner URL** as for [boat.dev](#run-machines-on-boatdev). The server copies Pair's machine image
+for its version into your workspace the first time, in under a minute; then **Test** passes.
+
+Under **Advanced**:
+
+- **Instance type.** **Container (gVisor)** is the default and the cheapest. **VM** gives each
+  machine its own kernel at 2.5 times the compute price.
+- **Region.** US by default. EU and India run only VMs.
+- **Base image.** Another public `linux/amd64` image to copy instead, such as your own build of
+  Pair's machine image. A server run from a source checkout needs one that is published.
+
+What to know:
+
+- **Cost.** A Small machine (2 vCPU, 4 GB) is about $0.006 an hour while it runs and Medium (4 vCPU,
+  8 GB) about $0.012, as containers; disk is $0.09 per GB a month. Agent37 sizes stop at 4 vCPU,
+  so Large adds memory (16 GB), not cores.
+- **Machines at once.** Agent37 limits how much memory a workspace runs at once by how much you
+  have topped up (32 GB on the free credit, 40 GB after a first top-up), so **Machines at once**
+  defaults to 5. Raise it as your top-ups raise the limit.
+- **Disk.** A machine's checkouts sit on its own disk: 12, 20 or 40 GB by size. Tools and caches
+  outside the checkouts share a separate 10 GB.
+- **What Agent37 can see.** Agent37 runs the machine, so it can read its disk and memory: your
+  checkouts, and the provider and git credentials agents use while they run. Pair starts the
+  runner through Agent37's command API, so its one-time enrollment secret passes through Agent37.
+  Agent37 backs up each machine's disk nightly for a week, and keeps a deleted machine's backups 7
+  more days; ask Agent37's support to turn backups off.
+- **Where data lives.** The machine and its disk stay in the region you pick. Agent37 keeps each
+  machine's record, and the backups of an India machine, in the US.
+- **No Docker inside.** Agents can't run containers on these machines, on either instance type.
+- **Team images.** A team image is a stopped copy of its build machine, so it keeps everything on
+  it and bills for its disk. **Fork to new machine** is not available on Agent37 yet.
+
 ## Connect GitHub
 
 Create one GitHub App for your organization, as in
@@ -339,7 +384,7 @@ In **Settings → Cloud** on the web or desktop app:
 
 - **Machines at once**, in the driver's **Edit** form (its row's **⋯** menu under **Compute**), caps how many machines run together. Empty
   means a quarter of the Docker host's vCPUs. More starts wait for a free slot.
-- **Delete archived machines' disks** (7 days by default; at once on Compute Engine and boat.dev) and **Delete unused machines' disks**
+- **Delete archived machines' disks** (7 days by default; at once on Compute Engine, boat.dev and Agent37) and **Delete unused machines' disks**
   (14 days), under **Storage**, free the disks of machines nobody uses. Their threads stay readable, and waking one
   rebuilds the machine from the server's copy of its work.
 

@@ -45,6 +45,7 @@ review and verification included. They exclude waiting on vendors or terms. Trea
 | M5 BYOC                                 | Pair Cloud and its machines run in the customer's own cloud account, Google Cloud first.                    | `terraform apply` in a fresh Google Cloud project gives a Pair Cloud server whose cloud sessions run on Compute Engine VMs, reached over VPN or Tailscale, in under two hours. AWS follows with the same kit shape.                                                                                                                                                                                                                                                                                                                                              | L, 9–12 weeks  | BYOC customers                           |
 | M7 Cloud browser                        | A cloud session has a Browser tab on every client, backed by Chrome on its machine.                         | From the Mac app, a phone or the web, open `localhost:3000` in a cloud session's Browser tab and see the agent's server; the agent uses the same tab; the tab closes when the machine sleeps and opening one wakes it.                                                                                                                                                                                                                                                                                                                                           |
 | M8 Hosted machines on boat.dev          | A cloud-only Pair Cloud at a public `https://` address runs its cloud machines as boat.dev sandboxes.       | An admin adds a boat.dev driver with an API key and a runner URL; the base image builds, Test passes, and a cloud thread runs one turn, sleeps, wakes on the next send and answers.                                                                                                                                                                                                                                                                                                                                                                              | M, one PR      | Teams with no cloud account of their own |
+| M9 Hosted machines on Agent37           | The same server runs its cloud machines as Agent37 instances, a second hosted vendor.                       | An admin adds an Agent37 driver with an API key and a runner URL; the base template imports and Test passes.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Later, by demand                        | Unscheduled rows at the end of section 2.                                                                   | Built when a team asks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —              | —                                        |
 
 ## 2. Pull request plan
@@ -300,6 +301,17 @@ machine, so it needs the M5 slice (5.5, 5.7, 5.11, 5.19), and it fixes two holes
 | #   | Title                                         | Owner                      | Needs    | Parallel |
 | --- | --------------------------------------------- | -------------------------- | -------- | -------- |
 | 8.1 | `feat(cloud): run cloud machines on boat.dev` | 04 §7, §8; 03 §3.2; 09 (C) | M5 slice | Critical |
+
+### M9 Hosted machines on Agent37
+
+A second hosted vendor, for teams that want US or India regions or Agent37's prices
+([04 §7](./04-sandbox-lifecycle.md#agent37-m9)). [m9-agent37.md](./implementation/m9-agent37.md)
+holds its decisions and the live spike. It reuses M8's runner URL rule, `wakeFailure` and the
+contract suite, and needs no base image build.
+
+| #   | Title                                        | Owner                  | Needs | Parallel |
+| --- | -------------------------------------------- | ---------------------- | ----- | -------- |
+| 9.1 | `feat(cloud): run cloud machines on Agent37` | 04 §7; 03 §3.2; 09 (C) | M8    | No       |
 
 ### Later, by demand
 

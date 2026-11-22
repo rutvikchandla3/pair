@@ -113,7 +113,8 @@ const chromeArgs = (sandboxId: SandboxId, kind: ComputeDriverKind | undefined) =
   `--user-data-dir=${SANDBOX_ROOT}/${sandboxId}/browser/profile`,
   ...PREVIEW_BROWSER_ARGS,
   // Q1: a container forbids the user namespaces Chrome's sandbox needs; VMs load its profile.
-  ...(kind === "docker" ? ["--no-sandbox"] : []),
+  // Agent37 runs the image as a container on either instance type.
+  ...(kind === "docker" || kind === "agent37" ? ["--no-sandbox"] : []),
 ];
 
 /** The first line of an HTTP request, once its CRLF arrives; the bytes read so far ride along. */
