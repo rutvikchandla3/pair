@@ -9331,6 +9331,170 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("recovery reads the same runs by index as the scan it replaced", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("recovery-runs");
+      const at = DateTime.makeUnsafe("2026-09-28T12:00:00.000Z");
+      const template = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const held = ProviderThreadId.make("provider-thread:recovery-runs:held");
+      const other = ProviderThreadId.make("provider-thread:recovery-runs:other");
+      yield* store.apply({
+        id: EventId.make("event:recovery-runs:held-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: at,
+        payload: {
+          id: held,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 2,
+          lastRunOrdinal: 4,
+          handoffIds: [],
+          forkedFrom: null,
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor", awaited: true }],
+          createdAt: at,
+          updatedAt: at,
+        },
+      });
+      // Ordinal 1 is the candidate's rolled-back run, kept by its abandoned command. Each later
+      // run exercises one rule.
+      const runs = [
+        [2, held, "completed", true], // kept: latest ended run of a thread with background work
+        [3, held, "rolled_back", true], // a rolled-back run owns no background work
+        [4, held, "cancelled", false], // nor does one that never started
+        [5, other, "completed", true], // kept: a command still running
+        [6, other, "completed", true],
+        [7, other, "queued", false], // kept: active
+        [8, other, "running", true], // kept: active
+        [9, other, "completed", true], // kept: latest
+      ] as const;
+      for (const [ordinal, providerThreadId, status, started] of runs) {
+        const id = RunId.make(`run:recovery-runs:${ordinal}`);
+        yield* store.apply({
+          id: EventId.make(`event:recovery-runs:run:${ordinal}`),
+          type: "run.created",
+          threadId,
+          runId: id,
+          driver,
+          providerInstanceId,
+          occurredAt: at,
+          payload: {
+            ...template,
+            id,
+            ordinal,
+            providerThreadId,
+            userMessageId: MessageId.make(`message:recovery-runs:${ordinal}`),
+            rootNodeId: NodeId.make(`node:recovery-runs:${ordinal}`),
+            status,
+            startedAt: started ? DateTime.add(at, { minutes: ordinal }) : null,
+            completedAt:
+              status === "queued" || status === "running"
+                ? null
+                : DateTime.add(at, { minutes: ordinal, seconds: 30 }),
+          },
+        });
+      }
+      yield* store.apply({
+        id: EventId.make("event:recovery-runs:command"),
+        type: "turn-item.updated",
+        threadId,
+        runId: RunId.make("run:recovery-runs:5"),
+        nodeId: NodeId.make("node:recovery-runs:5"),
+        driver,
+        occurredAt: at,
+        payload: {
+          id: TurnItemId.make("item:recovery-runs:command"),
+          threadId,
+          runId: RunId.make("run:recovery-runs:5"),
+          nodeId: NodeId.make("node:recovery-runs:5"),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 50,
+          status: "running",
+          title: "long command",
+          startedAt: at,
+          completedAt: null,
+          updatedAt: at,
+          type: "command_execution",
+          input: "sleep 600",
+        },
+      });
+
+      // The query this read used before it looked runs up by id.
+      const scanned = yield* sql<{ readonly run_id: string }>`
+        SELECT run_id FROM orchestration_v2_projection_runs AS run
+        WHERE run.thread_id = ${threadId}
+          AND (
+            run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+            OR run.run_id = (
+              SELECT latest.run_id FROM orchestration_v2_projection_runs AS latest
+              WHERE latest.thread_id = ${threadId}
+              ORDER BY latest.ordinal DESC LIMIT 1
+            )
+            OR run.run_id IN (
+              SELECT (
+                SELECT ended.run_id FROM orchestration_v2_projection_runs AS ended
+                WHERE ended.thread_id = ${threadId}
+                  AND ended.provider_thread_id = roster.provider_thread_id
+                  AND ended.status NOT IN ('queued', 'rolled_back')
+                  AND NOT (
+                    json_type(ended.payload_json, '$.startedAt') = 'null'
+                    AND json_type(ended.payload_json, '$.restartContinuationOfRunId') IS NULL
+                  )
+                ORDER BY ended.completed_at IS NULL DESC, ended.completed_at DESC,
+                  ended.ordinal DESC
+                LIMIT 1
+              )
+              FROM orchestration_v2_projection_provider_threads AS roster
+              WHERE roster.thread_id = ${threadId}
+                AND CASE WHEN json_valid(roster.payload_json)
+                  THEN json_array_length(roster.payload_json, '$.pendingBackgroundTasks') > 0
+                  ELSE 0 END
+            )
+            OR run.run_id IN (
+              SELECT item.run_id FROM orchestration_v2_projection_turn_items AS item
+              WHERE item.thread_id = ${threadId}
+                AND item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+                AND item.status IN ('pending', 'running', 'waiting')
+                AND item.run_id IS NOT NULL
+            )
+          )
+        ORDER BY run.ordinal ASC
+      `;
+      const { statements, tracer } = traceSqlStatements();
+      const recovered = (yield* store
+        .getRuntimeRecoveryProjection(threadId)
+        .pipe(Effect.withTracer(tracer))).runs;
+      assert.deepEqual(
+        recovered.map((run) => run.ordinal),
+        [1, 2, 5, 7, 8, 9],
+      );
+      assert.deepEqual(
+        recovered.map((run) => run.id),
+        scanned.map((row) => row.run_id),
+      );
+      const runRead = statements.find((query) => query.includes("-- One indexed list"))!;
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${runRead}`,
+      )).map((row) => row.detail);
+      assert.match(
+        plan[0]!,
+        /USING INDEX sqlite_autoindex_orchestration_v2_projection_runs_1 \(run_id=\?\)/,
+      );
+    }),
+  );
   it.effect("dates a completion released by held background work at the release", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
