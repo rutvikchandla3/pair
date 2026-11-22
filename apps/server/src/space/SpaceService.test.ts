@@ -330,6 +330,7 @@ it.layer(layer)("SpaceService", (it) => {
   it.effect("a post's attachments move into the room; a refused post leaves none behind", () =>
     Effect.gen(function* () {
       const spaces = yield* SpaceService.SpaceService;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const { attachmentsDir } = yield* ServerConfig.ServerConfig;
       const space = yield* createSpace("Screens");
       const fileSystem = yield* FileSystem.FileSystem;
@@ -372,6 +373,39 @@ it.layer(layer)("SpaceService", (it) => {
       assert.isTrue(
         yield* fileSystem.exists(resolveAttachmentPath({ attachmentsDir, attachment: posted! })!),
       );
+
+      // A retried post keeps its first copy and leaves no second one behind.
+      const resent = yield* spaces.post(as(kousik), {
+        spaceId: space.id,
+        messageId: MessageId.make("message:svc-image"),
+        text: "look",
+        mentions: [],
+        attachments: [image],
+      });
+      assert.deepStrictEqual(resent.entry, entry);
+      assert.lengthOf(yield* inRoom, 1);
+
+      // Another thread's file can't be posted into the room.
+      const foreign = {
+        ...image,
+        id: ChatAttachmentId.make(createPendingAttachmentId().replace(/^pending/, "thread-other")),
+      };
+      const foreignPath = resolveAttachmentPath({ attachmentsDir, attachment: foreign })!;
+      yield* fileSystem.writeFileString(foreignPath, "png");
+      const refused = yield* Effect.flip(
+        spaces.post(as(kousik), {
+          spaceId: space.id,
+          messageId: MessageId.make("message:svc-image-foreign"),
+          text: "",
+          mentions: [],
+          attachments: [foreign],
+        }),
+      );
+      assert.strictEqual(refused.reason, "failed");
+      assert.isNull(
+        yield* projections.getSpaceRoomEntry(MessageId.make("message:svc-image-foreign")),
+      );
+      assert.lengthOf(yield* inRoom, 1);
 
       // An agent shares an upload with no text; it can't re-send one already in the room.
       const agentPendingId = createPendingAttachmentId();

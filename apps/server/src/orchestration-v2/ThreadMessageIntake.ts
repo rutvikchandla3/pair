@@ -535,7 +535,7 @@ export const assertCommandAccess = Effect.fn("ThreadMessageIntake.assertCommandA
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 const isThreadManagementError = Schema.is(ThreadManagement.ThreadManagementError);
 
-const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
+export const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
   claimedPaths: ReadonlyArray<string>,
   accepted: ReadonlyArray<ChatAttachment>,
 ) {

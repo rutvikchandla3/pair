@@ -104,7 +104,7 @@ export function SpaceComposer(props: {
     if (added.length > room) {
       Dialog.alert(
         "Too many attachments",
-        `A post can carry up to ${SPACE_POST_MAX_ATTACHMENTS} images and files.`,
+        `A message holds up to ${SPACE_POST_MAX_ATTACHMENTS} attachments.`,
       );
       void releaseUnusedComposerAttachmentFiles(added.slice(room));
     }
@@ -152,9 +152,8 @@ export function SpaceComposer(props: {
   };
 
   const send = async () => {
-    const body = text.trim();
     const sentAttachments = attachments;
-    if (body.length === 0 && sentAttachments.length === 0) return;
+    if (text.trim().length === 0 && sentAttachments.length === 0) return;
     const quote = props.quote;
     const sentTokens = tokens;
     let uploaded: ReadonlyArray<ChatImageAttachment | ChatFileAttachment> = [];
@@ -180,6 +179,9 @@ export function SpaceComposer(props: {
       );
       pending = prepared.pendingAttachmentIds;
     }
+    // Read after the upload: the input stays editable while it runs.
+    const body = textRef.current.trim();
+    const sentMentions = resolveSpaceMentions(textRef.current, sentTokens);
     textRef.current = "";
     setText("");
     setCaret(0);
@@ -193,7 +195,7 @@ export function SpaceComposer(props: {
         spaceId: props.space.id,
         messageId: MessageId.make(uuidv4()),
         text: body,
-        mentions,
+        mentions: sentMentions,
         ...(quote === null ? {} : { quoteEntryId: quote.id }),
         ...(uploaded.length === 0 ? {} : { attachments: uploaded }),
       },

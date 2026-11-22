@@ -15,6 +15,7 @@ import {
   type SpaceTaskStatus,
   spaceTaskIsOpen,
 } from "@t3tools/contracts";
+import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 import { type SpaceThreadActivity, spaceThreadActivity } from "@t3tools/shared/spaceThreadActivity";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -70,7 +71,8 @@ export const capTokens = (text: string, tokens: number, marker: string) =>
     ? text
     : `${text.slice(0, tokens * 4 - marker.length - 1)}${marker}`;
 
-const SECTION_TAG = /<(\/?)(space|brief|notes|room|tasks|trigger|task_output|already_done)\b/gi;
+const SECTION_TAG =
+  /<(\/?)(space|brief|notes|room|tasks|trigger|task_output|already_done|file)\b/gi;
 
 /** Untrusted text can't open or close one of the prompt's sections (§11). */
 export const fence = (text: string) => text.replace(SECTION_TAG, "‹$1$2");
@@ -252,8 +254,11 @@ interface TranscriptLine {
   readonly text: string;
 }
 
-/** The Messages API takes images up to 5 MB once base64-encoded. */
+/** The Messages API takes images up to 5 MB once base64-encoded and 8000 px on a side. */
 const PAIR_IMAGE_MAX_BYTES = 3_750_000;
+const PAIR_IMAGE_MAX_SIDE = 8000;
+/** All of a post's images, base64-encoded; the request as a whole must stay under 32 MB. */
+const PAIR_IMAGES_MAX_ENCODED_BYTES = 20_000_000;
 
 /** Larger text files are cut to the `file` budget anyway; this bounds the read. */
 const PAIR_FILE_MAX_BYTES = 1_000_000;
@@ -379,7 +384,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
 
-  const imageBlock = (image: ChatImageAttachment) => {
+  const imageBlock = (image: ChatImageAttachment, budget: { remaining: number }) => {
     const path = resolveAttachmentPath({ attachmentsDir, attachment: image });
     const skipped = block(`(image ${fence(image.name)} could not be shown)`);
     if (
@@ -390,14 +395,22 @@ const make = Effect.gen(function* () {
       return Effect.succeed<SpaceContentBlock>(skipped);
     }
     return fileSystem.readFile(path).pipe(
-      Effect.map((bytes): SpaceContentBlock => ({
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: image.mimeType.toLowerCase(),
-          data: Buffer.from(bytes).toString("base64"),
-        },
-      })),
+      Effect.map((bytes): SpaceContentBlock => {
+        const dimensions = readImageDimensions(bytes);
+        if (
+          dimensions !== null &&
+          Math.max(dimensions.width, dimensions.height) > PAIR_IMAGE_MAX_SIDE
+        ) {
+          return skipped;
+        }
+        const data = Buffer.from(bytes).toString("base64");
+        if (data.length > budget.remaining) return skipped;
+        budget.remaining -= data.length;
+        return {
+          type: "image",
+          source: { type: "base64", media_type: image.mimeType.toLowerCase(), data },
+        };
+      }),
       Effect.orElseSucceed(() => skipped),
     );
   };
@@ -421,15 +434,19 @@ const make = Effect.gen(function* () {
     const text = yield* fileSystem.readFileString(textPath).pipe(Effect.option);
     if (Option.isNone(text)) return skipped;
     return block(
-      `<file name="${fence(file.name)}" untrusted="true">\n${capTokens(fence(text.value), SPACE_CONTEXT_BUDGETS.file, " … (cut)")}\n</file>`,
+      `<file name="${fence(file.name).replaceAll('"', "&quot;")}" untrusted="true">\n${capTokens(fence(text.value), SPACE_CONTEXT_BUDGETS.file, " … (cut)")}\n</file>`,
     );
   });
 
   /** The tagged post's attachments, so Pair sees what was shared; one it can't read is named. */
-  const attachmentBlocks = (attachments: SpacePostAttachments) =>
-    Effect.forEach(attachments, (attachment) =>
-      attachment.type === "image" ? imageBlock(attachment) : fileBlock(attachment),
+  const attachmentBlocks = Effect.fn("SpaceContext.attachmentBlocks")(function* (
+    attachments: SpacePostAttachments,
+  ) {
+    const budget = { remaining: PAIR_IMAGES_MAX_ENCODED_BYTES };
+    return yield* Effect.forEach(attachments, (attachment) =>
+      attachment.type === "image" ? imageBlock(attachment, budget) : fileBlock(attachment),
     );
+  });
 
   const assemble = Effect.fn("SpaceContext.assemble")(
     function* (scope: SpaceReplyScope) {

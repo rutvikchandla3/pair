@@ -52,7 +52,10 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { dispatchWasNotAccepted } from "../orchestration-v2/ThreadMessageIntake.ts";
+import {
+  dispatchWasNotAccepted,
+  releaseUnusedClaims,
+} from "../orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { spaceReplyTrigger } from "./SpaceAgentDecisions.ts";
 import { SpaceIntake } from "./SpaceIntake.ts";
@@ -411,10 +414,15 @@ const make = Effect.gen(function* () {
   const post: SpaceService["Service"]["post"] = Effect.fn("SpaceService.post")(
     function* (caller, input) {
       const space = yield* requireSpace(input.spaceId);
+      const attachments = input.attachments ?? [];
+      // Only fresh uploads: an existing id could name another thread's file.
+      if (!attachments.every(AttachmentClaims.attachmentIsPendingUpload)) {
+        return yield* failed("Attachments must be new uploads.");
+      }
       // Images live with the room thread, so they go when it does.
       const claimed = yield* AttachmentClaims.claimPendingAttachments({
         threadId: space.roomThreadId,
-        attachments: input.attachments ?? [],
+        attachments,
       }).pipe(
         Effect.provide(attachmentServices),
         Effect.mapError((error) => failed(error.message)),
@@ -446,6 +454,11 @@ const make = Effect.gen(function* () {
         );
       const entry = yield* read(projections.getSpaceRoomEntry(input.messageId));
       if (entry === null) return yield* failed(`Post ${input.messageId} was not recorded.`);
+      // A retried post keeps its first attachments; drop this attempt's copies.
+      yield* releaseUnusedClaims(
+        claimed.claimedPaths,
+        entry.type === "post" ? (entry.attachments ?? []) : [],
+      ).pipe(Effect.provide(attachmentServices));
       return { entry };
     },
   );
