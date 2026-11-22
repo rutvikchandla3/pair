@@ -165,6 +165,8 @@ const makeAdapter = (input: {
   readonly captured: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   /** Per run ordinal when a function; undefined reports no usage for that turn. */
   readonly usedTokens: number | ((runOrdinal: number) => number | undefined);
+  /** When set, reported usage keeps the prompt cache warm this long. */
+  readonly promptCacheTtlMs?: number;
 }): ProviderAdapter.ProviderAdapterV2["Service"] => ({
   instanceId,
   driver,
@@ -248,7 +250,19 @@ const makeAdapter = (input: {
                 completedAt: null,
                 ...(usedTokens === undefined
                   ? {}
-                  : { tokenUsage: { usedTokens, updatedAt: DateTime.formatIso(eventTime) } }),
+                  : {
+                      tokenUsage: {
+                        usedTokens,
+                        updatedAt: DateTime.formatIso(eventTime),
+                        ...(input.promptCacheTtlMs === undefined
+                          ? {}
+                          : {
+                              promptCacheExpiresAt: DateTime.formatIso(
+                                DateTime.add(eventTime, { milliseconds: input.promptCacheTtlMs }),
+                              ),
+                            }),
+                      },
+                    }),
               },
             });
             yield* PubSub.publish(events, {
@@ -306,6 +320,7 @@ const rotationLayers = (input: {
   readonly cwd: string;
   readonly captured: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly usedTokens: number | ((runOrdinal: number) => number | undefined);
+  readonly promptCacheTtlMs?: number;
   readonly brief: "loads" | "dies";
 }) => {
   const bot = {
@@ -481,21 +496,20 @@ it.effect.each([{ brief: "loads" }, { brief: "dies" }] as const)(
 );
 
 it.effect(
-  "on a long home thread, flushes only once the latest usage passes the budget, as a full read decides",
+  "on a long home thread, flushes from usage reported many turns ago before its cache goes cold, as a full read decides",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("bot-rotation-long");
         const captured = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        // Turn 1 reports 40k, under the budget and too small to replace; the next 60 report no
-        // usage, so turn 1 stays the latest; then a turn reports 160k, past the budget.
-        const quietRuns = 60;
-        const pastBudget = quietRuns + 2;
+        // Turn 1 reports 60k, under the budget but worth an idle flush, on a 3-hour cache; the
+        // next 60 report no usage. Only flush checks that still find turn 1 flush before it goes cold.
+        const runs = 61;
         const { harness, rotation, projections } = rotationLayers({
           cwd,
           captured,
-          usedTokens: (ordinal) =>
-            ordinal === 1 ? 40_000 : ordinal === pastBudget ? 160_000 : undefined,
+          usedTokens: (ordinal) => (ordinal === 1 ? 60_000 : undefined),
+          promptCacheTtlMs: 3 * 60 * 60_000,
           brief: "loads",
         });
         BotThreads.setHome(threadId, botId);
@@ -521,7 +535,7 @@ it.effect(
           });
           // The bounded lookup BotRotation runs, replayed here, must pick the full read's turn.
           let memo: ReturnType<typeof ProjectionStore.nextProviderTurnsSince> | undefined;
-          for (let ordinal = 1; ordinal <= pastBudget; ordinal++) {
+          for (let ordinal = 1; ordinal <= runs; ordinal++) {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make(`message-${ordinal}`),
@@ -552,13 +566,15 @@ it.effect(
             memo = ProjectionStore.nextProviderTurnsSince(providerThreadId, bounded.providerTurns);
           }
 
-          const final = yield* settled(pastBudget + 1);
+          assert.strictEqual((yield* orchestrator.getThreadProjection(threadId)).runs.length, runs);
+          yield* TestClock.adjust("3 hours");
+          const final = yield* settled(runs + 1);
           const flushRuns = final.runs.filter((run) =>
             run.userMessageId.startsWith(FLUSH_MESSAGE_PREFIX),
           );
           assert.deepStrictEqual(
             flushRuns.map((run) => run.ordinal),
-            [pastBudget + 1],
+            [runs + 1],
           );
         }).pipe(
           Effect.provide(
