@@ -2068,3 +2068,107 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+// Runs 1-4 ran in order on one native provider thread; run 5 is starting. A window of 2 keeps
+// runs 4 and 5 as the newest.
+const recentTurnStartContext = (
+  edit: {
+    readonly runId?: number;
+    readonly runCount?: number;
+    readonly continuation?: true;
+    readonly newestOnOtherThread?: true;
+    readonly newestOnFreshThread?: true;
+    readonly newestUnstarted?: true;
+    readonly firstStartsLast?: true;
+    readonly lineage?: true;
+    readonly newestTurn?: "interrupted";
+    readonly newestMessage?: "/compact";
+  } = {},
+) => {
+  const providerThreadId = ProviderThreadId.make("provider-thread:recent");
+  const freshThreadId = ProviderThreadId.make("provider-thread:fresh");
+  const runs = Array.from({ length: edit.runCount ?? 5 }, (_, index) => {
+    const ordinal = index + 1;
+    const newest = ordinal === 4;
+    return {
+      id: RunId.make(`run:recent:${ordinal}`),
+      ordinal,
+      status: ordinal === 5 ? "starting" : "completed",
+      providerThreadId:
+        newest && edit.newestOnOtherThread
+          ? ProviderThreadId.make("provider-thread:other")
+          : ordinal >= 4 && edit.newestOnFreshThread
+            ? freshThreadId
+            : providerThreadId,
+      userMessageId: MessageId.make(`message:recent:${ordinal}`),
+      activeAttemptId: RunAttemptId.make(`attempt:recent:${ordinal}`),
+      startedAt:
+        newest && edit.newestUnstarted
+          ? null
+          : DateTime.makeUnsafe((ordinal === 1 && edit.firstStartsLast ? 10 : ordinal) * 60_000),
+      completedAt: ordinal === 5 ? null : DateTime.makeUnsafe(ordinal * 60_000 + 30_000),
+      ...(newest && edit.continuation
+        ? { restartContinuationOfRunId: RunId.make("run:recent:1") }
+        : {}),
+    };
+  });
+  return {
+    runs,
+    attempts: runs.map((run) => ({
+      id: run.activeAttemptId,
+      runId: run.id,
+      providerThreadId: run.providerThreadId,
+    })),
+    providerTurns: runs.map((run) => ({
+      runAttemptId: run.activeAttemptId,
+      providerThreadId: run.providerThreadId,
+      status:
+        run.ordinal === 5
+          ? "running"
+          : run.ordinal === 4 && edit.newestTurn !== undefined
+            ? edit.newestTurn
+            : "completed",
+    })),
+    providerThreads: [
+      {
+        id: providerThreadId,
+        ownerNodeId: null,
+        nativeThreadRef: { driver: "codex", nativeId: "native", strength: "strong" },
+      },
+      { id: freshThreadId, ownerNodeId: null, nativeThreadRef: null },
+    ],
+    messages: [
+      { id: MessageId.make("message:recent:5"), text: "hello" },
+      ...(edit.newestMessage === undefined
+        ? []
+        : [{ id: MessageId.make("message:recent:4"), text: edit.newestMessage }]),
+    ],
+    ...(edit.lineage ? { lineage: { notices: [], openUpdate: null } } : {}),
+  } as unknown as OrchestrationV2ThreadProjection;
+};
+
+it.each([
+  ["no history beyond the newest runs", {}, false],
+  ["fewer runs than the window", { runCount: 1, runId: 1 }, false],
+  ["a starting run older than the newest", { runId: 3 }, true],
+  ["a restart continuation", { continuation: true }, true],
+  ["an older latest earlier run", { newestOnOtherThread: true }, true],
+  ["no prompted newest run", { newestTurn: "interrupted" }, true],
+  ["a /compact newest run", { newestMessage: "/compact" }, true],
+  ["an older latest native run, for a slash command", { newestOnFreshThread: true }, true],
+  ["an older latest start on the provider thread", { newestUnstarted: true }, true],
+  ["lineage notes, with the latest start among the newest", { lineage: true }, false],
+  [
+    "lineage notes, after an older run started last",
+    { lineage: true, firstStartsLast: true },
+    true,
+  ],
+] as const)("turn start re-reads every run for %s", (_, edit, expected) => {
+  expect(
+    ProviderTurnStart.turnStartNeedsFullHistory(
+      recentTurnStartContext(edit),
+      RunId.make(`run:recent:${"runId" in edit ? edit.runId : 5}`),
+      2,
+    ),
+  ).toBe(expected);
+});

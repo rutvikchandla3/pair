@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextHandoffId,
   ContextTransferId,
   NodeId,
   EventId,
@@ -8,6 +9,9 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -19,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import { latestNativeContextUsage } from "@t3tools/provider-core/server/handoffBudget";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -572,5 +577,204 @@ it.effect(
       yield* userMessage(forkId, forkRunId, "/compact");
 
       assert.isTrue((yield* store.getTurnStartContext(forkId, forkRunId)).hasConversation);
+    }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.effect(
+  "recent turn-start reads keep the newest runs and what turn start reads across history",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const start = DateTime.makeUnsafe("2026-11-01T00:00:00.000Z");
+      const at = (minutes: number) => DateTime.add(start, { minutes });
+      const threadId = ThreadId.make("thread:recent-turn-start");
+      const providerThreadId = ProviderThreadId.make("provider-thread:recent-turn-start");
+      const instanceId = ProviderInstanceId.make("codex");
+      const driver = ProviderDriverKind.make("codex");
+      const modelSelection = { instanceId, model: "test" };
+      yield* store.apply({
+        id: EventId.make("event:recent-turn-start:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: start,
+        payload: {
+          id: threadId,
+          projectId: ProjectId.make("project:recent-turn-start"),
+          title: "Long bot thread",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThreadId,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: start,
+          updatedAt: start,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const providerThread = {
+        id: providerThreadId,
+        driver,
+        providerInstanceId: instanceId,
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: { driver, nativeId: "native-1", strength: "strong" as const },
+        nativeConversationHeadRef: null,
+        status: "idle" as const,
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 8,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: start,
+        updatedAt: start,
+      };
+      yield* store.apply({
+        id: EventId.make("event:recent-turn-start:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        providerInstanceId: instanceId,
+        occurredAt: start,
+        payload: providerThread,
+      });
+      // Run 8 is starting. Run 2 was interrupted, run 3's turn reported usage last, and a ready
+      // handoff targets run 4; all three are older than the newest three runs.
+      const putRun = Effect.fnUntraced(function* (
+        ordinal: number,
+        status: OrchestrationV2Run["status"],
+        ended: number | null,
+      ) {
+        const runId = RunId.make(`run:recent-turn-start:${ordinal}`);
+        const attemptId = RunAttemptId.make(`attempt:recent-turn-start:${ordinal}`);
+        const nodeId = NodeId.make(`node:recent-turn-start:${ordinal}`);
+        yield* store.apply({
+          id: EventId.make(`event:recent-turn-start:run:${ordinal}:${status}`),
+          type: "run.updated",
+          threadId,
+          runId,
+          occurredAt: start,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal,
+            providerInstanceId: instanceId,
+            modelSelection,
+            providerThreadId,
+            userMessageId: MessageId.make(`message:recent-turn-start:${ordinal}`),
+            rootNodeId: nodeId,
+            activeAttemptId: attemptId,
+            status,
+            requestedAt: at(ordinal * 10),
+            startedAt: at(ordinal * 10),
+            completedAt: ended === null ? null : at(ended),
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`event:recent-turn-start:attempt:${ordinal}`),
+          type: "run-attempt.created",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: start,
+          payload: {
+            id: attemptId,
+            nativeThreadId: "native-1",
+            runId,
+            attemptOrdinal: 1,
+            rootNodeId: nodeId,
+            providerInstanceId: instanceId,
+            providerThreadId,
+            providerTurnId: ProviderTurnId.make(`turn:recent-turn-start:${ordinal}`),
+            reason: "initial",
+            status: ended === null ? "running" : "completed",
+            startedAt: at(ordinal * 10),
+            completedAt: ended === null ? null : at(ended),
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`event:recent-turn-start:turn:${ordinal}`),
+          type: "provider-turn.updated",
+          threadId,
+          nodeId,
+          driver,
+          occurredAt: start,
+          payload: {
+            id: ProviderTurnId.make(`turn:recent-turn-start:${ordinal}`),
+            providerThreadId,
+            nodeId,
+            runAttemptId: attemptId,
+            nativeTurnRef: null,
+            ordinal,
+            status: ended === null ? "running" : "completed",
+            startedAt: at(ordinal * 10),
+            completedAt: ended === null ? null : at(ended),
+            ...(ordinal === 3
+              ? { tokenUsage: { usedTokens: 1200, updatedAt: DateTime.formatIso(at(34)) } }
+              : {}),
+          },
+        });
+      });
+      for (const ordinal of [1, 3, 4, 5, 6, 7])
+        yield* putRun(ordinal, "completed", ordinal * 10 + 5);
+      yield* putRun(2, "interrupted", 25);
+      yield* putRun(8, "starting", null);
+      yield* store.apply({
+        id: EventId.make("event:recent-turn-start:handoff"),
+        type: "context-handoff.updated",
+        threadId,
+        runId: RunId.make("run:recent-turn-start:4"),
+        occurredAt: start,
+        payload: {
+          id: ContextHandoffId.make("handoff:recent-turn-start"),
+          threadId,
+          targetRunId: RunId.make("run:recent-turn-start:4"),
+          fromProviderThreadIds: [providerThreadId],
+          toProviderThreadId: providerThreadId,
+          coveredRunOrdinals: { from: 1, to: 3 },
+          strategy: "delta_since_target_last_seen",
+          status: "ready",
+          summaryMessageId: null,
+          summaryText: "",
+          createdByProviderInstanceId: null,
+          createdAt: start,
+          updatedAt: start,
+        },
+      });
+
+      const runId = RunId.make("run:recent-turn-start:8");
+      const ordinals = (records: { readonly runs: ReadonlyArray<OrchestrationV2Run> }) =>
+        records.runs.map((run) => run.ordinal);
+      const full = yield* store.getTurnStartContext(threadId, runId);
+      const recent = yield* store.getTurnStartContext(threadId, runId, { recentRuns: 3 });
+      assert.deepEqual(ordinals(recent), [2, 3, 4, 6, 7, 8]);
+      assert.deepEqual(
+        recent.providerTurns.map((turn) => turn.ordinal),
+        [2, 3, 4, 6, 7, 8],
+      );
+      assert.deepEqual(
+        latestNativeContextUsage(recent, providerThread),
+        latestNativeContextUsage(full, providerThread),
+      );
+      assert.equal(latestNativeContextUsage(recent, providerThread)?.usage.usedTokens, 1200);
+
+      // Run 5 ending after run 6 started could make it the latest, so nothing is left out.
+      yield* putRun(5, "completed", 62);
+      assert.deepEqual(
+        ordinals(yield* store.getTurnStartContext(threadId, runId, { recentRuns: 3 })),
+        ordinals(full),
+      );
     }).pipe(Effect.provide(layerDatabase)),
 );
