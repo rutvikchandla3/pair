@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
@@ -162,7 +163,8 @@ interface CapturedTurn {
 const makeAdapter = (input: {
   readonly cwd: string;
   readonly captured: Ref.Ref<ReadonlyArray<CapturedTurn>>;
-  readonly usedTokens: number;
+  /** Per run ordinal when a function; undefined reports no usage for that turn. */
+  readonly usedTokens: number | ((runOrdinal: number) => number | undefined);
 }): ProviderAdapter.ProviderAdapterV2["Service"] => ({
   instanceId,
   driver,
@@ -223,6 +225,10 @@ const makeAdapter = (input: {
               },
             ]);
             const eventTime = yield* DateTime.now;
+            const usedTokens =
+              typeof input.usedTokens === "number"
+                ? input.usedTokens
+                : input.usedTokens(turn.runOrdinal);
             const providerTurnId = ProviderTurnId.make(`provider-turn:${turn.runOrdinal}`);
             const providerTurn = {
               id: providerTurnId,
@@ -240,10 +246,9 @@ const makeAdapter = (input: {
                 ...providerTurn,
                 status: "running",
                 completedAt: null,
-                tokenUsage: {
-                  usedTokens: input.usedTokens,
-                  updatedAt: DateTime.formatIso(eventTime),
-                },
+                ...(usedTokens === undefined
+                  ? {}
+                  : { tokenUsage: { usedTokens, updatedAt: DateTime.formatIso(eventTime) } }),
               },
             });
             yield* PubSub.publish(events, {
@@ -296,6 +301,61 @@ const makeAdapter = (input: {
     }),
 });
 
+/** The orchestrator harness and a started-able BotRotation for one home thread. */
+const rotationLayers = (input: {
+  readonly cwd: string;
+  readonly captured: Ref.Ref<ReadonlyArray<CapturedTurn>>;
+  readonly usedTokens: number | ((runOrdinal: number) => number | undefined);
+  readonly brief: "loads" | "dies";
+}) => {
+  const bot = {
+    id: botId,
+    name: "Atlas",
+    charter: "",
+    voice: "crisp",
+    paused: false,
+    instructions: "Keep diffs boring.",
+    limits: [],
+    homeProjectId: null,
+    models: { brain: modelSelection, worker: modelSelection, reviewer: modelSelection },
+    updatedAt: at(0),
+  };
+  const database = SqlitePersistence.layerMemory;
+  const projections = ProjectionStore.layer.pipe(Layer.provide(database));
+  const harness = ProviderReplayHarness.layerWithRegistry(
+    { name: "bot-rotation" },
+    ProviderAdapterRegistry.layerSingle(makeAdapter(input)),
+    { runEffectWorker: false, databaseLayer: database },
+  );
+  const rotation = botRotationLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        harness,
+        projections,
+        Layer.mock(BotService)({
+          getBot: () => Effect.succeedSome(bot as never),
+          snapshotForBot: () =>
+            input.brief === "dies"
+              ? Effect.die(new TypeError("Cannot read properties of undefined"))
+              : Effect.succeed({
+                  bots: [bot],
+                  jobs: [],
+                  sessions: [],
+                  asks: [],
+                  notes: [],
+                  events: [],
+                  revision: 0,
+                } as never),
+          listAllBots: () => Effect.succeed([bot] as never),
+        }),
+        Layer.mock(BotSessions)({ cloudTarget: () => Effect.succeed(null) }),
+        Layer.mock(ProjectService.ProjectService)({ listShells: () => Effect.succeed([]) }),
+      ),
+    ),
+  );
+  return { harness, rotation, projections };
+};
+
 /**
  * The first `runs` runs done. Each event may queue effects (finalizing a run, starting the next),
  * so the worker is drained before the thread is read again.
@@ -326,57 +386,14 @@ const settled = Effect.fn("BotRotationTest.settled")(function* (runs: number) {
 });
 
 // A brief that dies still rotates: resuming would flush again after every turn.
-it.effect.each([{ brief: "loads" }, { brief: "dies" }])(
+it.effect.each([{ brief: "loads" }, { brief: "dies" }] as const)(
   "after the session passes the budget, flushes on it, then starts the next turn fresh from stored state (brief $brief)",
   ({ brief }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("bot-rotation");
         const captured = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const bot = {
-          id: botId,
-          name: "Atlas",
-          charter: "",
-          voice: "crisp",
-          paused: false,
-          instructions: "Keep diffs boring.",
-          limits: [],
-          homeProjectId: null,
-          models: { brain: modelSelection, worker: modelSelection, reviewer: modelSelection },
-          updatedAt: at(0),
-        };
-        const database = SqlitePersistence.layerMemory;
-        const harness = ProviderReplayHarness.layerWithRegistry(
-          { name: "bot-rotation" },
-          ProviderAdapterRegistry.layerSingle(makeAdapter({ cwd, captured, usedTokens: 160_000 })),
-          { runEffectWorker: false, databaseLayer: database },
-        );
-        const rotation = botRotationLayer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              harness,
-              ProjectionStore.layer.pipe(Layer.provide(database)),
-              Layer.mock(BotService)({
-                getBot: () => Effect.succeedSome(bot as never),
-                snapshotForBot: () =>
-                  brief === "dies"
-                    ? Effect.die(new TypeError("Cannot read properties of undefined"))
-                    : Effect.succeed({
-                        bots: [bot],
-                        jobs: [],
-                        sessions: [],
-                        asks: [],
-                        notes: [],
-                        events: [],
-                        revision: 0,
-                      } as never),
-                listAllBots: () => Effect.succeed([bot] as never),
-              }),
-              Layer.mock(BotSessions)({ cloudTarget: () => Effect.succeed(null) }),
-              Layer.mock(ProjectService.ProjectService)({ listShells: () => Effect.succeed([]) }),
-            ),
-          ),
-        );
+        const { harness, rotation } = rotationLayers({ cwd, captured, usedTokens: 160_000, brief });
         BotThreads.setHome(threadId, botId);
         yield* Effect.addFinalizer(() => Effect.sync(() => BotThreads.clearHome(threadId)));
 
@@ -457,6 +474,97 @@ it.effect.each([{ brief: "loads" }, { brief: "dies" }])(
         }).pipe(
           Effect.provide(
             Layer.mergeAll(harness, rotation).pipe(Layer.provide(SessionRotation.layerSlot)),
+          ),
+        );
+      }),
+    ),
+);
+
+it.effect(
+  "on a long home thread, flushes only once the latest usage passes the budget, as a full read decides",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("bot-rotation-long");
+        const captured = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        // Turn 1 reports 40k, under the budget and too small to replace; the next 60 report no
+        // usage, so turn 1 stays the latest; then a turn reports 160k, past the budget.
+        const quietRuns = 60;
+        const pastBudget = quietRuns + 2;
+        const { harness, rotation, projections } = rotationLayers({
+          cwd,
+          captured,
+          usedTokens: (ordinal) =>
+            ordinal === 1 ? 40_000 : ordinal === pastBudget ? 160_000 : undefined,
+          brief: "loads",
+        });
+        BotThreads.setHome(threadId, botId);
+        yield* Effect.addFinalizer(() => Effect.sync(() => BotThreads.clearHome(threadId)));
+
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          yield* (yield* BotRotation).start();
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create"),
+            threadId,
+            projectId: ProjectId.make("project:bot-rotation"),
+            title: "Atlas",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "system",
+            creationSource: "server",
+          });
+          // The bounded lookup BotRotation runs, replayed here, must pick the full read's turn.
+          let memo: ReturnType<typeof ProjectionStore.nextProviderTurnsSince> | undefined;
+          for (let ordinal = 1; ordinal <= pastBudget; ordinal++) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`message-${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`message:${ordinal}`),
+              text: `Status ${ordinal}?`,
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* settled(ordinal);
+            // Later usage must carry a later time, or the store's tie rule keeps the older turn.
+            yield* TestClock.adjust("1 minute");
+            const providerThreadId = (yield* store.getThread(threadId)).activeProviderThreadId!;
+            const full = yield* store.getThreadRecords(threadId, ["providerTurns"], {
+              providerTurnThreadIds: [providerThreadId],
+              latestProviderTurnUsageOnly: true,
+            });
+            const bounded = yield* store.getThreadRecords(threadId, ["providerTurns"], {
+              providerTurnThreadIds: [providerThreadId],
+              providerTurnsSince: memo ?? { providerThreadId, through: null, bestId: null },
+            });
+            assert.strictEqual(
+              bounded.providerTurns.find((turn) => turn.tokenUsage !== undefined)?.id,
+              full.providerTurns[0]?.id,
+            );
+            memo = ProjectionStore.nextProviderTurnsSince(providerThreadId, bounded.providerTurns);
+          }
+
+          const final = yield* settled(pastBudget + 1);
+          const flushRuns = final.runs.filter((run) =>
+            run.userMessageId.startsWith(FLUSH_MESSAGE_PREFIX),
+          );
+          assert.deepStrictEqual(
+            flushRuns.map((run) => run.ordinal),
+            [pastBudget + 1],
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(harness, rotation, projections).pipe(
+              Layer.provide(SessionRotation.layerSlot),
+            ),
           ),
         );
       }),
