@@ -136,6 +136,7 @@ import * as ThreadAccess from "./team/ThreadAccess.ts";
 import * as SandboxRestoreMode from "./sandbox/lifecycle/SandboxRestoreMode.ts";
 import * as SandboxWake from "./sandbox/lifecycle/SandboxWake.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
+import * as Agent37ComputeDriver from "./sandbox/compute/Agent37ComputeDriver.ts";
 import * as BoatComputeDriver from "./sandbox/compute/BoatComputeDriver.ts";
 import * as GceComputeDriver from "./sandbox/compute/GceComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
@@ -905,6 +906,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
             | typeof DockerComputeDriver.make
             | typeof GceComputeDriver.make
             | typeof BoatComputeDriver.make
+            | typeof Agent37ComputeDriver.make
           >
         >,
         Scope.Scope
@@ -913,6 +915,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       docker: DockerComputeDriver.make,
       gce: GceComputeDriver.make,
       boat: BoatComputeDriver.make,
+      agent37: Agent37ComputeDriver.make,
     }),
   ),
   Layer.provideMerge(SandboxBootstrapSource.layer),
