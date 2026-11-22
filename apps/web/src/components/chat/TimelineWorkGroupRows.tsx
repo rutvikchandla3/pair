@@ -280,8 +280,13 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, preparingWorktreeSetup, backgroundWorktreeSetup } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    preparingWorktreeSetup,
+    backgroundWorktreeSetup,
+    workingFace,
+  } = use(TimelineRowActivityCtx);
   const compacting = row.compacting === true || isCompacting;
   const waitingForMachine =
     preparingWorktreeSetup !== null && worktreeSetupMachineWaiting(preparingWorktreeSetup);
@@ -303,7 +308,13 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   );
   return (
     <div className="border-b border-border/60 pb-2 pt-1">
-      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+      <div
+        className={cn(
+          "flex h-6 min-w-0 gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums",
+          workingFace === null ? "items-baseline" : "items-center",
+        )}
+      >
+        {workingFace}
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"

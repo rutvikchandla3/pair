@@ -7,6 +7,7 @@ import {
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
+  type AttachmentUploadCycleResult,
   deletePendingAttachmentUpload,
   runAttachmentUploadCycle,
   verifyPersistedAttachmentUpload,
@@ -630,4 +631,25 @@ export function releaseDraftAttachments(
   for (const attachment of attachments) {
     releaseDraftAttachment(attachment);
   }
+}
+
+/** One image upload outside a composer draft, such as a bot picture. */
+export function uploadImageAttachment(input: {
+  readonly environmentId: EnvironmentId;
+  readonly file: File;
+  readonly mimeType: (typeof PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES)[number];
+}): Promise<AttachmentUploadCycleResult> {
+  return runAttachmentUploadCycle({
+    registry: appAtomRegistry,
+    createUploadUrl: attachmentEnvironment.createUploadUrl,
+    remove: attachmentEnvironment.remove,
+    environmentId: input.environmentId,
+    upload: { name: input.file.name, mimeType: input.mimeType, sizeBytes: input.file.size },
+    resolveUploadUrl: (relativeUrl) => {
+      const connection = readPreparedConnection(input.environmentId);
+      return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
+    },
+    transport: (url) =>
+      uploadBytes({ url, file: input.file, mimeType: input.mimeType, onProgress: () => {} }),
+  });
 }

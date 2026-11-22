@@ -18,6 +18,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES } from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 
 export const BotId = TrimmedNonEmptyString.pipe(Schema.brand("BotId"));
@@ -71,9 +72,16 @@ export const BOT_COLORS = ["#6366f1", "#0d9488", "#db2777", "#ea580c", "#2563eb"
 export const BotColor = Schema.Literals(BOT_COLORS);
 export type BotColor = typeof BotColor.Type;
 
-/** A bot's face shape; each shape has its own eyes. Static and non-human by design. */
+/** A bot's face shape; each shape has its own eyes. Non-human by design. */
 export const BotShape = Schema.Literals(["round", "square", "tall", "hex"]);
 export type BotShape = typeof BotShape.Type;
+
+/** An image the user set in place of the face: a stored attachment, served like any other. */
+export const BotPicture = Schema.Struct({
+  attachmentId: TrimmedNonEmptyString,
+  mimeType: Schema.Literals(PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES),
+});
+export type BotPicture = typeof BotPicture.Type;
 
 /** How the bot sounds in its chat. Tone only: questions, reports and session tasks stay plain. */
 export const BotVoice = Schema.Literals(["crisp", "candid"]);
@@ -132,6 +140,8 @@ export const Bot = Schema.Struct({
   color: TrimmedNonEmptyString,
   shape: BotShape.pipe(Schema.withDecodingDefaultKey(Effect.succeed("round"))),
   voice: BotVoice.pipe(Schema.withDecodingDefaultKey(Effect.succeed("crisp"))),
+  /** Shown instead of the face when set. */
+  picture: Schema.NullOr(BotPicture).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   /** One line: what it's for, shown under its name. May be empty. */
   charter: Schema.String,
   /** Prose the user writes: taste and standing orders. */
@@ -408,6 +418,12 @@ export const BotsUpdateInput = Schema.Struct({
   color: Schema.optionalKey(BotColor),
   shape: Schema.optionalKey(BotShape),
   voice: Schema.optionalKey(BotVoice),
+  /** A pending image upload to adopt as the picture, or null to go back to the face. */
+  picture: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({ attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)) }),
+    ),
+  ),
   charter: Schema.optionalKey(Schema.String),
   instructions: Schema.optionalKey(Schema.String),
   limits: Schema.optionalKey(Schema.Array(BotLimit)),

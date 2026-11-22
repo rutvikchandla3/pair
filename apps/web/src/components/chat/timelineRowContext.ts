@@ -109,6 +109,8 @@ export interface TimelineRowActivityState {
   preparingWorktreeSetup: WorktreeSetupSnapshot | null;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
+  /** A bot's home thread: its working face leads the working row. */
+  workingFace: ReactNode;
 }
 
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);

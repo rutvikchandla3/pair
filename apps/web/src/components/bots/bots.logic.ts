@@ -11,6 +11,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { BotFacePose } from "@t3tools/client-runtime/bot-identity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 /** Live state of one bot session, derived from its thread shell. */
@@ -384,17 +385,21 @@ export function botSidebarSessions(
   return { rows: [...active, ...recent], earlier, archived };
 }
 
-/** Whether the bot or any of its sessions is working, for the sidebar row's glyph. */
-export function botWorking(
+/** The bot's face pose: needs-you, then paused, then working when it or any session runs. */
+export function botFacePose(
   snapshot: BotsSnapshot,
   bot: Bot,
   shells: ShellLookup,
   now: number = Date.now(),
-): boolean {
-  if (homeThreadWorking(bot, shells)) return true;
+): BotFacePose {
+  if (openAsks(snapshot, bot.id).length > 0) return "needs-you";
+  if (bot.paused) return "paused";
+  if (homeThreadWorking(bot, shells)) return "working";
   return botSidebarSessions(snapshot, bot.id, shells, now).rows.some(
     (row) => row.glyph === "working",
-  );
+  )
+    ? "working"
+    : "idle";
 }
 
 export type ThreadChipState = "input" | "working" | "done" | "failed";

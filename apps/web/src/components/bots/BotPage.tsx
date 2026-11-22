@@ -41,6 +41,7 @@ import { openBotDialog } from "./botDialogStore";
 import { BotMemoryPanel } from "./BotMemoryPanel";
 import { BotSettingsDialog } from "./BotSettingsDialog";
 import {
+  botFacePose,
   botSessions,
   botStatusLine,
   cloudSessionsStillRunning,
@@ -117,6 +118,7 @@ export function BotPage(props: {
     focusState === null ? null : { runId: focusState.runId, nonce: focusState.nonce };
 
   const status = botStatusLine(snapshot, bot, shellMap, now);
+  const pose = botFacePose(snapshot, bot, shellMap, now);
   const sessions = botSessions(snapshot, bot.id);
   const jobs = jobsById(snapshot);
   const runningSessions = sessions.filter((session) => {
@@ -161,7 +163,7 @@ export function BotPage(props: {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2.5 border-b border-border p-3">
-        <BotAvatar bot={bot} size="lg" />
+        <BotAvatar bot={bot} size="row" pose={pose} environmentId={props.environmentId} animated />
         {bot.charter.trim() === "" ? (
           <h1 className="font-medium text-base">{bot.name}</h1>
         ) : (

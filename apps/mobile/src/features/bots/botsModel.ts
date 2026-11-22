@@ -11,6 +11,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
 } from "@t3tools/contracts";
+import type { BotFacePose } from "@t3tools/client-runtime/bot-identity";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 
 import { AsyncResult } from "effect/reactivity";
@@ -244,6 +245,22 @@ export function botStatusLine(input: {
     return { text: parts.join(" · "), tone: "muted" };
   }
   return { text: "Nothing running", tone: "idle" };
+}
+
+/**
+ * The face's pose. An open question outranks pausing, since the row's count pill shows it anyway.
+ * Only a running or bot-blocked session moves the face; quiet, paused and taken-over ones do not.
+ */
+export function botFacePose(input: {
+  readonly bot: Pick<Bot, "paused">;
+  readonly asks: ReadonlyArray<BotAsk>;
+  readonly sessionStates: ReadonlyArray<BotSessionState>;
+}): BotFacePose {
+  if (needsYouCount(input.asks) > 0) return "needs-you";
+  if (input.bot.paused) return "paused";
+  return input.sessionStates.some((state) => state.kind === "working" || state.kind === "waiting")
+    ? "working"
+    : "idle";
 }
 
 /** Needs you, then failed sessions, then the bot's running work, then the last day's finished. */

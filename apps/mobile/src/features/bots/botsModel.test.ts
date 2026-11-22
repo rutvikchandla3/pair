@@ -20,6 +20,7 @@ import {
   type BotsEnvironmentEntry,
   type BotSessionShell,
   type BotSessionState,
+  botFacePose,
   botSessionRows,
   botSessionState,
   botSessionShellsKey,
@@ -305,6 +306,35 @@ describe("botStatusLine", () => {
       tone: "paused",
     });
   });
+
+  it.each([
+    {
+      name: "an open ask outranks pausing",
+      paused: true,
+      asks: [ask()],
+      kinds: [],
+      pose: "needs-you",
+    },
+    { name: "paused outranks working", paused: true, asks: [], kinds: ["working"], pose: "paused" },
+    {
+      name: "waiting on the bot counts as working",
+      paused: false,
+      asks: [],
+      kinds: ["done", "waiting"],
+      pose: "working",
+    },
+    {
+      name: "quiet, paused and taken over sessions stay still",
+      paused: false,
+      asks: [ask({ status: "answered" })],
+      kinds: ["quiet", "paused", "taken-over"],
+      pose: "idle",
+    },
+  ] as const)("poses the face: $name", ({ paused, asks, kinds, pose }) => {
+    expect(
+      botFacePose({ bot: { paused }, asks, sessionStates: kinds.map((kind) => state({ kind })) }),
+    ).toBe(pose);
+  });
 });
 
 describe("botSessionRows", () => {
@@ -432,6 +462,7 @@ describe("botsScreenModel", () => {
       color: "#6366f1",
       shape: "round",
       voice: "crisp",
+      picture: null,
       charter: "",
       instructions: "",
       limits: [],

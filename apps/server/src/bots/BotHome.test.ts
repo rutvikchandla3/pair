@@ -137,6 +137,7 @@ const savedBot = (id: string, homeThreadId: string | null): Bot => ({
   color: "#6366f1",
   shape: "round",
   voice: "candid",
+  picture: null,
   charter: "",
   instructions: "",
   limits: [],

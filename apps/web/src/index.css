@@ -2581,3 +2581,119 @@ code {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
+
+/* Bot faces (BotAvatar). Still poses are plain transforms, so an idle list never repaints. A
+   working face loops; hovering a `.bot-face-hover` row plays an idle face or picture once. */
+.bot-face :is(.bot-face-hop, .bot-face-body, .bot-face-eyes) {
+  transform-box: view-box;
+}
+.bot-face .bot-face-body {
+  transform-origin: 16px 30px;
+}
+.bot-face .bot-face-eyes {
+  transform-origin: 16px 15px;
+}
+.bot-face[data-pose="needs-you"] .bot-face-eyes {
+  transform: translateY(-1.6px);
+}
+.bot-face[data-pose="paused"] {
+  opacity: 0.6;
+}
+.bot-face[data-pose="paused"] .bot-face-eyes {
+  transform: translateY(0.6px) scaleY(0.18);
+}
+.bot-face .bot-face-hover-play {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .bot-face[data-pose="working"] {
+    & .bot-face-hop {
+      animation: bot-face-hop 6s ease-in-out infinite var(--bot-face-offset, 0ms);
+    }
+    & .bot-face-body {
+      animation: bot-face-breathe 6s ease-in-out infinite var(--bot-face-offset, 0ms);
+    }
+    & .bot-face-eyes {
+      animation:
+        bot-face-glance 6s ease-in-out infinite var(--bot-face-offset, 0ms),
+        bot-face-blink 6s linear infinite var(--bot-face-offset, 0ms);
+    }
+  }
+  .bot-face-hover:hover .bot-face[data-pose="idle"] {
+    & .bot-face-hop {
+      animation: bot-face-hop 6s ease-in-out -4s 1;
+    }
+    & .bot-face-eyes {
+      animation: bot-face-blink 6s linear -4s 1;
+    }
+    & .bot-face-hover-play {
+      display: block;
+    }
+    & .bot-face-still {
+      display: none;
+    }
+  }
+}
+
+@keyframes bot-face-hop {
+  0%,
+  70%,
+  80%,
+  89%,
+  100% {
+    transform: translateY(0);
+  }
+  76% {
+    transform: translateY(-3px);
+  }
+  85% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes bot-face-breathe {
+  0%,
+  40%,
+  100% {
+    transform: scale(1, 1);
+  }
+  20% {
+    transform: scale(1.03, 0.96);
+  }
+}
+
+@keyframes bot-face-glance {
+  0%,
+  15%,
+  58%,
+  100% {
+    translate: 0 0;
+  }
+  22%,
+  32% {
+    translate: -2px 0;
+  }
+  40%,
+  50% {
+    translate: 2px 0;
+  }
+}
+
+@keyframes bot-face-blink {
+  0%,
+  35%,
+  37.5%,
+  72%,
+  92%,
+  100% {
+    scale: 1 1;
+  }
+  36% {
+    scale: 1 0.1;
+  }
+  76%,
+  88% {
+    scale: 1 0.55;
+  }
+}

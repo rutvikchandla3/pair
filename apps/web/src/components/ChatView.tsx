@@ -188,6 +188,7 @@ import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStor
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import type { BotChatOptions } from "./chat/botChat";
+import { BotAvatar } from "./bots/BotAvatar";
 import { BotEmptyChat } from "./chat/BotEmptyChat";
 import { useSessionBotName } from "../state/bots";
 
@@ -3786,7 +3787,17 @@ export default function ChatView(props: ChatViewProps) {
                     ? {
                         botName: bot.identity.name,
                         botFocus: bot.focus,
-                        emptyPlaceholder: <BotEmptyChat bot={bot.identity} />,
+                        workingFace: (
+                          <BotAvatar
+                            bot={bot.identity}
+                            size="md"
+                            pose="working"
+                            environmentId={environmentId}
+                          />
+                        ),
+                        emptyPlaceholder: (
+                          <BotEmptyChat bot={bot.identity} environmentId={environmentId} />
+                        ),
                       }
                     : {})}
                   topFadeEnabled={!hasTimelineTopBanner}
