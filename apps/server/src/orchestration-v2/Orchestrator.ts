@@ -97,7 +97,7 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { canChangeQueuedRun, runStarterId } from "@t3tools/shared/threadCollaboration";
-import { modelSwitchSince } from "./modelSwitch.ts";
+import { latestShownRun, modelSwitchSince } from "./modelSwitch.ts";
 import {
   decideSpaceCommand,
   decideThreadLink,
@@ -232,6 +232,7 @@ import {
   type OlderSettledThreadsListing,
   type ActiveShellIndexEntry,
   type OlderSettledThreadsQuery,
+  type RecentRunsFilter,
   type ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
@@ -656,13 +657,17 @@ function wakeWorkStartedAt(
   ) {
     return {};
   }
-  const previous = runs
+  const previous = latestStartedRun(runs);
+  return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
+}
+
+function latestStartedRun(runs: ReadonlyArray<OrchestrationV2Run>): OrchestrationV2Run | undefined {
+  return runs
     .flatMap((run) => (run.startedAt === null ? [] : [{ run, startedAt: run.startedAt }]))
     .toSorted(
       (left, right) =>
         DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
     )[0]?.run;
-  return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
 }
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
@@ -1289,6 +1294,50 @@ function lastDeliveredRunForProviderThread(
   );
 }
 
+/** How many of a thread's newest runs a message dispatch reads before falling back to all of them. */
+const DISPATCH_RECENT_RUNS = 50;
+
+/**
+ * Whether a dispatch read through `recentRuns` must re-read every run. Provider switches, forks,
+ * merge-backs, imported history, usage-limit resumes and plan sources read across all runs. The
+ * store keeps the newest runs ahead of any omitted one, so each "latest" answer is exact only when
+ * it comes from those newest runs, not from an older active or anchored run.
+ */
+export function dispatchNeedsFullHistory(
+  command: Pick<
+    Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    "modelSelection" | "usageLimitContinuationOfRunId" | "sourcePlanRef" | "notification"
+  >,
+  projection: OrchestrationV2ThreadProjection,
+  recentRuns: number,
+): boolean {
+  const floor = projection.runs.map((run) => run.ordinal).toSorted((a, b) => b - a)[recentRuns - 1];
+  // Fewer runs than the window: the store read them all.
+  if (floor === undefined) return false;
+  const activeProviderThread = projection.providerThreads.find(
+    (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+  );
+  const newest = (run: OrchestrationV2Run | null | undefined) =>
+    run != null && run.ordinal >= floor;
+  return (
+    command.usageLimitContinuationOfRunId !== undefined ||
+    command.sourcePlanRef !== undefined ||
+    threadHasImportedHistory(projection.thread.historyOrigin) ||
+    pendingForkTransferForThread(projection) !== undefined ||
+    pendingMergeBackTransfersForThread(projection).length > 0 ||
+    (activeProviderThread !== undefined &&
+      activeProviderThread.providerInstanceId !==
+        (command.modelSelection ?? projection.thread.modelSelection).instanceId) ||
+    !newest(latestExecutedRun(projection.runs)) ||
+    // A wake's notification item drops `modelSwitch`, so its latest shown run is never read.
+    (command.notification === undefined && !newest(latestShownRun(projection))) ||
+    !newest(latestStartedRun(projection.runs)) ||
+    !projection.messages.some(
+      (message) => message.role === "user" && !isNativeMaintenanceCommand(message),
+    )
+  );
+}
+
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
@@ -1475,7 +1524,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
-  const readCommandProjection = (threadId: ThreadId) =>
+  const readCommandProjection = (threadId: ThreadId, recentRuns?: RecentRunsFilter) =>
     projectionStore
       .getThreadRecords(
         threadId,
@@ -1500,6 +1549,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Commands here read only undelivered or active tasks; a dispatcher thread keeps
           // thousands of delivered ones, each carrying its full prompt.
           omitSettledSubagents: true,
+          ...(recentRuns === undefined ? {} : { recentRuns }),
         },
       )
       .pipe(
@@ -1793,9 +1843,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.fnUntraced(function* (
       threadId: ThreadId,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      recentRuns?: RecentRunsFilter,
     ) {
       const pending = (yield* Ref.get(events)).filter((event) => event.threadId === threadId);
-      const stored = yield* Effect.option(readCommandProjection(threadId));
+      const stored = yield* Effect.option(readCommandProjection(threadId, recentRuns));
       let projection: OrchestrationV2ThreadProjection;
       if (Option.isSome(stored)) {
         projection = stored.value;
@@ -7848,7 +7899,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    const recentProjection = yield* getProjectionWithPendingEvents(command.threadId, events, {
+      limit: DISPATCH_RECENT_RUNS,
+      runIds: [
+        command.manualContinuationOfRunId,
+        command.restartContinuationOfRunId,
+        command.delegatedCompletion?.parentRunId,
+        command.dispatchMode.type === "steer_active" ||
+        command.dispatchMode.type === "restart_active"
+          ? command.dispatchMode.targetRunId
+          : undefined,
+      ].filter((runId) => runId !== undefined),
+      messageId: command.messageId,
+      turnItemId: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
+    });
+    let projection = dispatchNeedsFullHistory(command, recentProjection, DISPATCH_RECENT_RUNS)
+      ? yield* getProjectionWithPendingEvents(command.threadId, events)
+      : recentProjection;
     const pairRefusal = spaceMessageRefusal(command, projection.thread);
     if (pairRefusal !== null) {
       return yield* new OrchestratorDispatchError({
