@@ -5,6 +5,7 @@ import {
   EventId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadProjection,
   PlanId,
   ProjectId,
   ProviderDriverKind,
@@ -655,6 +656,77 @@ it.effect(
       assert.isNotNull((yield* projections.getThread(threadId)).deletedAt);
     }).pipe(Effect.provide(layerTest)),
 );
+
+// Runs 1-4 ran in order; a window of 2 keeps runs 3 and 4 as the newest.
+const recentRunsProjection = (
+  edit: {
+    readonly newest?: "queued" | "hidden";
+    readonly messageText?: string;
+    readonly providerInstance?: string;
+    readonly runCount?: number;
+  } = {},
+) => {
+  const at = (minute: number) => DateTime.makeUnsafe(minute * 60_000);
+  const runs = Array.from({ length: edit.runCount ?? 4 }, (_, index) => {
+    const ordinal = index + 1;
+    const queued = ordinal >= 3 && edit.newest === "queued";
+    return {
+      id: RunId.make(`run:recent:${ordinal}`),
+      ordinal,
+      status: queued ? "queued" : "completed",
+      userMessageId: MessageId.make(`message:recent:${ordinal}`),
+      contextHandoffId: null,
+      modelSelection,
+      startedAt: queued ? null : at(ordinal * 10),
+      completedAt: queued ? null : at(ordinal * 10 + 5),
+    };
+  });
+  return {
+    thread: {
+      activeProviderThreadId: ProviderThreadId.make("provider-thread:recent"),
+      modelSelection,
+    },
+    providerThreads: [
+      {
+        id: ProviderThreadId.make("provider-thread:recent"),
+        providerInstanceId: ProviderInstanceId.make(edit.providerInstance ?? "codex"),
+      },
+    ],
+    contextTransfers: [],
+    runs,
+    messages: runs.map((run) => ({
+      id: run.userMessageId,
+      role: "user",
+      text: edit.messageText ?? "hello",
+      attachments: [],
+    })),
+    turnItems: runs
+      .filter((run) => !(run.ordinal >= 3 && edit.newest === "hidden"))
+      .map((run) => ({
+        type: "user_message",
+        messageId: run.userMessageId,
+        inputIntent: "turn_start",
+        status: "completed",
+        text: edit.messageText ?? "hello",
+        attachments: [],
+      })),
+  } as unknown as OrchestrationV2ThreadProjection;
+};
+
+it.each([
+  ["no history beyond the newest runs", {}, {}, false],
+  ["fewer runs than the window", { runCount: 1 }, {}, false],
+  ["a switch to another provider", { providerInstance: "claude" }, {}, true],
+  ["a usage-limit resume", {}, { usageLimitContinuationOfRunId: RunId.make("run:recent:1") }, true],
+  ["an older latest executed run", { newest: "queued" }, {}, true],
+  ["an older latest shown run", { newest: "hidden" }, {}, true],
+  ["maintenance-only messages", { messageText: "/compact" }, {}, true],
+] as const)("dispatch re-reads every run for %s", (_, edit, command, expected) => {
+  assert.equal(
+    Orchestrator.dispatchNeedsFullHistory(command, recentRunsProjection(edit), 2),
+    expected,
+  );
+});
 
 it.effect("keeps the store's read failure as the cause when a command projection fails", () =>
   Effect.gen(function* () {

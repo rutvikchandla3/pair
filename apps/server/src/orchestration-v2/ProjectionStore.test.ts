@@ -1321,6 +1321,87 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
   );
 });
 
+const recentRunReadsKeepTheNewestRunsAndAnchors = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const start = yield* DateTime.now;
+  const threadId = yield* addRolledBackRecoveryCandidate("recent-runs");
+  const template = (yield* store.getThreadProjection(threadId)).runs[0]!;
+  const at = (minutes: number) => DateTime.add(start, { minutes });
+  const run = (ordinal: number, status: "completed" | "queued", ended: number | null) => ({
+    ...template,
+    id: RunId.make(`run:recent-runs:${ordinal}`),
+    ordinal,
+    userMessageId: MessageId.make(`message:recent-runs:${ordinal}`),
+    rootNodeId: NodeId.make(`node:recent-runs:${ordinal}`),
+    status,
+    startedAt: status === "queued" ? null : at(ordinal * 10),
+    completedAt: ended === null ? null : at(ended),
+  });
+  const write = Effect.fnUntraced(function* (
+    payload: ReturnType<typeof run>,
+    messageRunId: RunId | null = payload.id,
+  ) {
+    yield* store.apply({
+      id: EventId.make(`event:recent-runs:run:${payload.ordinal}:${payload.status}`),
+      type: "run.updated",
+      threadId,
+      runId: payload.id,
+      nodeId: payload.rootNodeId,
+      driver,
+      occurredAt: start,
+      payload,
+    });
+    yield* store.apply({
+      id: EventId.make(`event:recent-runs:message:${payload.ordinal}`),
+      type: "message.updated",
+      threadId,
+      occurredAt: start,
+      payload: {
+        id: payload.userMessageId,
+        threadId,
+        runId: messageRunId,
+        nodeId: null,
+        role: "user",
+        text: `message ${payload.ordinal}`,
+        attachments: [],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: at(payload.ordinal),
+        updatedAt: at(payload.ordinal),
+      },
+    });
+  });
+  // Runs 3-8 ran one after another, run 2 waits in a held queue, and run 3's message is imported.
+  for (const ordinal of [4, 5, 6, 7, 8]) yield* write(run(ordinal, "completed", ordinal * 10 + 5));
+  yield* write(run(3, "completed", 35), null);
+  yield* write(run(2, "queued", null));
+
+  const read = (recentRuns: ProjectionStore.RecentRunsFilter) =>
+    store.getThreadRecords(threadId, ["runs", "messages"], { recentRuns }).pipe(
+      Effect.map((records) => ({
+        runs: records.runs.map((candidate) => candidate.ordinal),
+        messages: records.messages.map((message) => message.text).toSorted(),
+      })),
+    );
+  assert.deepEqual(yield* read({ limit: 3, runIds: [] }), {
+    runs: [2, 6, 7, 8],
+    messages: ["message 2", "message 3", "message 6", "message 7", "message 8"],
+  });
+  assert.deepEqual(
+    (yield* read({
+      limit: 3,
+      runIds: [RunId.make("run:recent-runs:4")],
+      messageId: MessageId.make("message:recent-runs:5"),
+    })).runs,
+    [2, 4, 5, 6, 7, 8],
+  );
+
+  // Run 5 ending after run 6 started could make it the latest, so nothing is left out.
+  yield* write(run(5, "completed", 62));
+  assert.deepEqual((yield* read({ limit: 3, runIds: [] })).runs, [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
@@ -3262,6 +3343,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "command reads skip finished leaf nodes of finished runs",
     () => commandReadsSkipSettledLeafNodes,
+  );
+  it.effect(
+    "recent-run reads keep the newest runs and anchors unless an older run ended later",
+    () => recentRunReadsKeepTheNewestRunsAndAnchors,
   );
   it.effect("limits turn-start history to the requested runs, including an empty selection", () =>
     Effect.gen(function* () {
