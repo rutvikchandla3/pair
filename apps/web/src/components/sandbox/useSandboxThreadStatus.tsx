@@ -151,9 +151,11 @@ function machineImageNote(
   return {
     image: sandboxImageLabel(sandbox),
     newSessions:
-      activeBuildNumber !== null && activeBuildNumber !== sandbox.imageBuild?.number
-        ? `New sessions use build ${activeBuildNumber}`
-        : null,
+      activeBuildNumber === null || activeBuildNumber === sandbox.imageBuild?.number
+        ? null
+        : sandbox.imageBuild === undefined
+          ? `New sessions start from team image build ${activeBuildNumber}`
+          : `New sessions use build ${activeBuildNumber}`,
   };
 }
 

@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as WorktreeSetupTracker from "./WorktreeSetupTracker.ts";
 
@@ -139,5 +140,66 @@ describe("WorktreeSetupTracker", () => {
       expect((yield* tracker.get(threadId))?.phase).toBe("running");
       yield* Fiber.interrupt(fiber);
     }),
+  );
+
+  it.effect(
+    "times each machine spell from its own start and ends a waiting machine with setup",
+    () =>
+      Effect.gen(function* () {
+        const tracker = yield* WorktreeSetupTracker.make;
+        const begin = (id: ThreadId) =>
+          tracker.begin({
+            threadId: id,
+            branch: null,
+            baseRef: null,
+            stages: ["fetch", "agent"],
+            machine: true,
+            fiber: null,
+          });
+        const machineOf = (id: ThreadId) => tracker.get(id).pipe(Effect.map((s) => s?.machine));
+
+        yield* begin(threadId);
+        yield* tracker.machineStatus(threadId, "waiting", { detail: "Team limit reached" });
+        const waitingSince = (yield* machineOf(threadId))?.startedAt;
+        yield* TestClock.adjust("1 minute");
+        yield* tracker.machineStatus(threadId, "waiting", { detail: "Starting soon" });
+        expect(yield* machineOf(threadId)).toMatchObject({
+          status: "waiting",
+          startedAt: waitingSince,
+          detail: "Starting soon",
+        });
+        yield* tracker.machineStatus(threadId, "running");
+        const booting = yield* machineOf(threadId);
+        expect(booting).toMatchObject({ status: "running", detail: null });
+        expect(booting?.startedAt).not.toBe(waitingSince);
+        yield* tracker.finish(threadId, "failed", "boom");
+        expect(yield* machineOf(threadId)).toMatchObject({
+          status: "failed",
+          startedAt: booting?.startedAt,
+          note: WorktreeSetupTracker.MACHINE_FAILED_NOTE,
+        });
+
+        const cancelled = ThreadId.make("thread-cancelled");
+        yield* begin(cancelled);
+        yield* tracker.machineStatus(cancelled, "waiting");
+        yield* tracker.finish(cancelled, "cancelled");
+        const stopped = yield* machineOf(cancelled);
+        expect(stopped?.status).toBe("skipped");
+        expect(stopped?.startedAt).not.toBeNull();
+
+        const hidden = { status: "skipped", startedAt: null, endedAt: null, note: null };
+        const alreadyUp = ThreadId.make("thread-ready");
+        yield* begin(alreadyUp);
+        expect(yield* machineOf(alreadyUp)).toMatchObject(hidden);
+        yield* tracker.machineStatus(alreadyUp, "skipped");
+        yield* tracker.finish(alreadyUp, "done");
+        expect(yield* machineOf(alreadyUp)).toMatchObject({ status: "skipped", startedAt: null });
+
+        // A failure before the machine is checked doesn't blame the machine.
+        const failedEarly = ThreadId.make("thread-failed-early");
+        yield* begin(failedEarly);
+        yield* tracker.finish(failedEarly, "failed", "workspace root missing");
+        expect(yield* machineOf(failedEarly)).toMatchObject(hidden);
+      }),
   );
 });

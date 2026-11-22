@@ -105,6 +105,8 @@ export interface TimelineRowActivityState {
   isRevertingCheckpoint: boolean;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
+  /** The running setup the "working" row names while it prepares. */
+  preparingWorktreeSetup: WorktreeSetupSnapshot | null;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
   /** A bot's home thread: its working face leads the working row. */

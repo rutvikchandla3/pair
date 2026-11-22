@@ -4,6 +4,10 @@ import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { type ToolActivityIcon } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import {
+  worktreeSetupHeaderLabel,
+  worktreeSetupMachineWaiting,
+} from "@t3tools/client-runtime/worktree-setup";
 import { observeResize } from "~/lib/observeResize";
 import { tickTextContent } from "~/lib/tickTextContent";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
@@ -276,12 +280,23 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup, workingFace } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    preparingWorktreeSetup,
+    backgroundWorktreeSetup,
+    workingFace,
+  } = use(TimelineRowActivityCtx);
   const compacting = row.compacting === true || isCompacting;
-  const shimmer = isPreparingWorktree || compacting;
+  const waitingForMachine =
+    preparingWorktreeSetup !== null && worktreeSetupMachineWaiting(preparingWorktreeSetup);
+  const shimmer = (isPreparingWorktree && !waitingForMachine) || compacting;
   const label = isPreparingWorktree ? (
-    "Setting up worktree…"
+    preparingWorktreeSetup === null ? (
+      "Setting up worktree…"
+    ) : (
+      worktreeSetupHeaderLabel(preparingWorktreeSetup)
+    )
   ) : compacting ? (
     <CompactingLabel createdAt={row.createdAt} />
   ) : row.createdAt ? (

@@ -1,5 +1,7 @@
 import type {
   ThreadId,
+  WorktreeSetupMachine,
+  WorktreeSetupMachineStatus,
   WorktreeSetupSnapshot,
   WorktreeSetupStage,
   WorktreeSetupStageId,
@@ -29,8 +31,16 @@ export class WorktreeSetupTracker extends Context.Service<
       readonly branch: string | null;
       readonly baseRef: string | null;
       readonly stages: ReadonlyArray<WorktreeSetupStageId>;
+      /** A cloud launch, which starts by getting its machine. */
+      readonly machine?: boolean;
       readonly fiber: Fiber.Fiber<unknown, unknown> | null;
     }) => Effect.Effect<void>;
+    /** Each waiting or booting spell times from its own start; `skipped` means it was already up. */
+    readonly machineStatus: (
+      threadId: ThreadId,
+      status: WorktreeSetupMachineStatus,
+      fields?: { readonly detail?: string | null; readonly note?: string | null },
+    ) => Effect.Effect<void>;
     readonly update: (
       threadId: ThreadId,
       mutate: (snapshot: WorktreeSetupSnapshot) => WorktreeSetupSnapshot,
@@ -74,6 +84,8 @@ const clampDetail = (detail: string | null): string | null =>
   detail === null ? null : clampText(detail, WORKTREE_SETUP_DETAIL_MAX_LENGTH);
 const FINISHED_RETENTION = "30 seconds";
 
+export const MACHINE_FAILED_NOTE = "The machine didn't start.";
+
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 interface TrackedSetup {
@@ -91,6 +103,18 @@ function emptyStage(id: WorktreeSetupStageId): WorktreeSetupStage {
     detail: null,
     tail: [],
   };
+}
+
+/** A machine still waiting or booting when setup ends stops with it, so no row is left ticking. */
+function finishedMachine(
+  machine: WorktreeSetupMachine,
+  phase: "done" | "failed" | "cancelled",
+  endedAt: string,
+): WorktreeSetupMachine {
+  if (machine.status !== "waiting" && machine.status !== "running") return machine;
+  return phase === "failed"
+    ? { ...machine, status: "failed", endedAt, detail: null, note: MACHINE_FAILED_NOTE }
+    : { ...machine, status: phase === "done" ? "done" : "skipped", endedAt, note: null };
 }
 
 export const make = Effect.gen(function* () {
@@ -157,6 +181,18 @@ export const make = Effect.gen(function* () {
         worktreePath: null,
         setupScript: null,
         stages: ordered.map(emptyStage),
+        // Hidden until the machine is seen waiting or booting, so a warm one never flashes a row.
+        ...(input.machine === true
+          ? {
+              machine: {
+                status: "skipped",
+                startedAt: null,
+                endedAt: null,
+                detail: null,
+                note: null,
+              } satisfies WorktreeSetupMachine,
+            }
+          : {}),
         error: null,
         sequence: (lastSequenceByThread.get(input.threadId) ?? -1) + 1,
       };
@@ -216,6 +252,36 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const machineStatus: WorktreeSetupTracker["Service"]["machineStatus"] = (
+    threadId,
+    status,
+    fields,
+  ) =>
+    nowIso.pipe(
+      Effect.flatMap((at) =>
+        update(threadId, (snapshot) => {
+          const machine = snapshot.machine;
+          if (machine === undefined) return snapshot;
+          const active = status === "waiting" || status === "running";
+          return {
+            ...snapshot,
+            machine: {
+              status,
+              startedAt:
+                status === "skipped"
+                  ? null
+                  : active && machine.status !== status
+                    ? at
+                    : machine.startedAt,
+              endedAt: active || status === "skipped" ? null : at,
+              detail: clampDetail(fields?.detail ?? null),
+              note: clampDetail(fields?.note ?? null),
+            },
+          };
+        }),
+      ),
+    );
+
   const appendTail: WorktreeSetupTracker["Service"]["appendTail"] = (threadId, stageId, line) =>
     update(threadId, (snapshot) => ({
       ...snapshot,
@@ -254,6 +320,9 @@ export const make = Effect.gen(function* () {
               }
             : entry,
         ),
+        ...(tracked.snapshot.machine === undefined
+          ? {}
+          : { machine: finishedMachine(tracked.snapshot.machine, phase, endedAt) }),
       },
     }));
     if (!snapshot) return null;
@@ -325,6 +394,7 @@ export const make = Effect.gen(function* () {
     update,
     stage,
     stageStatus,
+    machineStatus,
     appendTail,
     finish,
     markUncancellable,

@@ -1125,6 +1125,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     backgroundWorktreeSetup,
     awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
+    preparingWorktreeSetup:
+      isPreparingWorktree && worktreeSetup?.phase === "running" ? worktreeSetup : null,
     latestRunId: latestRun?.runId ?? null,
     workingFace,
   };
