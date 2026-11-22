@@ -61,6 +61,7 @@ import * as Stream from "effect/Stream";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type { BotRepositoryError } from "../persistence/Errors.ts";
+import { BotPictures } from "./BotPictures.ts";
 import { BotStore } from "./BotStore.ts";
 import { BotThreads } from "./botThreads.ts";
 
@@ -277,6 +278,7 @@ export class BotService extends Context.Service<
 
 const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOnly: boolean }) {
   const store = yield* BotStore;
+  const pictures = yield* BotPictures;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const random = yield* SecureRandom.SecureRandom;
   const revision = yield* Ref.make(0);
@@ -498,6 +500,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             color: input.color ?? face.color,
             shape: input.shape ?? face.shape,
             voice: input.voice ?? "crisp",
+            picture: null,
             charter: input.charter,
             instructions: input.starter === "default" ? BOT_DEFAULT_INSTRUCTIONS : "",
             limits: input.starter === "default" ? [...BOT_DEFAULT_LIMITS] : [],
@@ -537,12 +540,19 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           const instructionsChanged =
             input.instructions !== undefined && input.instructions !== bot.instructions;
           const limitsChanged = input.limits !== undefined && !sameLimits(input.limits, bot.limits);
+          const picture =
+            input.picture === undefined
+              ? bot.picture
+              : input.picture === null
+                ? null
+                : yield* pictures.adopt(input.picture.attachmentId);
           const updated: Bot = {
             ...bot,
             ...(input.name === undefined ? {} : { name: input.name }),
             ...(input.color === undefined ? {} : { color: input.color }),
             ...(input.shape === undefined ? {} : { shape: input.shape }),
             ...(input.voice === undefined ? {} : { voice: input.voice }),
+            picture,
             ...(input.charter === undefined ? {} : { charter: input.charter }),
             ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
             ...(input.limits === undefined ? {} : { limits: input.limits }),
@@ -550,6 +560,9 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             updatedAt: DateTime.formatIso(yield* DateTime.now),
           };
           yield* db(store.upsertBot(updated));
+          if (bot.picture !== null && bot.picture.attachmentId !== picture?.attachmentId) {
+            yield* pictures.discard(bot.picture);
+          }
           yield* touch(bot.ownerId);
           if (instructionsChanged || limitsChanged) {
             yield* wake({
@@ -613,6 +626,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             BotThreads.clearSession(session.threadId);
           }
           yield* db(store.deleteBot(bot.id));
+          if (bot.picture !== null) yield* pictures.discard(bot.picture);
           yield* touch(bot.ownerId);
           return {};
         }),

@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   BOT_DEFAULT_INSTRUCTIONS,
@@ -11,14 +12,18 @@ import {
   MemberId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
+import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as BotPictures from "./BotPictures.ts";
 import * as BotService from "./BotService.ts";
 import * as BotStore from "./BotStore.ts";
 import { BotThreads } from "./botThreads.ts";
@@ -41,6 +46,9 @@ const layerTest = BotService.layer({ cloudOnly: false }).pipe(
   Layer.provide(BotStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
   Layer.provide(Layer.succeed(ThreadManagementService.ThreadManagementService, threadStub)),
   Layer.provide(SecureRandom.layerWebCrypto),
+  Layer.provide(BotPictures.layer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "bot-service-" })),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 const layerFor = (cloudOnly: boolean) =>
@@ -48,6 +56,7 @@ const layerFor = (cloudOnly: boolean) =>
     Layer.provide(BotStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
     Layer.provide(Layer.succeed(ThreadManagementService.ThreadManagementService, threadStub)),
     Layer.provide(SecureRandom.layerWebCrypto),
+    Layer.provide(Layer.mock(BotPictures.BotPictures)({})),
   );
 
 const createBot = (service: BotService.BotService["Service"]) =>
@@ -384,4 +393,57 @@ it.effect("refuses to create a bot on a cloud-only server", () =>
     const failure = yield* createBot(bots).pipe(Effect.flip);
     assert.strictEqual(failure.reason, "cloud-only");
   }).pipe(Effect.provide(layerFor(true))),
+);
+
+it.effect(
+  "adopts an uploaded picture, deletes the one it replaces, and goes back to the face",
+  () =>
+    Effect.gen(function* () {
+      const bots = yield* BotService.BotService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const random = yield* SecureRandom.SecureRandom;
+      const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+      yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      const pendingId = Effect.map(random.uuidV4(), (uuid) => `pending-${uuid}`);
+      const upload = Effect.fnUntraced(function* (extension: string) {
+        const id = yield* pendingId;
+        yield* fileSystem.writeFileString(path.join(attachmentsDir, `${id}${extension}`), "image");
+        return id;
+      });
+      const stored = (attachmentId: string) =>
+        Effect.map(fileSystem.readDirectory(attachmentsDir), (entries) =>
+          entries.some((entry) => entry.startsWith(`${attachmentId}.`)),
+        );
+      const bot = yield* createBot(bots);
+      assert.isNull(bot.picture);
+
+      const gifUpload = yield* upload(".gif");
+      const withGif = yield* bots.update(caller, {
+        botId: bot.id,
+        picture: { attachmentId: gifUpload },
+      });
+      assert.strictEqual(withGif.picture?.mimeType, "image/gif");
+      assert.isFalse(yield* stored(gifUpload));
+      assert.isTrue(yield* stored(withGif.picture!.attachmentId));
+
+      const withPng = yield* bots.update(caller, {
+        botId: bot.id,
+        picture: { attachmentId: yield* upload(".png") },
+      });
+      assert.strictEqual(withPng.picture?.mimeType, "image/png");
+      assert.isFalse(yield* stored(withGif.picture!.attachmentId));
+
+      const renamed = yield* bots.update(caller, { botId: bot.id, name: "Nova" });
+      assert.deepStrictEqual(renamed.picture, withPng.picture);
+
+      const face = yield* bots.update(caller, { botId: bot.id, picture: null });
+      assert.isNull(face.picture);
+      assert.isFalse(yield* stored(withPng.picture!.attachmentId));
+
+      const missing = yield* bots
+        .update(caller, { botId: bot.id, picture: { attachmentId: yield* pendingId } })
+        .pipe(Effect.flip);
+      assert.strictEqual(missing.reason, "invalid-request");
+    }).pipe(Effect.provide(Layer.merge(layerTest, SecureRandom.layerWebCrypto))),
 );

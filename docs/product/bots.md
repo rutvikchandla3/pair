@@ -37,12 +37,12 @@ It is single-user. It is not a Space, a provider, or a voice assistant.
 
 ### Sidebar
 
-**Bots** sits above Threads. Each bot row: face, name, and on the right a count of the bot's open
-questions for you, else a working glyph while the bot or any of its sessions is working, else
-nothing. Paused bots say
-"Paused".
+**Bots** sits above Threads. Each bot row has two lines: the face, the name, and under it the
+status line (its role when nothing is running), with a count of the bot's open questions for you
+on the right. The face shows state (see Character), so there is no separate working glyph.
 
-Under the bot row, its sessions are nested, one row each with a state glyph. The needs-you glyph
+Only the bot you're in (its page, or one of its sessions) lists its sessions under its row, one
+row each with a state glyph. The needs-you glyph
 appears only on a session the bot has asked you about (`bot_ask`); a session waiting on the bot
 shows as working. Once a job is done or stopped, its sessions show the job's state, even when
 their threads are archived. Sessions that need you, working or failed come first, then sessions
@@ -122,10 +122,15 @@ here. What should I take on?"), its role, then T3's composer. Your first message
 Capy's Captains and Grok Bot give their agents character with a face, a name and a role line,
 not a personality form. Bots do the same, and keep tone small.
 
-- **Face**: a static, non-human SVG, one of four shapes (each with its own eyes) in one of five
-  colours. Pair assigns the least-used colour, then the least-used shape, so a few bots never look
-  alike; Edit bot changes it. No mouth, no expressions, no animation, and it never shows state.
-  Shape and colour carry identity at 16px.
+- **Face**: a non-human SVG, one of four shapes (each with its own eyes) in one of five colours.
+  Pair assigns the least-used colour, then the least-used shape, so a few bots never look alike;
+  Edit bot changes it. Shape and colour carry identity at 16px. No mouth and no expressions; the
+  pose is the bot's state: it loops (breathe, glance, blink, hop) while the bot or any session
+  works, looks up when it has a question for you, and closes its eyes when paused. Every other
+  face is still, so a list of idle bots never repaints, and reduced motion keeps all of them still.
+- **Picture**: Edit bot can swap the face for any GIF, PNG, JPEG or WebP up to 10 MB, and switch
+  back. In lists an animated picture holds its first frame and plays only while the bot works or
+  on hover; the bot's own header and empty chat play it.
 - **Role**: one line under its name (the charter). The bot reads it as its job, so it describes
   the bot, never "I" or "my".
 - **Voice**: **Crisp** (default: results first, fewest words) or **Candid** (the same, plus its
@@ -162,7 +167,8 @@ Threads.
 
 ### Mobile
 
-The Bots tab lists bots with their faces and sessions nested, with the same "N earlier" and
+The Bots tab lists bots with their faces (posed and animated as on desktop, pictures included)
+and sessions nested, with the same "N earlier" and
 "Archived" disclosure; long-press a finished job's row for **Archive job** or **Unarchive job**. A
 bot's second line is its status, or its role when nothing is running. Tapping a bot opens its chat in the normal
 mobile thread screen and composer, with the status line under the name in the header (tapping it

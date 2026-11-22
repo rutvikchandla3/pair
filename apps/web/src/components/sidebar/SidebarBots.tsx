@@ -24,8 +24,9 @@ import { BotAvatar } from "../bots/BotAvatar";
 import { BotStateGlyph } from "../bots/BotStateGlyph";
 import { openBotDialog } from "../bots/botDialogStore";
 import {
+  botFacePose,
   botSidebarSessions,
-  botWorking,
+  botStatusLine,
   openAsks,
   type BotSidebarSession,
   type ShellLookup,
@@ -33,6 +34,8 @@ import {
 
 const rowClass =
   "group/bot-row flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground hover:bg-sidebar-row-hover";
+const botRowClass =
+  "bot-face-hover flex min-h-11 min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-sidebar-foreground hover:bg-sidebar-row-hover";
 const sessionRowClass =
   "group/bot-session-row flex h-7 min-w-0 items-center gap-1.5 rounded-md pe-2 ps-7.5 text-sm text-sidebar-foreground hover:bg-sidebar-row-hover";
 
@@ -180,7 +183,10 @@ function BotGroup(props: {
   const [expanded, setExpanded] = useState(false);
   const [revealedThreadId, setRevealedThreadId] = useState<string | null>(null);
   const askCount = openAsks(props.snapshot, props.bot.id).length;
-  const working = botWorking(props.snapshot, props.bot, props.shells, props.now);
+  const pose = botFacePose(props.snapshot, props.bot, props.shells, props.now);
+  const status = botStatusLine(props.snapshot, props.bot, props.shells, props.now);
+  const charter = props.bot.charter.trim();
+  const statusLabel = status.label === "Nothing running" && charter !== "" ? charter : status.label;
   const { rows, earlier, archived } = botSidebarSessions(
     props.snapshot,
     props.bot.id,
@@ -196,16 +202,32 @@ function BotGroup(props: {
     setExpanded(true);
   }
   const selected = props.selectedBotId === props.bot.id;
+  // Rows are bots; only the bot you're in lists its sessions under it.
+  const open =
+    selected ||
+    [...rows, ...earlier, ...archived].some(
+      (row) => row.session.threadId === props.selectedThreadId,
+    );
   return (
     <>
       <Link
         to="/bots/$environmentId/$botId"
         params={{ environmentId: props.environmentId, botId: props.bot.id }}
         aria-current={selected ? "page" : undefined}
-        className={cn(rowClass, selected && "bg-sidebar-row-active")}
+        className={cn(botRowClass, selected && "bg-sidebar-row-active")}
       >
-        <BotAvatar bot={props.bot} size="sm" />
-        <span className="min-w-0 flex-1 truncate">{props.bot.name}</span>
+        <BotAvatar bot={props.bot} size="row" pose={pose} environmentId={props.environmentId} />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate font-medium text-sm">{props.bot.name}</span>
+          <span
+            className={cn(
+              "truncate text-xs",
+              status.kind === "needs" ? "text-input-foreground" : "text-sidebar-muted-foreground",
+            )}
+          >
+            {statusLabel}
+          </span>
+        </span>
         {askCount > 0 ? (
           <span
             aria-label={`${askCount} need you`}
@@ -213,21 +235,19 @@ function BotGroup(props: {
           >
             {askCount}
           </span>
-        ) : props.bot.paused ? (
-          <span className="shrink-0 text-sidebar-muted-foreground text-xs">Paused</span>
-        ) : working ? (
-          <BotStateGlyph glyph="working" className="size-3.5" />
         ) : null}
       </Link>
-      {rows.map((row) => (
-        <SessionRow
-          key={row.session.threadId}
-          environmentId={props.environmentId}
-          row={row}
-          selectedThreadId={props.selectedThreadId}
-        />
-      ))}
-      {earlier.length === 0 && archived.length === 0 ? null : (
+      {!open
+        ? null
+        : rows.map((row) => (
+            <SessionRow
+              key={row.session.threadId}
+              environmentId={props.environmentId}
+              row={row}
+              selectedThreadId={props.selectedThreadId}
+            />
+          ))}
+      {!open || (earlier.length === 0 && archived.length === 0) ? null : (
         <>
           {expanded ? (
             <>

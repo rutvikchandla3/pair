@@ -58,6 +58,7 @@ const bot: Bot = {
   color: "#6366f1",
   shape: "round",
   voice: "crisp",
+  picture: null,
   charter: "",
   instructions: "",
   limits: [],

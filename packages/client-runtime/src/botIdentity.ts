@@ -83,3 +83,29 @@ export const botGreeting = (name: string, voice: BotVoice): string =>
   voice === "candid"
     ? `${name} here. Send me work; I'll push back.`
     : `${name} here. What should I take on?`;
+
+/**
+ * What a face shows. Working loops (breathe, glance, blink, hop); the rest are still poses, so an
+ * idle list costs nothing to paint. A picture plays its animation only while working.
+ */
+export type BotFacePose = "idle" | "working" | "needs-you" | "paused";
+
+/** How a still pose moves the eyes, in face units: up to look at you, squashed shut to sleep. */
+export const BOT_POSE_EYES: Readonly<
+  Record<"needs-you" | "paused", { readonly dy: number; readonly scaleY: number }>
+> = {
+  "needs-you": { dy: -1.6, scaleY: 1 },
+  paused: { dy: 0.6, scaleY: 0.18 },
+};
+
+/** One loop of the working animation. Each face starts at its own offset so a list never bobs in step. */
+export const BOT_WORKING_LOOP_MS = 6000;
+
+/** A stable start offset into the loop for a bot, so its rows don't move in lockstep. */
+export const botLoopOffsetMs = (botId: string): number => {
+  let hash = 0;
+  for (let index = 0; index < botId.length; index += 1) {
+    hash = (hash * 31 + botId.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash) % BOT_WORKING_LOOP_MS;
+};

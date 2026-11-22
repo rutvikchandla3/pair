@@ -26,6 +26,7 @@ import {
   type BotsEnvironmentEntry,
   type BotSessionBucket,
   type BotSessionRow,
+  botFacePose,
   botsScreenModel,
   botStatusLine,
   botSessionRows,
@@ -306,7 +307,12 @@ function BotSection(props: {
         onPress={props.onOpenBot}
         className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
       >
-        <BotAvatar bot={bot} size={36} />
+        <BotAvatar
+          bot={bot}
+          size={36}
+          environmentId={environmentId}
+          pose={botFacePose({ bot, asks, sessionStates: states })}
+        />
         <View className="min-w-0 flex-1 gap-0.5">
           <Text numberOfLines={1} className="text-base font-t3-bold text-foreground">
             {bot.name}

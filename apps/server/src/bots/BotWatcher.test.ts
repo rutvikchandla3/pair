@@ -24,6 +24,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as BotPictures from "./BotPictures.ts";
 import * as BotService from "./BotService.ts";
 import * as BotStore from "./BotStore.ts";
 import {
@@ -259,6 +260,7 @@ it.effect(
       Layer.provide(BotStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
       Layer.provide(Layer.mock(ThreadManagementService.ThreadManagementService)({})),
       Layer.provide(SecureRandom.layerWebCrypto),
+      Layer.provide(Layer.mock(BotPictures.BotPictures)({})),
     );
     const layer = botWatcherLayer.pipe(
       Layer.provideMerge(bots),

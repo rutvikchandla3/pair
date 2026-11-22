@@ -19,7 +19,7 @@ import {
   botSessionGlyph,
   botSidebarSessions,
   botStatusLine,
-  botWorking,
+  botFacePose,
   cloudSessionsStillRunning,
   sessionState,
   threadChipState,
@@ -112,6 +112,7 @@ function bot(overrides: Partial<Bot> = {}): Bot {
     color: "#6366f1",
     shape: "round",
     voice: "crisp",
+    picture: null,
     charter: "",
     instructions: "",
     limits: [],
@@ -367,7 +368,7 @@ describe("botSidebarSessions", () => {
       ["stopped", "failed", null],
       ["done", "done", finishedAt],
     ]);
-    expect(botWorking(data, bot(), new Map(), NOW)).toBe(false);
+    expect(botFacePose(data, bot(), new Map(), NOW)).toBe("idle");
     expect(botStatusLine(data, bot(), new Map(), NOW).label).toBe("Nothing running");
   });
 
@@ -457,22 +458,33 @@ describe("cloud sessions", () => {
   });
 });
 
-describe("botWorking", () => {
-  it("counts the home thread or any session", () => {
+describe("botFacePose", () => {
+  it("works while the home thread or any session runs, and is idle otherwise", () => {
     const home = ThreadId.make("home");
     const homeBot = bot({ homeThreadId: home });
     expect(
-      botWorking(
+      botFacePose(
         snapshot(),
         homeBot,
         new Map([[home, shell({ runtime: { status: "running" } as never })]]),
         NOW,
       ),
-    ).toBe(true);
+    ).toBe("working");
     const sessionBot = bot();
     const shells = new Map([[THREAD, shell({ runtime: { status: "running" } as never })]]);
-    expect(botWorking(snapshot({ sessions: [session()] }), sessionBot, shells, NOW)).toBe(true);
-    expect(botWorking(snapshot(), sessionBot, undefined, NOW)).toBe(false);
+    expect(botFacePose(snapshot({ sessions: [session()] }), sessionBot, shells, NOW)).toBe(
+      "working",
+    );
+    expect(botFacePose(snapshot(), sessionBot, undefined, NOW)).toBe("idle");
+  });
+
+  it("looks up for an open question before sleeping when paused", () => {
+    const working = snapshot({ sessions: [session()], asks: [ask()] });
+    const shells = new Map([[THREAD, shell({ runtime: { status: "running" } as never })]]);
+    expect(botFacePose(working, bot({ paused: true }), shells, NOW)).toBe("needs-you");
+    expect(
+      botFacePose(snapshot({ sessions: [session()] }), bot({ paused: true }), shells, NOW),
+    ).toBe("paused");
   });
 });
 

@@ -29,6 +29,7 @@ import { TestClock } from "effect/testing";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
+import * as BotPictures from "../bots/BotPictures.ts";
 import * as BotService from "../bots/BotService.ts";
 import * as BotStore from "../bots/BotStore.ts";
 import { BotEscalations, BotThreads } from "../bots/botThreads.ts";
@@ -95,6 +96,7 @@ const layerBotService = BotService.layer({ cloudOnly: false }).pipe(
   Layer.provide(BotStore.layer.pipe(Layer.provide(layerDatabase))),
   Layer.provide(Layer.succeed(ThreadManagementService.ThreadManagementService, threadStub)),
   Layer.provide(SecureRandom.layerWebCrypto),
+  Layer.provide(Layer.mock(BotPictures.BotPictures)({})),
 );
 const layer = Layer.provideMerge(
   InboxService.layer,

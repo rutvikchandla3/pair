@@ -165,6 +165,7 @@ import * as SpaceContext from "./space/SpaceContext.ts";
 import * as SpaceIntake from "./space/SpaceIntake.ts";
 import * as SpaceService from "./space/SpaceService.ts";
 import * as InboxService from "./inbox/InboxService.ts";
+import * as BotPictures from "./bots/BotPictures.ts";
 import * as BotService from "./bots/BotService.ts";
 import * as BotStore from "./bots/BotStore.ts";
 import * as BotHome from "./bots/BotHome.ts";
@@ -797,7 +798,10 @@ const layerThreadAccess = ThreadAccess.layer.pipe(Layer.provide(ProjectionStoreV
 const layerBotService = Layer.unwrap(
   Effect.gen(function* () {
     const { cloudOnly } = yield* ServerConfig.ServerConfig;
-    return BotService.layer({ cloudOnly }).pipe(Layer.provide(BotStore.layer));
+    return BotService.layer({ cloudOnly }).pipe(
+      Layer.provide(BotStore.layer),
+      Layer.provide(BotPictures.layer),
+    );
   }),
 );
 

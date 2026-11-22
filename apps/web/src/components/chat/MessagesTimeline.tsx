@@ -320,6 +320,8 @@ interface MessagesTimelineProps {
   emptyPlaceholder?: ReactNode;
   /** A bot's home thread: wakes label their folds and quiet ones merge. */
   botName?: string | undefined;
+  /** A bot's home thread: its working face leads the working row. */
+  workingFace?: ReactNode;
   /** Scroll to this bot turn's last message and highlight it; a new nonce scrolls again. */
   botFocus?: BotChatOptions["focus"];
   topFadeEnabled?: boolean;
@@ -420,6 +422,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   emptyPlaceholderInset,
   emptyPlaceholder,
   botName,
+  workingFace = null,
   botFocus = null,
   topFadeEnabled = false,
   historyControls,
@@ -1123,6 +1126,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
     latestRunId: latestRun?.runId ?? null,
+    workingFace,
   };
   // Mounted in both the empty and filled timeline so a thread's first turn
   // starts from a baseline instead of a fresh, silent region.
