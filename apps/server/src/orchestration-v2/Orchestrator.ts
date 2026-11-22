@@ -1306,7 +1306,7 @@ const DISPATCH_RECENT_RUNS = 50;
 export function dispatchNeedsFullHistory(
   command: Pick<
     Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
-    "modelSelection" | "usageLimitContinuationOfRunId" | "sourcePlanRef"
+    "modelSelection" | "usageLimitContinuationOfRunId" | "sourcePlanRef" | "notification"
   >,
   projection: OrchestrationV2ThreadProjection,
   recentRuns: number,
@@ -1329,7 +1329,8 @@ export function dispatchNeedsFullHistory(
       activeProviderThread.providerInstanceId !==
         (command.modelSelection ?? projection.thread.modelSelection).instanceId) ||
     !newest(latestExecutedRun(projection.runs)) ||
-    !newest(latestShownRun(projection)) ||
+    // A wake's notification item drops `modelSwitch`, so its latest shown run is never read.
+    (command.notification === undefined && !newest(latestShownRun(projection))) ||
     !newest(latestStartedRun(projection.runs)) ||
     !projection.messages.some(
       (message) => message.role === "user" && !isNativeMaintenanceCommand(message),

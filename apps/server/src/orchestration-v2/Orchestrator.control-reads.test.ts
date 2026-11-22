@@ -720,6 +720,12 @@ it.each([
   ["a usage-limit resume", {}, { usageLimitContinuationOfRunId: RunId.make("run:recent:1") }, true],
   ["an older latest executed run", { newest: "queued" }, {}, true],
   ["an older latest shown run", { newest: "hidden" }, {}, true],
+  [
+    "a wake, not for an older latest shown run",
+    { newest: "hidden" },
+    { notification: { source: { kind: "system" }, outcome: "updated", summary: "Woke" } },
+    false,
+  ],
   ["maintenance-only messages", { messageText: "/compact" }, {}, true],
 ] as const)("dispatch re-reads every run for %s", (_, edit, command, expected) => {
   assert.equal(
