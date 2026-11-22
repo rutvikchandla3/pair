@@ -799,6 +799,16 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE thread_id = ${busy}`;
       yield* insertBusy(10_000);
       assert.deepEqual(yield* threadIds("kestrel ci"), []);
+      // A thread searching its own chat reads past other threads' newer hits.
+      const own = yield* search.searchThreadMessages({
+        threadId: old,
+        query: "kestrel ci",
+        limit: 5,
+      });
+      assert.deepEqual(
+        own.map((hit) => hit.messageId),
+        ["kestrel-old"],
+      );
     }),
   );
 });

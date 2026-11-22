@@ -296,7 +296,10 @@ const ThreadMessageRequest = Schema.Struct({
   substrings: TokenList,
 });
 
-/** `messageHitsQuery` for one thread, which is always the caller's own. */
+/**
+ * `messageHitsQuery` for one thread, which is always the caller's own. The thread filter bounds
+ * the read, so it skips the global newest-hits windows that would hide its older messages.
+ */
 const threadMessageHitsQuery = (
   sql: SqlClient.SqlClient,
   { threadId, match, substrings }: typeof ThreadMessageRequest.Encoded,
@@ -314,9 +317,6 @@ const threadMessageHitsQuery = (
           FROM orchestration_v2_projection_messages AS messages
           WHERE messages.thread_id = ${threadId}
             AND ${indexedMessageCondition(sql)}
-            AND messages.rowid > (
-              SELECT coalesce(max(rowid), 0) FROM orchestration_v2_projection_messages
-            ) - ${MESSAGE_SCAN_LIMIT}
         `
         : sql`
           SELECT
@@ -331,12 +331,6 @@ const threadMessageHitsQuery = (
             ON messages.rowid = orchestration_v2_message_search.rowid
           WHERE orchestration_v2_message_search MATCH ${match}
             AND messages.thread_id = ${threadId}
-            AND orchestration_v2_message_search.rowid >= coalesce((
-              SELECT orchestration_v2_message_search.rowid FROM orchestration_v2_message_search
-              WHERE orchestration_v2_message_search MATCH ${match}
-              ORDER BY orchestration_v2_message_search.rowid DESC
-              LIMIT 1 OFFSET ${MESSAGE_CANDIDATE_LIMIT - 1}
-            ), 0)
             AND ${nonPlaceholderMessageCondition(sql)}
         `
     }
