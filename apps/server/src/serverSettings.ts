@@ -174,15 +174,20 @@ const memberDriverView = (driver: SandboxDriverInstance): SandboxDriverInstance 
     ...(driver.size === undefined ? {} : { size: driver.size }),
     ...(driver.runningCap === undefined ? {} : { runningCap: driver.runningCap }),
   };
-  // The decoded boat type requires `apiKey`; a member gets it empty. `types` sizes the picker.
-  return driver.kind === "boat"
-    ? {
+  // The decoded hosted types require `apiKey`; a member gets it empty. `types` sizes the picker.
+  switch (driver.kind) {
+    case "boat":
+      return {
         ...shown,
         kind: driver.kind,
         apiKey: "",
         ...(driver.types === undefined ? {} : { types: driver.types }),
-      }
-    : { ...shown, kind: driver.kind };
+      };
+    case "agent37":
+      return { ...shown, kind: driver.kind, apiKey: "" };
+    default:
+      return { ...shown, kind: driver.kind };
+  }
 };
 
 /** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */

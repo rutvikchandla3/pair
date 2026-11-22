@@ -1,4 +1,5 @@
 import {
+  Agent37SandboxDriver,
   AntigravitySettings,
   BoatSandboxDriver,
   ClaudeSettings,
@@ -49,6 +50,7 @@ const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const boatDriverSecretFields = secretSettingsFields(BoatSandboxDriver);
+const agent37DriverSecretFields = secretSettingsFields(Agent37SandboxDriver);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -259,17 +261,23 @@ function mapSecretFieldGroups(
       ? undefined
       : {
           ...settings.sandbox,
-          drivers: settings.sandbox.drivers.map((driver) =>
-            driver.kind === "boat"
-              ? (mapFields(
+          drivers: settings.sandbox.drivers.map((driver) => {
+            const secretName = (field: string, serverHost: string | null) =>
+              `sandbox-driver-${encode(driver.id)}-${encode(field)}` +
+              (serverHost === null ? "" : `-${encode(serverHost)}`);
+            switch (driver.kind) {
+              case "boat":
+                return mapFields(driver, boatDriverSecretFields, secretName) as BoatSandboxDriver;
+              case "agent37":
+                return mapFields(
                   driver,
-                  boatDriverSecretFields,
-                  (field, serverHost) =>
-                    `sandbox-driver-${encode(driver.id)}-${encode(field)}` +
-                    (serverHost === null ? "" : `-${encode(serverHost)}`),
-                ) as BoatSandboxDriver)
-              : driver,
-          ),
+                  agent37DriverSecretFields,
+                  secretName,
+                ) as Agent37SandboxDriver;
+              default:
+                return driver;
+            }
+          }),
           ...(settings.sandbox.env
             ? {
                 env: mapEnvironment(

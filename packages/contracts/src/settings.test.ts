@@ -536,7 +536,7 @@ describe("ServerSettings sandbox", () => {
     }
   });
 
-  it("round-trips a boat driver, keeps an http runner URL, and decodes a member's view", () => {
+  it("round-trips hosted drivers, keeps an http runner URL, and decodes a member's view", () => {
     const boat = {
       kind: "boat",
       id: "boat",
@@ -546,18 +546,42 @@ describe("ServerSettings sandbox", () => {
       organization: "team_123",
       types: { default: "large" },
     };
-    const document = { sandbox: { drivers: [driver, boat] } };
+    const agent37 = {
+      kind: "agent37",
+      id: "agent37",
+      label: "Agent37",
+      apiKey: "sk_live_key",
+      runnerUrl: "https://pair.example.com",
+      region: "eu",
+      instanceType: "vm",
+      baseImage: "ghcr.io/acme/t3-sandbox:1.2.3",
+    };
+    const document = { sandbox: { drivers: [driver, boat, agent37] } };
     expect(encodeServerSettings(decodeServerSettings(document)).sandbox).toEqual(document.sandbox);
     // The form refuses http; the schema must not, or the driver would vanish with its machines.
     const http = { ...boat, runnerUrl: "http://pair.example.com" };
     expect(decodeServerSettings({ sandbox: { drivers: [http] } }).sandbox?.drivers).toEqual([http]);
     expect(
-      decodeServerSettings({ sandbox: { drivers: [{ kind: "boat", id: "boat", label: "boat" }] } })
-        .sandbox?.drivers,
-    ).toEqual([{ kind: "boat", id: "boat", label: "boat", apiKey: "" }]);
+      decodeServerSettings({
+        sandbox: {
+          drivers: [
+            { kind: "boat", id: "boat", label: "boat" },
+            { kind: "agent37", id: "agent37", label: "Agent37" },
+          ],
+        },
+      }).sandbox?.drivers,
+    ).toEqual([
+      { kind: "boat", id: "boat", label: "boat", apiKey: "" },
+      { kind: "agent37", id: "agent37", label: "Agent37", apiKey: "" },
+    ]);
     expect(() =>
       decodeServerSettingsPatch({
         sandbox: { drivers: { boat: { ...boat, types: { default: "huge" } } } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        sandbox: { drivers: { agent37: { ...agent37, region: "mars" } } },
       }),
     ).toThrow();
   });
