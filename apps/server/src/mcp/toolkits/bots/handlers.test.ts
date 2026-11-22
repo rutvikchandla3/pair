@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { BotSessions } from "../../../bots/BotSessions.ts";
 import { BotService } from "../../../bots/BotService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -86,6 +87,7 @@ interface Harness {
   readonly bot?: Partial<BotService["Service"]>;
   readonly sessions?: Partial<BotSessions["Service"]>;
   readonly projects?: Partial<ProjectService.ProjectService["Service"]>;
+  readonly search?: Partial<ThreadSearch.ThreadSearch["Service"]>;
 }
 
 const callTool = (
@@ -102,6 +104,7 @@ const callTool = (
         getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
       }),
       Layer.mock(ProjectService.ProjectService)(harness.projects ?? {}),
+      Layer.mock(ThreadSearch.ThreadSearch)(harness.search ?? {}),
     );
     return yield* Effect.gen(function* () {
       const toolkit = yield* BotsToolkit;
@@ -439,6 +442,98 @@ describe("bots tools", () => {
           homeRunId: RunId.make("run:mcp-test"),
         },
       ]);
+    }),
+  );
+  it.effect("recalls the chat, job reports, answered Asks and notes, best match first", () =>
+    Effect.gen(function* () {
+      const searched: Array<unknown> = [];
+      const result = yield* callTool(
+        "bot_recall",
+        { query: "rate limit" },
+        {
+          bot: {
+            snapshotForBot: () =>
+              Effect.succeed({
+                bots: [{ id: botId, homeThreadId: threadId }],
+                jobs: [
+                  {
+                    id: jobId,
+                    title: "Rate limit",
+                    request: "Add a rate limit to the API",
+                    headline: "",
+                    pullRequests: [],
+                    report: {
+                      changed: "Per-member rate limit, 60 a minute.",
+                      evidence: [],
+                      openQuestions: [],
+                      next: null,
+                    },
+                    updatedAt: "2026-11-02T00:00:00.000Z",
+                    finishedAt: "2026-11-03T00:00:00.000Z",
+                  },
+                ],
+                asks: [
+                  {
+                    id: "ask:1",
+                    jobId,
+                    question: "Per member or per token?",
+                    answer: "Per member, the rate limit is per member.",
+                    status: "answered",
+                    answeredAt: "2026-11-01T00:00:00.000Z",
+                  },
+                  { id: "ask:2", question: "rate limit again?", status: "open", answer: null },
+                ],
+                notes: [
+                  {
+                    id: noteId,
+                    text: "Unrelated: fix the cause.",
+                    updatedAt: "2026-11-01T00:00:00.000Z",
+                  },
+                ],
+              } as never),
+          },
+          search: {
+            searchThreadMessages: (input) => {
+              searched.push(input);
+              return Effect.succeed([
+                {
+                  messageId: "message:1" as never,
+                  source: "user",
+                  snippet: "make the rate limit 60 a minute",
+                  messageCreatedAt: "2026-11-04T00:00:00.000Z",
+                  // A whole-phrase match, as the index grades it: equal hits rank newest first.
+                  quality: 1.25,
+                },
+              ]);
+            },
+          },
+        },
+      );
+      expect(searched).toEqual([{ threadId, query: "rate limit", limit: 8 }]);
+      expect(result).toEqual({
+        results: [
+          {
+            source: "chat",
+            from: "user",
+            at: "2026-11-04T00:00:00.000Z",
+            text: "make the rate limit 60 a minute",
+          },
+          {
+            source: "job",
+            jobId,
+            title: "Rate limit",
+            at: "2026-11-03T00:00:00.000Z",
+            text: expect.stringContaining("rate limit"),
+          },
+          {
+            source: "answer",
+            askId: "ask:1",
+            jobId,
+            at: "2026-11-01T00:00:00.000Z",
+            text: "Q: Per member or per token?\nA: Per member, the rate limit is per member.",
+          },
+        ],
+      });
     }),
   );
 });

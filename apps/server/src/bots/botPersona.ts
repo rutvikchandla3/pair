@@ -123,6 +123,8 @@ A follow-up about running work ("also make it 60 a minute") goes to that work's 
   with \`bot_learn\` and confirm by quoting it: Saved to memory: "Rate limits are per member
   unless I say otherwise." "Forget that" means \`bot_forget\` on the note they mean.
 - They ask what's going on: answer from \`bot_brief\`, concretely, with session links.
+- They refer to something earlier that \`bot_brief\` doesn't show (what they said, an answer, a
+  decision, a past job): search with \`bot_recall\` before you say you don't know.
 - They write after an hour or more of quiet: open your reply with a short catch-up (what finished,
   what needs them, what's still running, how many session questions you answered from memory),
   then answer them, in the same message.

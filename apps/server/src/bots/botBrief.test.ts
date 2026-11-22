@@ -21,6 +21,14 @@ describe("composeBrief", () => {
     expect(brief.jobs.length + brief.otherOpenJobs.length + brief.moreJobs).toBe(50);
     expect(brief.playbook.notes.length + brief.playbook.moreNotes).toBe(200);
     expect(brief.openAsks.length + brief.moreAsks).toBe(30);
+    // An answered Ask leaves openAsks but its answer stays, newest first.
+    expect(brief.recentAnswers.map((answer) => answer.askId)).toEqual([
+      "ask:129",
+      "ask:128",
+      "ask:127",
+      "ask:126",
+      "ask:125",
+    ]);
     // Most recently changed first, and the most cited notes first.
     expect(brief.jobs[0]?.jobId).toBe("job:49");
     expect(brief.playbook.notes[0]?.citedCount).toBe(6);
@@ -44,6 +52,7 @@ describe("composeBrief", () => {
     expect(brief.playbook.instructions).toBeNull();
     expect(brief.projects).toBeNull();
     expect(brief.finishedJobs).toEqual([]);
+    expect(brief.recentAnswers).toEqual([]);
     expect(brief.playbook.notes.map((note) => note.noteId)).toEqual(["note:5"]);
     expect(brief.jobs.map((job) => job.jobId)).toEqual(["job:3"]);
     expect(

@@ -290,6 +290,59 @@ export const messageHitsQuery = (
     LIMIT ${MESSAGE_HIT_LIMIT}
   `;
 
+const ThreadMessageRequest = Schema.Struct({
+  threadId: ThreadId,
+  match: Schema.NullOr(Schema.String),
+  substrings: TokenList,
+});
+
+/**
+ * `messageHitsQuery` for one thread, which is always the caller's own. The thread filter bounds
+ * the read, so it skips the global newest-hits windows that would hide its older messages.
+ */
+const threadMessageHitsQuery = (
+  sql: SqlClient.SqlClient,
+  { threadId, match, substrings }: typeof ThreadMessageRequest.Encoded,
+) => sql`
+    ${
+      match === null
+        ? sql`
+          SELECT
+            messages.rowid AS "messageRowid",
+            messages.message_id AS "messageId",
+            messages.thread_id AS "threadId",
+            messages.role AS source,
+            json_extract(messages.payload_json, '$.text') AS text,
+            messages.created_at AS "messageCreatedAt"
+          FROM orchestration_v2_projection_messages AS messages
+          WHERE messages.thread_id = ${threadId}
+            AND ${indexedMessageCondition(sql)}
+        `
+        : sql`
+          SELECT
+            orchestration_v2_message_search.rowid AS "messageRowid",
+            messages.message_id AS "messageId",
+            messages.thread_id AS "threadId",
+            messages.role AS source,
+            json_extract(messages.payload_json, '$.text') AS text,
+            messages.created_at AS "messageCreatedAt"
+          FROM orchestration_v2_message_search
+          INNER JOIN orchestration_v2_projection_messages AS messages
+            ON messages.rowid = orchestration_v2_message_search.rowid
+          WHERE orchestration_v2_message_search MATCH ${match}
+            AND messages.thread_id = ${threadId}
+            AND ${nonPlaceholderMessageCondition(sql)}
+        `
+    }
+      AND messages.message_id NOT LIKE 'async-answer:%'
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(${substrings}) AS token
+        WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0
+      )
+    ORDER BY "messageRowid" DESC
+    LIMIT ${MESSAGE_HIT_LIMIT}
+  `;
+
 const TitleCandidateRow = Schema.Struct({
   thread: Schema.fromJsonString(OrchestrationV2AppThreadJson),
   memberOpens: Schema.NullOr(Schema.String),
@@ -304,6 +357,14 @@ export interface ThreadSearchHit {
   readonly source: "title" | OrchestrationThreadSearchSource;
   readonly snippet?: string;
   readonly messageCreatedAt?: string | null;
+}
+
+export interface ThreadMessageHit {
+  readonly messageId: MessageId;
+  readonly source: OrchestrationThreadSearchSource;
+  readonly snippet: string;
+  readonly messageCreatedAt: string | null;
+  readonly quality: number;
 }
 
 export class ThreadSearch extends Context.Service<
@@ -330,6 +391,15 @@ export class ThreadSearch extends Context.Service<
      * receive for a query: the best title, branch, pull request and project matches, ranked as
      * the palette ranks them, then the older ones among `messageThreadIds`, in their order.
      */
+    /**
+     * One thread's own matching messages, best first, for an agent searching its own chat. Reads
+     * the same index as message search.
+     */
+    readonly searchThreadMessages: (input: {
+      readonly threadId: ThreadId;
+      readonly query: string;
+      readonly limit: number;
+    }) => Effect.Effect<ReadonlyArray<ThreadMessageHit>, ThreadSearchError>;
     readonly searchOlderSettled: (input: {
       readonly query: string;
       readonly before: string;
@@ -368,6 +438,12 @@ export const make = Effect.gen(function* () {
     Request: SearchRequest,
     Result: SearchRow,
     execute: (request) => messageHitsQuery(sql, request),
+  });
+
+  const threadMessageRows = SqlSchema.findAll({
+    Request: ThreadMessageRequest,
+    Result: SearchRow.mapFields(({ projectId: _projectId, ...fields }) => fields),
+    execute: (request) => threadMessageHitsQuery(sql, request),
   });
 
   const threadOpens = SqlSchema.findAll({
@@ -716,7 +792,46 @@ export const make = Effect.gen(function* () {
     ];
   });
 
-  return ThreadSearch.of({ search, searchThreads, searchOlderSettled });
+  const searchThreadMessages: ThreadSearch["Service"]["searchThreadMessages"] = Effect.fn(
+    "ThreadSearch.searchThreadMessages",
+  )(function* (input) {
+    const rows = yield* read(
+      Effect.gen(function* () {
+        const index = yield* sql`
+          SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
+        `;
+        const messageSearch = buildMessageSearch(input.query, index.length > 0);
+        return messageSearch === null
+          ? []
+          : yield* threadMessageRows({ ...messageSearch, threadId: input.threadId });
+      }),
+    );
+    const matchMessage = messageMatcher(input.query);
+    return rows
+      .flatMap((row) => {
+        const text = row.text.replace(MARKDOWN_LINK, "$1");
+        const match = matchMessage(text);
+        return match === null
+          ? []
+          : [
+              {
+                messageId: row.messageId,
+                source: row.source,
+                snippet: buildSearchSnippet(text, match.offset),
+                messageCreatedAt: row.messageCreatedAt,
+                quality: match.quality,
+              },
+            ];
+      })
+      .toSorted(
+        (left, right) =>
+          right.quality - left.quality ||
+          (right.messageCreatedAt ?? "").localeCompare(left.messageCreatedAt ?? ""),
+      )
+      .slice(0, input.limit);
+  });
+
+  return ThreadSearch.of({ search, searchThreads, searchThreadMessages, searchOlderSettled });
 });
 
 export const layer = Layer.effect(ThreadSearch, make);

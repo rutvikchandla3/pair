@@ -23,6 +23,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as BotSessions from "../../../bots/BotSessions.ts";
 import * as BotService from "../../../bots/BotService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -157,6 +158,17 @@ const BriefResult = Schema.Struct({
   ),
   /** Open Asks past the brief's size, newest shown first. */
   moreAsks: NonNegativeInt,
+  /** The user's latest answers to your Asks, newest first; bot_recall finds older ones. */
+  recentAnswers: Schema.Array(
+    Schema.Struct({
+      askId: BotAskId,
+      jobId: Schema.NullOr(BotJob.fields.id),
+      question: Schema.String,
+      /** Null when they let you decide. */
+      answer: Schema.NullOr(Schema.String),
+      answeredAt: Schema.NullOr(Schema.String),
+    }),
+  ),
 });
 
 const BotBriefTool = Tool.make("bot_brief", {
@@ -342,6 +354,57 @@ const LearnTool = Tool.make("bot_learn", {
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
 
+const RecallTool = Tool.make("bot_recall", {
+  ...shared,
+  dependencies: [...shared.dependencies, ThreadSearch.ThreadSearch],
+  description:
+    "Search what bot_brief no longer shows: this chat's earlier messages, every job's request and report, the user's answers to your Asks, and all your notes. Use it before you tell the user you don't know or don't remember.",
+  parameters: Schema.Struct({
+    query: TrimmedNonEmptyString.check(Schema.isMinLength(2), Schema.isMaxLength(200)),
+    limit: Schema.optional(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })).annotate({
+        description: "Default 8.",
+      }),
+    ),
+  }),
+  success: Schema.Struct({
+    results: Schema.Array(
+      Schema.Union([
+        Schema.Struct({
+          source: Schema.Literal("chat"),
+          /** Who wrote it: the user, or you. */
+          from: Schema.Literals(["user", "you"]),
+          at: Schema.NullOr(Schema.String),
+          text: Schema.String,
+        }),
+        Schema.Struct({
+          source: Schema.Literal("job"),
+          jobId: BotJob.fields.id,
+          title: Schema.String,
+          at: Schema.NullOr(Schema.String),
+          text: Schema.String,
+        }),
+        Schema.Struct({
+          source: Schema.Literal("answer"),
+          askId: BotAskId,
+          jobId: Schema.NullOr(BotJob.fields.id),
+          at: Schema.NullOr(Schema.String),
+          text: Schema.String,
+        }),
+        Schema.Struct({
+          source: Schema.Literal("note"),
+          noteId: BotNoteId,
+          at: Schema.NullOr(Schema.String),
+          text: Schema.String,
+        }),
+      ]),
+    ),
+  }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
+
 const ForgetTool = Tool.make("bot_forget", {
   ...shared,
   description:
@@ -363,4 +426,5 @@ export const BotsToolkit = Toolkit.make(
   AskResolveTool,
   LearnTool,
   ForgetTool,
+  RecallTool,
 );
