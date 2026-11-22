@@ -30,6 +30,7 @@ import {
   mergePullRequests,
   type RunEnd,
   reportRequest,
+  REPORT_LIMIT,
   reportRunEnd,
   reportTakeover,
   sessionThreadState,
@@ -136,6 +137,32 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** The last message a finished run there wrote, its report; null when it can't be read. */
+  const runReport = Effect.fn("BotCloudSessions.runReport")(function* (
+    scope: McpInvocationContext.McpInvocationScope,
+    session: BotSession,
+    cloud: BotCloudSession,
+    runId: string,
+  ) {
+    return yield* forwarding
+      .readThread(scope, cloud.environmentId, {
+        threadId: session.threadId,
+        view: "messages",
+        afterPosition: cloud.position,
+        limit: 100,
+        // One past the limit, so a long report reads as cut.
+        maxCharsPerItem: REPORT_LIMIT + 1,
+      })
+      .pipe(
+        Effect.map(
+          (read) =>
+            read.items.findLast((item) => item.type === "assistant_message" && item.runId === runId)
+              ?.text ?? null,
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+  });
+
   /** Reads the session there and turns what changed into the wakes a local session sends. */
   const reconcile = Effect.fn("BotCloudSessions.reconcile")(function* (
     scope: McpInvocationContext.McpInvocationScope,
@@ -175,7 +202,9 @@ const make = Effect.gen(function* () {
         latest.status === "failed" ? yield* runError(scope, session, cloud, latest.runId) : null;
       const end = cloudRunEnd(latest.status, error);
       if (end !== null) {
-        yield* reportRunEnd(bots, session, job, end);
+        const report =
+          end.kind === "completed" ? yield* runReport(scope, session, cloud, latest.runId) : null;
+        yield* reportRunEnd(bots, session, job, end, report);
         reportedRunId = latest.runId;
       }
     }

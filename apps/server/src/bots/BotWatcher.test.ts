@@ -37,6 +37,8 @@ import {
   type PendingRequest,
   quietSessions,
   type QuietCandidate,
+  REPORT_LIMIT,
+  reportRunEnd,
   type TakeoverEvent,
 } from "./BotWatcher.ts";
 
@@ -268,6 +270,7 @@ it.effect(
       Layer.provide(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadShell: () => Effect.sync(() => current),
+          getThreadRecords: () => Effect.succeed({ messages: [] } as never),
         }),
       ),
       Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({})),
@@ -332,4 +335,48 @@ it.effect(
       assert.strictEqual(yield* archived(), undefined);
     }).pipe(Effect.provide(layer));
   },
+);
+
+it.effect("hands a finished session's report to the bot, cut at its limit", () =>
+  Effect.gen(function* () {
+    const wakes: Array<BotService.BotWake> = [];
+    const bots = {
+      addEvent: () => Effect.succeed({} as never),
+      publishWake: (wake: BotService.BotWake) => Effect.sync(() => void wakes.push(wake)),
+    } as unknown as BotService.BotService["Service"];
+    const session = {
+      threadId,
+      botId,
+      jobId: "job:1",
+      role: "worker",
+      title: "Fix the login bug",
+      projectId: ProjectId.make("project:bots"),
+      takenOver: false,
+      createdAt: "2026-11-19T00:00:00.000Z",
+    } as const;
+    const job = { status: "working" } as BotJob;
+    const completed = { kind: "completed", resetAt: null, error: null } as const;
+
+    yield* reportRunEnd(bots, session as never, job, completed, "Fixed it. Tests pass.");
+    yield* reportRunEnd(bots, session as never, job, completed, null);
+    yield* reportRunEnd(bots, session as never, job, completed, "x".repeat(REPORT_LIMIT + 50));
+
+    assert.deepStrictEqual(
+      wakes.map((wake) => [wake.text, wake.report]),
+      [
+        [
+          'Session "Fix the login bug" (thread thread:session) finished. Its report is below; continue the job or finish it.',
+          'Report from "Fix the login bug":\nFixed it. Tests pass.',
+        ],
+        [
+          'Session "Fix the login bug" (thread thread:session) finished. Read its report with t3_thread_read, then continue the job or finish it.',
+          undefined,
+        ],
+        [
+          'Session "Fix the login bug" (thread thread:session) finished. Its report is below; continue the job or finish it.',
+          `Report from "Fix the login bug" (cut short; t3_thread_read has the rest):\n${"x".repeat(REPORT_LIMIT - 1)}…`,
+        ],
+      ],
+    );
+  }),
 );

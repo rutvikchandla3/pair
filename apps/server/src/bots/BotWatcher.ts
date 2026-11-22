@@ -34,6 +34,8 @@ const ESCALATE_EVERY_MS = 30_000;
 const QUIET_EVERY_MS = 60_000;
 /** A wake's session text is capped so one long error can't bloat the home thread. */
 const WAKE_TEXT_LIMIT = 300;
+/** A finished session's report rides its wake up to this, so the bot rarely reads the thread. */
+export const REPORT_LIMIT = 2_000;
 /** Shell statuses that mean a run is still going, so a session can go quiet. */
 const LIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2ThreadShell["status"]> = new Set([
   "preparing",
@@ -232,12 +234,21 @@ const sessionRef = (session: BotSession): string =>
 
 type Bots = BotService["Service"];
 
+/** The report block a finished session's wake carries for the bot. */
+const sessionReport = (session: BotSession, text: string): string => {
+  const cut = text.length > REPORT_LIMIT;
+  const body = cut ? `${text.slice(0, REPORT_LIMIT - 1)}…` : text;
+  return `Report from "${session.title}"${cut ? " (cut short; t3_thread_read has the rest)" : ""}:\n${body}`;
+};
+
 /** The timeline event and wake for a session run that ended, wherever it runs. */
 export const reportRunEnd = Effect.fnUntraced(function* (
   bots: Bots,
   session: BotSession,
   job: BotJob,
   end: RunEnd,
+  /** The run's last message, for a completed run. */
+  report: string | null = null,
 ) {
   const title = session.title;
   const at = sessionRef(session);
@@ -255,7 +266,14 @@ export const reportRunEnd = Effect.fnUntraced(function* (
           botId: session.botId,
           reason: "session-finished",
           label: `${title} finished`,
-          text: `${at} finished. Read its report with t3_thread_read, then continue the job or finish it.`,
+          ...(report === null || report.trim() === ""
+            ? {
+                text: `${at} finished. Read its report with t3_thread_read, then continue the job or finish it.`,
+              }
+            : {
+                text: `${at} finished. Its report is below; continue the job or finish it.`,
+                report: sessionReport(session, report.trim()),
+              }),
         });
       }
       return;
@@ -416,7 +434,19 @@ const make = Effect.gen(function* () {
     yield* syncPullRequests(session, job, shell);
     const end = classifyRunEnd(event.payload.status, shell);
     if (end === null) return;
-    yield* reportRunEnd(bots, session, job, end);
+    const report =
+      end.kind !== "completed"
+        ? null
+        : ((yield* projections
+            .getThreadRecords(event.threadId, ["messages"], {
+              messageRoles: ["assistant"],
+              messageRunIds: [event.payload.id],
+            })
+            .pipe(
+              Effect.map((records) => records.messages.at(-1)?.text ?? null),
+              Effect.orElseSucceed(() => null),
+            )) ?? null);
+    yield* reportRunEnd(bots, session, job, end, report);
   });
 
   const onRuntimeRequest = Effect.fnUntraced(function* (

@@ -1,18 +1,11 @@
-import {
-  BOT_LIMIT_LABELS,
-  type BotCloudSessionState,
-  type BotJobId,
-  BotsError,
-  OrchestratorMcpFailure,
-  ProjectId,
-} from "@t3tools/contracts";
+import { type BotJobId, BotsError, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { loadBrief } from "../../../bots/botBrief.ts";
 import * as BotSessions from "../../../bots/BotSessions.ts";
 import * as BotService from "../../../bots/BotService.ts";
-import { voiceGuide } from "../../../bots/botPersona.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -48,131 +41,14 @@ const botsFailure = (error: BotsError): OrchestratorMcpFailure => {
 
 const HERE = "this machine";
 
-/** The brief's status words for a cloud session, matching `liveState`'s for local ones. */
-const cloudStatus = (state: BotCloudSessionState): string =>
-  state === "done" ? "idle" : state === "waiting" ? "working" : state;
-
 const mapError = <A, R>(effect: Effect.Effect<A, BotsError, R>) =>
   effect.pipe(Effect.mapError(botsFailure));
 
 export const layer = McpToolAccess.toLayer(BotsToolkit, {
-  bot_brief: McpToolAccess.reads(() =>
+  bot_brief: McpToolAccess.reads((params) =>
     Effect.gen(function* () {
       const botId = yield* resolveBotId();
-      const bots = yield* BotService.BotService;
-      const projects = yield* ProjectService.ProjectService;
-      const sessions = yield* BotSessions.BotSessions;
-      const snapshot = yield* mapError(bots.snapshotForBot(botId));
-      const bot = snapshot.bots[0];
-      if (bot === undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "task_not_found",
-          message: "That bot is gone.",
-        });
-      }
-      const shells = yield* projects.listShells().pipe(Effect.mapError(() => unavailable()));
-      const homeProjects = new Set(
-        (yield* mapError(bots.listAllBots()))
-          .map((candidate) => candidate.homeProjectId)
-          .filter((projectId): projectId is ProjectId => projectId !== null),
-      );
-      const openAsks = snapshot.asks.filter((ask) => ask.status === "open");
-      const working = snapshot.jobs.filter((job) => job.status === "working");
-      const finished = snapshot.jobs
-        .filter((job) => job.status !== "working")
-        .sort((left, right) => (right.finishedAt ?? "").localeCompare(left.finishedAt ?? ""))
-        .slice(0, 5);
-      const jobs = yield* Effect.forEach([...working, ...finished], (job) =>
-        Effect.gen(function* () {
-          const live = yield* Effect.forEach(
-            snapshot.sessions.filter((session) => session.jobId === job.id),
-            (session) => {
-              const base = {
-                threadId: session.threadId,
-                role: session.role,
-                title: session.title,
-                modelSelection: session.modelSelection ?? null,
-                takenOver: session.takenOver,
-              };
-              // A cloud session's state is what its follower last read: no call there per brief.
-              if (session.cloud !== undefined) {
-                const reachable = session.cloud.state !== "unreachable";
-                return Effect.succeed({
-                  ...base,
-                  where: session.cloud.label,
-                  environmentId: session.cloud.environmentId,
-                  reachable,
-                  status: reachable ? cloudStatus(session.cloud.state) : "unreachable",
-                  pendingRequest: session.cloud.pendingRequest,
-                  lastAssistantText: null,
-                });
-              }
-              const here = { ...base, where: HERE, reachable: true };
-              return sessions.liveState(session.threadId).pipe(
-                Effect.map((state) => ({ ...here, ...state })),
-                Effect.orElseSucceed(() => ({
-                  ...here,
-                  status: "stopped",
-                  pendingRequest: null,
-                  lastAssistantText: null,
-                })),
-              );
-            },
-          );
-          return {
-            jobId: job.id,
-            number: job.number,
-            title: job.title,
-            request: job.request,
-            projectId: job.projectId,
-            status: job.status,
-            headline: job.headline,
-            pullRequests: job.pullRequests,
-            sessions: live,
-          };
-        }),
-      );
-      const cloud = yield* sessions.cloudTarget().pipe(
-        Effect.map((target) =>
-          target === null ? { environmentId: null, label: "this server's cloud machines" } : target,
-        ),
-        Effect.catch((error) => Effect.succeed({ unavailable: error.message })),
-      );
-      return {
-        bot: {
-          name: bot.name,
-          charter: bot.charter,
-          voice: voiceGuide(bot.voice),
-          paused: bot.paused,
-          models: { worker: bot.models.worker, reviewer: bot.models.reviewer },
-        },
-        playbook: {
-          instructions: bot.instructions,
-          checkWithMeBefore: bot.limits.map((limit) => BOT_LIMIT_LABELS[limit]),
-          notes: snapshot.notes.map((note) => ({
-            noteId: note.id,
-            text: note.text,
-            source: note.source,
-            citedCount: note.citedCount,
-          })),
-        },
-        projects: shells
-          .filter((shell) => shell.archivedAt == null && !homeProjects.has(shell.id))
-          .map((shell) => ({
-            projectId: shell.id,
-            title: shell.title,
-            workspaceRoot: shell.workspaceRoot,
-          })),
-        cloud,
-        jobs,
-        openAsks: openAsks.map((ask) => ({
-          askId: ask.id,
-          jobId: ask.jobId,
-          question: ask.question,
-          options: ask.options,
-          pick: ask.pick,
-        })),
-      };
+      return yield* mapError(loadBrief(botId, { since: params.since ?? null }));
     }),
   ),
 

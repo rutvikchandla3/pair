@@ -155,6 +155,9 @@ const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
+// A bot reads sessions inside its own turn, every turn: its defaults keep that input small.
+const BOT_THREAD_READ_LIMIT = 20;
+const BOT_THREAD_ITEM_MAX_CHARS = 4_000;
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
@@ -3069,8 +3072,10 @@ const make = Effect.gen(function* () {
       const { parent, target, shell } = yield* loadReadableThread(scope, input.threadId);
       const view = input.view ?? "messages";
       const afterPosition = input.afterPosition ?? -1;
-      const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
-      const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
+      const bot = scope.bot !== undefined;
+      const limit = input.limit ?? (bot ? BOT_THREAD_READ_LIMIT : DEFAULT_THREAD_READ_LIMIT);
+      const maxChars =
+        input.maxCharsPerItem ?? (bot ? BOT_THREAD_ITEM_MAX_CHARS : DEFAULT_THREAD_ITEM_MAX_CHARS);
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
           afterPosition,
