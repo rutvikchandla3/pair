@@ -59,6 +59,7 @@ const SessionLiveState = Schema.Struct({
       text: Schema.String,
     }),
   ),
+  /** The start of its last message, once its run ended and only when it changed. */
   lastAssistantText: Schema.NullOr(Schema.String),
 });
 
@@ -79,9 +80,15 @@ const BriefJob = Schema.Struct({
   headline: Schema.String,
   pullRequests: BotJob.fields.pullRequests,
   sessions: Schema.Array(SessionLiveState),
+  /** Older sessions left out. */
+  moreSessions: NonNegativeInt,
 });
 
 const BriefResult = Schema.Struct({
+  /** Pass it as `since` next time to read only what changed. */
+  asOf: Schema.String,
+  /** The `since` this brief answers; null for the whole brief. */
+  since: Schema.NullOr(Schema.String),
   bot: Schema.Struct({
     name: Schema.String,
     charter: Schema.String,
@@ -92,7 +99,8 @@ const BriefResult = Schema.Struct({
     models: Schema.Struct({ worker: ModelSelection, reviewer: ModelSelection }),
   }),
   playbook: Schema.Struct({
-    instructions: Schema.String,
+    /** Null when unchanged since `since`. */
+    instructions: Schema.NullOr(Schema.String),
     checkWithMeBefore: Schema.Array(Schema.String),
     notes: Schema.Array(
       Schema.Struct({
@@ -102,20 +110,42 @@ const BriefResult = Schema.Struct({
         citedCount: NonNegativeInt,
       }),
     ),
+    /** Notes left out: unchanged since `since`, or past the brief's size. */
+    moreNotes: NonNegativeInt,
   }),
-  projects: Schema.Array(
-    Schema.Struct({
-      projectId: ProjectId,
-      title: Schema.String,
-      workspaceRoot: Schema.String,
-    }),
+  /** Null when `since` is given. */
+  projects: Schema.NullOr(
+    Schema.Array(
+      Schema.Struct({
+        projectId: ProjectId,
+        title: Schema.String,
+        workspaceRoot: Schema.String,
+      }),
+    ),
   ),
   /** Where `bot_start_session` with `cloud` runs, or why it can't. */
   cloud: Schema.Union([
     Schema.Struct({ environmentId: Schema.NullOr(EnvironmentId), label: Schema.String }),
     Schema.Struct({ unavailable: Schema.String }),
   ]),
+  /** Open jobs, most recently changed first. */
   jobs: Schema.Array(BriefJob),
+  /** Open jobs past the brief's size, named only. */
+  otherOpenJobs: Schema.Array(Schema.Struct({ jobId: BotJob.fields.id, title: Schema.String })),
+  /** Open jobs not listed at all: unchanged since `since`, or past the brief's size. */
+  moreJobs: NonNegativeInt,
+  finishedJobs: Schema.Array(
+    Schema.Struct({
+      jobId: BotJob.fields.id,
+      title: Schema.String,
+      status: BotJobStatus,
+      finishedAt: Schema.NullOr(Schema.String),
+      headline: Schema.String,
+      pullRequests: BotJob.fields.pullRequests,
+      /** The start of its report's "what changed". */
+      report: Schema.NullOr(Schema.String),
+    }),
+  ),
   openAsks: Schema.Array(
     Schema.Struct({
       askId: BotAskId,
@@ -125,13 +155,19 @@ const BriefResult = Schema.Struct({
       pick: Schema.NullOr(Schema.String),
     }),
   ),
+  /** Open Asks past the brief's size, newest shown first. */
+  moreAsks: NonNegativeInt,
 });
 
 const BotBriefTool = Tool.make("bot_brief", {
   ...shared,
   description:
-    "Read your playbook, the projects you can work in, every job with its sessions' live state, and your open Asks. Call this first whenever a job is involved.",
-  parameters: Tool.EmptyParams,
+    "Read your playbook, the projects you can work in, your open jobs with their sessions' live state, recently finished jobs, and your open Asks. Pass since (the asOf of the last brief you read in this chat) to get only what changed after it.",
+  parameters: Schema.Struct({
+    since: Schema.optional(
+      Schema.String.annotate({ description: "The asOf of an earlier brief in this chat." }),
+    ),
+  }),
   success: BriefResult,
 })
   .annotate(Tool.Readonly, true)

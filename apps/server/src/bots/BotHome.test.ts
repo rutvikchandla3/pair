@@ -49,6 +49,14 @@ describe("formatWakeText", () => {
       "[Pair] 2 updates:\n- Session finished\n- Ask answered",
     );
   });
+
+  it("keeps reports out of the chat's text and gives them to the bot after the list", () => {
+    const wakes = [{ ...wake("A finished"), report: 'Report from "A":\nDone.' }, wake("B failed")];
+    expect(formatWakeText(wakes)).toBe("[Pair] 2 updates:\n- A finished\n- B failed");
+    expect(formatWakeText(wakes, { reports: true })).toBe(
+      '[Pair] 2 updates:\n- A finished\n- B failed\n\nReport from "A":\nDone.',
+    );
+  });
 });
 
 describe("wakeSummary", () => {

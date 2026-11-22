@@ -127,12 +127,20 @@ export const splitWakeMessages = (
   return messages.filter((message) => message.length > 0);
 };
 
-/** The one line, or list, the home thread hears. */
-export const formatWakeText = (wakes: ReadonlyArray<BotWake>): string => {
+/** The one line, or list, the home thread shows; with `reports`, what the bot reads. */
+export const formatWakeText = (
+  wakes: ReadonlyArray<BotWake>,
+  options: { readonly reports?: boolean } = {},
+): string => {
   const first = wakes[0];
   if (first === undefined) return "[Pair]";
-  if (wakes.length === 1) return `[Pair] ${first.text}`;
-  return `[Pair] ${wakes.length} updates:\n${wakes.map((wake) => `- ${wake.text}`).join("\n")}`;
+  const lines =
+    wakes.length === 1
+      ? `[Pair] ${first.text}`
+      : `[Pair] ${wakes.length} updates:\n${wakes.map((wake) => `- ${wake.text}`).join("\n")}`;
+  if (options.reports !== true) return lines;
+  const reports = wakes.flatMap((wake) => (wake.report === undefined ? [] : [wake.report]));
+  return [lines, ...reports].join("\n\n");
 };
 
 export class BotHome extends Context.Service<
@@ -256,7 +264,7 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`server:bot-wake:${suffix}`),
         threadId: home.threadId,
         messageId: MessageId.make(`message:bot-wake:${suffix}`),
-        text: formatWakeText(group),
+        text: formatWakeText(group, { reports: true }),
         notification: {
           source: { kind: "system" },
           outcome: "updated",

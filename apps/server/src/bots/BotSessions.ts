@@ -141,6 +141,8 @@ export interface BotSessionLiveState {
     readonly text: string;
   } | null;
   readonly lastAssistantText: string | null;
+  /** When the thread last changed, ISO. */
+  readonly changedAt: string;
 }
 
 /** A short, client-friendly name for a shell's run state. */
@@ -690,10 +692,19 @@ const make = Effect.gen(function* () {
         .getThreadShell(threadId)
         .pipe(Effect.mapError(() => unavailable("Could not read the session thread.")));
       if (shell === null) return yield* notFound("That session thread is gone.");
+      // Only the latest run's messages and the pending request's items: never the whole thread.
+      const pending = shell.pendingRuntimeRequest;
       const records = yield* threads
-        .getThreadRecords(threadId, ["messages", "runtimeRequests", "turnItems"], {
-          messageRoles: ["assistant"],
-        })
+        .getThreadRecords(
+          threadId,
+          pending === null ? ["messages"] : ["messages", "runtimeRequests", "turnItems"],
+          {
+            messageRoles: ["assistant"],
+            messageRunIds: shell.latestRunId === null ? [] : [shell.latestRunId],
+            runtimeRequestStatuses: ["pending"],
+            turnItemTypes: ["user_input_request", "approval_request"],
+          },
+        )
         .pipe(Effect.mapError(() => unavailable("Could not read the session thread.")));
       const request = records.runtimeRequests.find((candidate) => candidate.status === "pending");
       const lastAssistant = records.messages.at(-1);
@@ -711,6 +722,7 @@ const make = Effect.gen(function* () {
           lastAssistant === undefined
             ? null
             : Array.from(lastAssistant.text).slice(0, 800).join(""),
+        changedAt: DateTime.formatIso(shell.updatedAt),
       };
     },
   );

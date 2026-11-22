@@ -77,6 +77,8 @@ export interface BotWake {
   /** The short line the home thread shows as that turn's fold label. */
   readonly label: string;
   readonly text: string;
+  /** What only the bot reads, never the chat's fold: a finished session's report. */
+  readonly report?: string;
 }
 
 const BRAIN_MODEL: ModelSelection = {
@@ -1007,6 +1009,10 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           if (note === null) return yield* notFound("That note is gone.");
           const bot = yield* requireBot(caller, note.botId);
           yield* db(store.deleteNote(note.id));
+          // The bot's next brief comes whole, so it drops the note it holds from earlier briefs.
+          yield* db(
+            store.upsertBot({ ...bot, updatedAt: DateTime.formatIso(yield* DateTime.now) }),
+          );
           yield* touch(bot.ownerId);
           return {};
         }),

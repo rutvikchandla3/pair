@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -276,28 +277,41 @@ it.effect("creates a job for the bot without waking the home thread", () =>
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
-it.effect("forgets the bot's own note and refuses another bot's", () =>
-  Effect.gen(function* () {
-    const bots = yield* BotService.BotService;
-    const bot = yield* createBot(bots);
-    const other = yield* createBot(bots);
-    const note = yield* bots.addNote(bot.id, {
-      text: "Rate limits are per member",
-      source: "From Chat",
-      sourceJobId: null,
-    });
-    const forgotten = yield* bots.forgetNote(bot.id, note.id);
-    assert.strictEqual(forgotten.text, "Rate limits are per member");
-    assert.strictEqual((yield* bots.snapshotForBot(bot.id)).notes.length, 0);
+it.effect(
+  "forgets the bot's own note, refuses another bot's, and marks the bot when the user deletes one",
+  () =>
+    Effect.gen(function* () {
+      const bots = yield* BotService.BotService;
+      const bot = yield* createBot(bots);
+      const other = yield* createBot(bots);
+      const note = yield* bots.addNote(bot.id, {
+        text: "Rate limits are per member",
+        source: "From Chat",
+        sourceJobId: null,
+      });
+      const forgotten = yield* bots.forgetNote(bot.id, note.id);
+      assert.strictEqual(forgotten.text, "Rate limits are per member");
+      assert.strictEqual((yield* bots.snapshotForBot(bot.id)).notes.length, 0);
 
-    const otherNote = yield* bots.addNote(other.id, {
-      text: "Their note",
-      source: "From Chat",
-      sourceJobId: null,
-    });
-    const failure = yield* bots.forgetNote(bot.id, otherNote.id).pipe(Effect.flip);
-    assert.strictEqual(failure.reason, "not-found");
-  }).pipe(Effect.provide(layerTest)),
+      const otherNote = yield* bots.addNote(other.id, {
+        text: "Their note",
+        source: "From Chat",
+        sourceJobId: null,
+      });
+      const failure = yield* bots.forgetNote(bot.id, otherNote.id).pipe(Effect.flip);
+      assert.strictEqual(failure.reason, "not-found");
+
+      // The user's delete changes the bot, so its next brief comes whole and drops the note.
+      const userNote = yield* bots.addNote(bot.id, {
+        text: "Deploy on Fridays",
+        source: "From Chat",
+        sourceJobId: null,
+      });
+      yield* TestClock.adjust("1 minute");
+      yield* bots.deleteNote(caller, { noteId: userNote.id });
+      const changed = (yield* bots.snapshotForBot(bot.id)).bots[0]!;
+      assert.isAbove(Date.parse(changed.updatedAt), Date.parse(bot.updatedAt));
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("refuses to reopen a working job", () =>
