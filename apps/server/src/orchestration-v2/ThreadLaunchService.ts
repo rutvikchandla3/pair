@@ -325,9 +325,9 @@ const MACHINE_WAITING_COPY: Readonly<
 };
 
 /** Where a cloud checkout's code came from; several repositories report the slowest source. */
-const repositorySourceLabel = (
+export const repositorySourceLabel = (
   sources: ReadonlyArray<{
-    readonly restoredFrom: string | null;
+    readonly restoredFrom: CloudPreparation.WorkspaceRootRestore | "seed" | null;
     readonly cloneSource: "image" | "origin" | "existing";
   }>,
 ): string | null => {

@@ -187,11 +187,19 @@ describe("WorktreeSetupTracker", () => {
         expect(stopped?.status).toBe("skipped");
         expect(stopped?.startedAt).not.toBeNull();
 
+        const hidden = { status: "skipped", startedAt: null, endedAt: null, note: null };
         const alreadyUp = ThreadId.make("thread-ready");
         yield* begin(alreadyUp);
+        expect(yield* machineOf(alreadyUp)).toMatchObject(hidden);
         yield* tracker.machineStatus(alreadyUp, "skipped");
         yield* tracker.finish(alreadyUp, "done");
         expect(yield* machineOf(alreadyUp)).toMatchObject({ status: "skipped", startedAt: null });
+
+        // A failure before the machine is checked doesn't blame the machine.
+        const failedEarly = ThreadId.make("thread-failed-early");
+        yield* begin(failedEarly);
+        yield* tracker.finish(failedEarly, "failed", "workspace root missing");
+        expect(yield* machineOf(failedEarly)).toMatchObject(hidden);
       }),
   );
 });

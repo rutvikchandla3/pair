@@ -46,7 +46,7 @@ export const WorktreeSetupMachineStatus = Schema.Literals([
 ]);
 export type WorktreeSetupMachineStatus = typeof WorktreeSetupMachineStatus.Type;
 
-/** A cloud launch's machine: waiting for a slot, then booting. `skipped` without `startedAt` was already up. */
+/** A cloud launch's machine: waiting for a slot, then booting. `skipped` without `startedAt` is hidden: not checked yet, or already up. */
 export const WorktreeSetupMachine = Schema.Struct({
   status: WorktreeSetupMachineStatus,
   startedAt: Schema.NullOr(IsoDateTime),

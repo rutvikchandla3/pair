@@ -181,11 +181,12 @@ export const make = Effect.gen(function* () {
         worktreePath: null,
         setupScript: null,
         stages: ordered.map(emptyStage),
+        // Hidden until the machine is seen waiting or booting, so a warm one never flashes a row.
         ...(input.machine === true
           ? {
               machine: {
-                status: "running",
-                startedAt,
+                status: "skipped",
+                startedAt: null,
                 endedAt: null,
                 detail: null,
                 note: null,

@@ -86,6 +86,7 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
+import * as SandboxAdmission from "../sandbox/lifecycle/SandboxAdmission.ts";
 import * as ServerDrain from "../drain/ServerDrain.ts";
 import * as MirrorSync from "../sandbox/mirror/MirrorSync.ts";
 import * as StagedCloudImports from "../cloudMove/StagedCloudImports.ts";
@@ -186,6 +187,7 @@ interface HarnessOptions {
   /** The team's active image build; none by default. */
   readonly activeImageBuild?: TeamImageBuild;
   readonly createWorkspaceCheckout?: WorkspaceCheckouts.WorkspaceCheckouts["Service"]["create"];
+  readonly sandboxAdmission?: Layer.Layer<SandboxAdmission.SandboxAdmission>;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -194,7 +196,14 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-launch" },
     layerRegistry,
-    { databaseLayer: layerDatabase, runEffectWorker: false, cloudOnly: options.cloudOnly ?? false },
+    {
+      databaseLayer: layerDatabase,
+      runEffectWorker: false,
+      cloudOnly: options.cloudOnly ?? false,
+      ...(options.sandboxAdmission === undefined
+        ? {}
+        : { sandboxAdmission: options.sandboxAdmission }),
+    },
   );
   const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
@@ -2743,7 +2752,12 @@ function cloudHarness(
   git: Partial<GitWorkflow.GitWorkflowService["Service"]> = {},
   options: Pick<
     HarnessOptions,
-    "mirrorRestore" | "runSetup" | "stagedImports" | "activeImageBuild" | "serverSettings"
+    | "mirrorRestore"
+    | "runSetup"
+    | "stagedImports"
+    | "activeImageBuild"
+    | "serverSettings"
+    | "sandboxAdmission"
   > = {},
 ) {
   const cloneRepository = vi.fn(
@@ -2966,6 +2980,160 @@ it.effect("launches a cloud thread and releases it on runner hello", () => {
       ["fetch", "setup-script", "agent"],
     );
     assert.equal(setup?.stages[0]?.detail, "Cloned from origin");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.each([
+  { sources: [{ restoredFrom: null, cloneSource: "origin" }], label: "Cloned from origin" },
+  { sources: [{ restoredFrom: "origin", cloneSource: "origin" }], label: "Cloned from origin" },
+  {
+    sources: [{ restoredFrom: "branch", cloneSource: "image" }],
+    label: "Restored from team image",
+  },
+  {
+    sources: [{ restoredFrom: "mirror", cloneSource: "image" }],
+    label: "Restored from Pair Cloud",
+  },
+  { sources: [{ restoredFrom: "seed", cloneSource: "origin" }], label: "Restored from Pair Cloud" },
+  { sources: [{ restoredFrom: "disk", cloneSource: "origin" }], label: "Already on this machine" },
+  { sources: [{ restoredFrom: null, cloneSource: "existing" }], label: "Already on this machine" },
+  // Several repositories report the slowest source.
+  {
+    sources: [
+      { restoredFrom: "disk", cloneSource: "existing" },
+      { restoredFrom: null, cloneSource: "image" },
+      { restoredFrom: "mirror", cloneSource: "image" },
+    ],
+    label: "Restored from Pair Cloud",
+  },
+  {
+    sources: [
+      { restoredFrom: "mirror", cloneSource: "image" },
+      { restoredFrom: "origin", cloneSource: "origin" },
+    ],
+    label: "Cloned from origin",
+  },
+  {
+    sources: [
+      { restoredFrom: "disk", cloneSource: "existing" },
+      { restoredFrom: null, cloneSource: "image" },
+    ],
+    label: "Restored from team image",
+  },
+  { sources: [], label: null },
+] as const)("labels where a cloud checkout's code came from: $label", ({ sources, label }) => {
+  assert.equal(ThreadLaunch.repositorySourceLabel(sources), label);
+});
+
+it.effect("shows a queued cloud machine's wait reason, then its boot, on the setup card", () => {
+  // Full until the test admits it, so the launch queues behind the team cap.
+  let full = true;
+  const harness = cloudHarness(
+    {},
+    {
+      sandboxAdmission: Layer.succeed(
+        SandboxAdmission.SandboxAdmission,
+        SandboxAdmission.SandboxAdmission.of({
+          withLock: (effect) => effect,
+          snapshot: () =>
+            Effect.sync(() => ({
+              running: full ? 1 : 0,
+              waiting: 0,
+              cap: 1,
+              startAvailable: true,
+              draining: false,
+            })),
+          takeStart: Effect.void,
+          nextStartAt: Effect.succeed(null),
+        }),
+      ),
+    },
+  );
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+    using dispatch = vi.spyOn(threads, "dispatch");
+    // Orchestration fixes the reason when it queues a machine, so a change is replayed into the wait.
+    const streamFrom = threads.streamStoredEventsFrom;
+    const reasonChanges = yield* Deferred.make<void>();
+    using _stream = vi.spyOn(threads, "streamStoredEventsFrom").mockImplementation((input) =>
+      input?.eventType !== "sandbox.updated" || input.afterSequence === undefined
+        ? streamFrom(input)
+        : Stream.concat(
+            Stream.fromEffect(Deferred.await(reasonChanges)).pipe(
+              Stream.flatMap(() => streamFrom({ ...input, afterSequence: 0 }).pipe(Stream.take(1))),
+              Stream.map((stored) =>
+                stored.event.type === "sandbox.updated" && stored.event.payload.admission !== null
+                  ? {
+                      ...stored,
+                      event: {
+                        ...stored.event,
+                        payload: {
+                          ...stored.event.payload,
+                          admission: { ...stored.event.payload.admission, reason: "rate-limit" },
+                        },
+                      },
+                    }
+                  : stored,
+              ),
+            ),
+            streamFrom(input),
+          ),
+    );
+    const commandId = CommandId.make("command:launch:cloud-queued");
+    const launched = yield* launches.launch(
+      launchInput({
+        command: commandId,
+        thread: "thread:launch:cloud-queued",
+        message: "Fix the build",
+        workspace: cloudWorkspace,
+      }),
+    );
+    const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+    const machineWith = (detail: string) =>
+      tracker.stream(launched.threadId).pipe(
+        Stream.map((snapshot) => snapshot?.machine),
+        Stream.filter((machine) => machine?.detail === detail),
+        Stream.runHead,
+        Effect.map(Option.getOrUndefined),
+      );
+    assert.deepInclude(yield* machineWith("Team limit reached"), {
+      status: "waiting",
+      note: "Starts on its own when a team machine frees up.",
+    });
+    yield* Deferred.succeed(reasonChanges, undefined);
+    assert.deepInclude(yield* machineWith("Starting soon"), { status: "waiting", note: null });
+
+    full = false;
+    const sandboxCommand = (suffix: string) => ({
+      commandId: CommandId.make(`${commandId}:${suffix}`),
+      threadId: launched.threadId,
+      sandboxId,
+      generation: 1,
+    });
+    yield* threads.dispatch({ type: "sandbox.admit", ...sandboxCommand("admit") });
+    yield* threads.dispatch({
+      type: "sandbox.created",
+      ...sandboxCommand("created"),
+      driverRef: "container-1",
+    });
+    yield* threads.dispatch({
+      type: "sandbox.runner.attached",
+      ...sandboxCommand("attached"),
+      runnerBootId: "boot",
+    });
+    yield* runReaching(launched.threadId, "starting");
+
+    const machine = (yield* tracker.get(launched.threadId))?.machine;
+    assert.equal(machine?.status, "done");
+    assert.isNotNull(machine?.startedAt);
+    assert.deepEqual(
+      dispatch.mock.calls.flatMap(([command]) =>
+        command.type === "prepared-run.progress" ? [command.phase] : [],
+      ),
+      ["sandbox-admission", "sandbox-start", "clone", "setup"],
+    );
   }).pipe(Effect.provide(harness.layer));
 });
 
