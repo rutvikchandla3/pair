@@ -746,7 +746,21 @@ it.each([
     modelSelection.model,
     true,
   ],
-  ["an older latest executed run", { newest: "queued" }, 5, modelSelection.model, true],
+  [
+    "a queued wake after an older run that ended last",
+    { firstEndsLast: true, wake: true },
+    5,
+    modelSelection.model,
+    true,
+  ],
+  [
+    "a latest handoff run from another provider",
+    { newestFrom: "claude" },
+    5,
+    modelSelection.model,
+    true,
+  ],
+  ["imported history", { historyOrigin: "v1_import" }, 5, modelSelection.model, true],
   ["an older latest shown run", { newest: "hidden" }, 5, modelSelection.model, true],
   [
     "a queued wake, not for an older latest shown run",
@@ -767,8 +781,25 @@ it.each([
     startedAt: null,
     completedAt: null,
   } as unknown as OrchestrationV2ThreadProjection["runs"][number];
-  const { wake, ...projectionEdit } = { wake: false, ...edit };
-  const projection = recentRunsProjection(projectionEdit);
+  const { wake, firstEndsLast, newestFrom, historyOrigin, ...projectionEdit } = {
+    wake: false,
+    firstEndsLast: false,
+    newestFrom: undefined,
+    historyOrigin: undefined,
+    ...edit,
+  };
+  const recent = recentRunsProjection(projectionEdit);
+  const projection = {
+    ...recent,
+    thread: { ...recent.thread, historyOrigin },
+    runs: recent.runs.map((run) =>
+      run.ordinal === 1 && firstEndsLast
+        ? { ...run, completedAt: DateTime.makeUnsafe(60 * 60_000) }
+        : run.ordinal === 4 && newestFrom !== undefined
+          ? { ...run, providerInstanceId: ProviderInstanceId.make(newestFrom) }
+          : run,
+    ),
+  };
   const wakeMessage = {
     id: queuedRun.userMessageId,
     role: "user",
