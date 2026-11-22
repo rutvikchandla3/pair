@@ -17,6 +17,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -121,6 +122,26 @@ interface Staged {
   readonly bytes: ReadonlyArray<number>;
 }
 
+const sessionThreadId = ThreadId.make("thread:live-session");
+
+const homeRecords = (chat: ReadonlyArray<ChatAttachment> | undefined) => ({
+  messages: [
+    { role: "user", createdBy: "user", text: "See the screenshots.", attachments: chat ?? [] },
+    { role: "user", createdBy: "agent", text: "From a session.", attachments: [sentByAgent] },
+  ],
+});
+
+const sessionRecords = {
+  messages: [{ role: "assistant", text: "Fixed the login bug." }],
+  turnItems: [
+    {
+      type: "user_input_request",
+      requestId: "request:1",
+      questions: [{ question: "Which branch?" }],
+    },
+  ],
+};
+
 /** BotSessions over fakes; `forwarded` records every call made through a link. */
 const sessionsHarness = (input: {
   readonly jobProjectId: ProjectId | null;
@@ -138,6 +159,8 @@ const sessionsHarness = (input: {
   /** This server's attachments directory, and what the user attached in the bot's chat. */
   readonly attachmentsDir?: string;
   readonly chat?: ReadonlyArray<ChatAttachment>;
+  /** The request `sessionThreadId` waits on, if any. */
+  readonly sessionPending?: { readonly id: string; readonly kind: string } | null;
 }) => {
   const launches: Array<ThreadLaunch.ThreadLaunchRequest> = [];
   const forwarded: Array<Forwarded> = [];
@@ -184,32 +207,37 @@ const sessionsHarness = (input: {
           },
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadShell: () =>
-            Effect.succeed({
-              id: homeThreadId,
-              providerInstanceId: model.instanceId,
-              activeRunId: null,
-            } as never),
-          getThreadRecords: (threadId) =>
-            Effect.succeed({
-              messages:
-                threadId === homeThreadId
-                  ? [
-                      {
-                        role: "user",
-                        createdBy: "user",
-                        text: "See the screenshots.",
-                        attachments: input.chat ?? [],
-                      },
-                      {
-                        role: "user",
-                        createdBy: "agent",
-                        text: "From a session.",
-                        attachments: [sentByAgent],
-                      },
-                    ]
-                  : [],
-            } as never),
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              (threadId === sessionThreadId
+                ? {
+                    id: sessionThreadId,
+                    status: "completed",
+                    archivedAt: null,
+                    deletedAt: null,
+                    latestRunId: "run:2",
+                    pendingRuntimeRequest: input.sessionPending ?? null,
+                    updatedAt: DateTime.makeUnsafe(at),
+                  }
+                : {
+                    id: homeThreadId,
+                    providerInstanceId: model.instanceId,
+                    activeRunId: null,
+                  }) as never,
+            ),
+          // Like the projection store, only the fields asked for.
+          getThreadRecords: (threadId, fields) =>
+            Effect.succeed(
+              Object.fromEntries(
+                Object.entries(
+                  threadId === sessionThreadId
+                    ? sessionRecords
+                    : threadId === homeThreadId
+                      ? homeRecords(input.chat)
+                      : { messages: [] },
+                ).filter(([field]) => (fields as ReadonlyArray<string>).includes(field)),
+              ) as never,
+            ),
         }),
         Layer.mock(GitWorkflow.GitWorkflowService)({
           isRepository: (cwd) => Effect.succeed(cwd === "/home/user/acme/app"),
@@ -763,6 +791,33 @@ describe("BotSessions cloud sessions", () => {
       );
       assert.strictEqual(harness.forwarded[1]?.params.action, "respond");
       assert.include(refusal.message, "can't be approved from here");
+    }),
+  );
+});
+
+describe("BotSessions.liveState", () => {
+  it.effect("reads a session thread with or without a pending request", () =>
+    Effect.gen(function* () {
+      const live = (sessionPending: { readonly id: string; readonly kind: string } | null) =>
+        Effect.gen(function* () {
+          const sessions = yield* BotSessions.BotSessions;
+          return yield* sessions.liveState(sessionThreadId);
+        }).pipe(Effect.provide(sessionsHarness({ jobProjectId: repoId, sessionPending }).layer));
+
+      assert.deepStrictEqual(yield* live(null), {
+        status: "idle",
+        pendingRequest: null,
+        lastAssistantText: "Fixed the login bug.",
+        changedAt: at,
+      });
+      assert.deepStrictEqual(
+        (yield* live({ id: "request:1", kind: "user_input" })).pendingRequest,
+        {
+          requestId: "request:1",
+          kind: "user_input",
+          text: "Which branch?",
+        } as never,
+      );
     }),
   );
 });

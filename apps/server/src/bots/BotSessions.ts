@@ -693,30 +693,27 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(() => unavailable("Could not read the session thread.")));
       if (shell === null) return yield* notFound("That session thread is gone.");
       // Only the latest run's messages and the pending request's items: never the whole thread.
-      const pending = shell.pendingRuntimeRequest;
-      const records = yield* threads
-        .getThreadRecords(
-          threadId,
-          pending === null ? ["messages"] : ["messages", "runtimeRequests", "turnItems"],
-          {
+      const read = <K extends "messages" | "turnItems">(fields: ReadonlyArray<K>) =>
+        threads
+          .getThreadRecords(threadId, fields, {
             messageRoles: ["assistant"],
             messageRunIds: shell.latestRunId === null ? [] : [shell.latestRunId],
-            runtimeRequestStatuses: ["pending"],
             turnItemTypes: ["user_input_request", "approval_request"],
-          },
-        )
-        .pipe(Effect.mapError(() => unavailable("Could not read the session thread.")));
-      const request = records.runtimeRequests.find((candidate) => candidate.status === "pending");
-      const lastAssistant = records.messages.at(-1);
+          })
+          .pipe(Effect.mapError(() => unavailable("Could not read the session thread.")));
+      const { messages } = yield* read(["messages"]);
+      const request = shell.pendingRuntimeRequest;
+      const turnItems = request === null ? [] : (yield* read(["turnItems"])).turnItems;
+      const lastAssistant = messages.at(-1);
       return {
         status: summarizeThreadStatus(shell),
         pendingRequest:
-          request === undefined
+          request === null
             ? null
             : {
                 requestId: request.id,
                 kind: request.kind,
-                text: pendingRequestText(request.id, request.kind, records.turnItems),
+                text: pendingRequestText(request.id, request.kind, turnItems),
               },
         lastAssistantText:
           lastAssistant === undefined

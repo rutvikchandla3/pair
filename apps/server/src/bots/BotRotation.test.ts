@@ -325,9 +325,10 @@ const settled = Effect.fn("BotRotationTest.settled")(function* (runs: number) {
   return projection!;
 });
 
-it.effect(
-  "after the session passes the budget, flushes on it, then starts the next turn fresh from stored state",
-  () =>
+// A brief that dies still rotates: resuming would flush again after every turn.
+it.effect.each([{ brief: "loads" }, { brief: "dies" }])(
+  "after the session passes the budget, flushes on it, then starts the next turn fresh from stored state (brief $brief)",
+  ({ brief }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("bot-rotation");
@@ -358,15 +359,17 @@ it.effect(
               Layer.mock(BotService)({
                 getBot: () => Effect.succeedSome(bot as never),
                 snapshotForBot: () =>
-                  Effect.succeed({
-                    bots: [bot],
-                    jobs: [],
-                    sessions: [],
-                    asks: [],
-                    notes: [],
-                    events: [],
-                    revision: 0,
-                  } as never),
+                  brief === "dies"
+                    ? Effect.die(new TypeError("Cannot read properties of undefined"))
+                    : Effect.succeed({
+                        bots: [bot],
+                        jobs: [],
+                        sessions: [],
+                        asks: [],
+                        notes: [],
+                        events: [],
+                        revision: 0,
+                      } as never),
                 listAllBots: () => Effect.succeed([bot] as never),
               }),
               Layer.mock(BotSessions)({ cloudTarget: () => Effect.succeed(null) }),
@@ -439,7 +442,12 @@ it.effect(
           assert.isTrue(turns[1]!.text.startsWith("[Pair] After this turn"));
           const fresh = turns[2]!.text;
           assert.isTrue(fresh.startsWith("[Pair] This chat now runs on a fresh session"));
-          assert.include(fresh, '"instructions":"Keep diffs boring."');
+          assert.include(
+            fresh,
+            brief === "dies"
+              ? "Your brief could not be loaded"
+              : '"instructions":"Keep diffs boring."',
+          );
           assert.include(fresh, "User (");
           assert.include(fresh, "Fix the login bug");
           assert.notInclude(fresh, "[Pair] After this turn");
