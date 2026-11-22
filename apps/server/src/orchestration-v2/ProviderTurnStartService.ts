@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
@@ -123,6 +124,94 @@ const PROMPT_REFUSAL_TAGS = [
 const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+/** How many of a thread's newest runs turn start reads before reading them all. */
+const TURN_START_RECENT_RUNS = 50;
+
+type TurnStartHistory = Pick<
+  OrchestrationV2ThreadProjection,
+  "runs" | "attempts" | "providerTurns" | "providerThreads" | "messages"
+> & { readonly lineage?: unknown };
+
+/**
+ * Whether a recent-run turn-start read must give way to a full one. The store keeps the newest
+ * runs ahead of every omitted run, so each "latest earlier run" answer is exact only when it is
+ * one of them; restart continuations walk back through runs without bound; and cancelled
+ * background work stays pending unless a prompted newest run on the provider thread ran after it.
+ */
+export function turnStartNeedsFullHistory(
+  context: TurnStartHistory,
+  runId: RunId,
+  recentRuns: number,
+): boolean {
+  const floor = context.runs.map((run) => run.ordinal).toSorted((a, b) => b - a)[recentRuns - 1];
+  // Fewer runs than the window: the store read them all.
+  if (floor === undefined) return false;
+  const run = context.runs.find((candidate) => candidate.id === runId);
+  if (run === undefined || run.ordinal < floor) return true;
+  if (context.runs.some((candidate) => candidate.restartContinuationOfRunId !== undefined)) {
+    return true;
+  }
+  const newest = (candidate: OrchestrationV2Run | undefined) =>
+    candidate !== undefined && candidate.ordinal >= floor;
+  // Runs are in ordinal order.
+  const earlier = context.runs.filter((candidate) => candidate.ordinal < run.ordinal);
+  const nativeThreadIds = new Set(
+    context.providerThreads
+      .filter((thread) => thread.ownerNodeId === null && thread.nativeThreadRef !== null)
+      .map((thread) => thread.id),
+  );
+  const previousNativeRun = earlier.findLast(
+    (candidate) =>
+      candidate.providerThreadId !== null && nativeThreadIds.has(candidate.providerThreadId),
+  );
+  const previousStartOnThread = earlier.findLast(
+    (candidate) =>
+      candidate.startedAt !== null && candidate.providerThreadId === run.providerThreadId,
+  );
+  const latestOtherStart = context.runs
+    .filter((candidate) => candidate.id !== run.id && candidate.startedAt !== null)
+    .reduce<OrchestrationV2Run | undefined>(
+      (latest, candidate) =>
+        latest === undefined ||
+        DateTime.toEpochMillis(candidate.startedAt!) >= DateTime.toEpochMillis(latest.startedAt!)
+          ? candidate
+          : latest,
+      undefined,
+    );
+  // Besides the run's own message, the read holds only /compact and /goal messages.
+  const commandMessageIds = new Set(
+    context.messages
+      .filter((message) => message.id !== run.userMessageId)
+      .map((message) => message.id),
+  );
+  const completedAttemptIds = new Set(
+    context.providerTurns
+      .filter(
+        (turn) => turn.status === "completed" && turn.providerThreadId === run.providerThreadId,
+      )
+      .map((turn) => turn.runAttemptId),
+  );
+  const promptedNewest = context.runs.some(
+    (candidate) =>
+      candidate.id !== run.id &&
+      newest(candidate) &&
+      candidate.providerThreadId === run.providerThreadId &&
+      candidate.status !== "rolled_back" &&
+      candidate.activeAttemptId !== null &&
+      !commandMessageIds.has(candidate.userMessageId) &&
+      context.attempts.some(
+        (attempt) => attempt.runId === candidate.id && completedAttemptIds.has(attempt.id),
+      ),
+  );
+  return (
+    earlier.length === 0 ||
+    (nativeThreadIds.size > 0 && !newest(previousNativeRun)) ||
+    (run.providerThreadId !== null && !newest(previousStartOnThread)) ||
+    (context.lineage !== undefined && !newest(latestOtherStart)) ||
+    (run.providerThreadId !== null && !promptedNewest)
+  );
+}
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
@@ -353,13 +442,30 @@ export const layer: Layer.Layer<
       };
     };
 
+    const readFullTurnStartContext = Effect.fn("ProviderTurnStartService.readFullHistory")(
+      function* (threadId: ThreadId, runId: RunId) {
+        return yield* projectionStore.getTurnStartContext(threadId, runId);
+      },
+    );
+
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly willRetry?: boolean;
     }) {
       const { runId } = input;
-      const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
+      const recentProjection = yield* projectionStore.getTurnStartContext(input.threadId, runId, {
+        recentRuns: TURN_START_RECENT_RUNS,
+      });
+      const projection = turnStartNeedsFullHistory(recentProjection, runId, TURN_START_RECENT_RUNS)
+        ? yield* readFullTurnStartContext(input.threadId, runId)
+        : recentProjection;
+      // Read later than `projection`; it only feeds sets of runs before this one, which are settled.
+      const fullHistory = yield* Effect.cached(
+        projection === recentProjection
+          ? readFullTurnStartContext(input.threadId, runId)
+          : Effect.succeed(projection),
+      );
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
@@ -972,7 +1078,75 @@ export const layer: Layer.Layer<
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
-      const handoffContextForThread = (loadedProviderThread: OrchestrationV2ProviderThread) => {
+      // Which earlier runs the loaded native thread already holds.
+      const acceptedInput = (
+        history: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">,
+        loadedProviderThread: OrchestrationV2ProviderThread,
+        settledHandoffs: ReadonlyArray<OrchestrationV2ContextHandoff>,
+      ) => {
+        const deliveredAttemptIds = new Set(history.providerTurns.map((turn) => turn.runAttemptId));
+        const acceptedAttempts = history.attempts.filter(
+          (source) =>
+            source.providerThreadId === providerThread.id && deliveredAttemptIds.has(source.id),
+        );
+        const nativeInputRunIds = new Set(
+          acceptedAttempts
+            .filter(
+              (source) =>
+                source.nativeThreadId !== undefined &&
+                source.nativeThreadId === loadedProviderThread.nativeThreadRef?.nativeId,
+            )
+            .map((source) => source.runId),
+        );
+        const legacyInputRunIds = new Set(
+          acceptedAttempts
+            .filter((source) => source.nativeThreadId === undefined)
+            .map((source) => source.runId),
+        );
+        const legacyRecoveredRunIds = new Set(
+          history.runs
+            .filter(
+              (source) =>
+                source.providerThreadId === providerThread.id &&
+                settledHandoffs.some(
+                  (handoff) =>
+                    handoff.strategy === "full_thread_summary" &&
+                    handoff.fromProviderThreadIds.includes(providerThread.id) &&
+                    source.ordinal >= handoff.coveredRunOrdinals.from &&
+                    source.ordinal <= handoff.coveredRunOrdinals.to,
+                ),
+            )
+            .map((source) => source.id),
+        );
+        return {
+          deliveredAttemptIds,
+          acceptedAttempts,
+          nativeInputRunIds,
+          legacyInputRunIds,
+          legacyRecoveredRunIds,
+        };
+      };
+      // A recent read decides whether the loaded native thread has turns only when it holds one;
+      // its other accepted-input sets feed missed runs, whose candidates the store anchors.
+      const inputHistoryFor = (loadedProviderThread: OrchestrationV2ProviderThread) => {
+        const nativeId = loadedProviderThread.nativeThreadRef?.nativeId;
+        const deliveredAttemptIds = new Set(
+          projection.providerTurns.map((turn) => turn.runAttemptId),
+        );
+        return nativeId !== undefined &&
+          projection.attempts.some(
+            (attempt) =>
+              attempt.providerThreadId === providerThread.id &&
+              attempt.nativeThreadId === nativeId &&
+              deliveredAttemptIds.has(attempt.id),
+          )
+          ? Effect.succeed(projection)
+          : fullHistory;
+      };
+      const handoffContextForThread = (
+        loadedProviderThread: OrchestrationV2ProviderThread,
+        history: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">,
+      ) => {
         const measuredContext = latestNativeContextUsage(projection, providerThread);
         const previousSelection =
           measuredContext?.modelSelection ??
@@ -1020,67 +1194,38 @@ export const layer: Layer.Layer<
           ...deliveredItemIds,
           ...settledHandoffs.flatMap((handoff) => handoff.delivery?.omittedItemIds ?? []),
         ]);
-        const deliveredAttemptIds = new Set(
-          projection.providerTurns.map((turn) => turn.runAttemptId),
-        );
-        const acceptedAttempts = projection.attempts.filter(
-          (source) =>
-            source.providerThreadId === providerThread.id && deliveredAttemptIds.has(source.id),
-        );
-        const nativeInputRunIds = new Set(
-          acceptedAttempts
-            .filter(
-              (source) =>
-                source.nativeThreadId !== undefined &&
-                source.nativeThreadId === loadedProviderThread.nativeThreadRef?.nativeId,
-            )
-            .map((source) => source.runId),
-        );
-        const legacyInputRunIds = new Set(
-          acceptedAttempts
-            .filter((source) => source.nativeThreadId === undefined)
-            .map((source) => source.runId),
-        );
-        const legacyRecoveredRunIds = new Set(
-          projection.runs
-            .filter(
-              (source) =>
-                source.providerThreadId === providerThread.id &&
-                settledHandoffs.some(
-                  (handoff) =>
-                    handoff.strategy === "full_thread_summary" &&
-                    handoff.fromProviderThreadIds.includes(providerThread.id) &&
-                    source.ordinal >= handoff.coveredRunOrdinals.from &&
-                    source.ordinal <= handoff.coveredRunOrdinals.to,
-                ),
-            )
-            .map((source) => source.id),
-        );
+        const { deliveredAttemptIds, acceptedAttempts, nativeInputRunIds, legacyInputRunIds } =
+          acceptedInput(history, loadedProviderThread, settledHandoffs);
         // Row identity survives recovery; only accepted native input and delivered history occupy the new session.
         const nativeContextEstimate = Effect.gen(function* () {
-          return sameNativeThread
-            ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
-                const acceptedNatively =
-                  item.providerThreadId === providerThread.id &&
-                  item.runId !== null &&
-                  (nativeInputRunIds.has(item.runId) ||
-                    (legacyInputRunIds.has(item.runId) &&
-                      !coveredItemIds.has(item.id) &&
-                      !legacyRecoveredRunIds.has(item.runId)));
-                if (item.runId === run.id || (!acceptedNatively && !deliveredItemIds.has(item.id)))
-                  return sum;
-                const historical = historicalMessage(item);
-                const nativeAttachments =
-                  item.type === "user_message" && acceptedNatively
-                    ? attachmentTokenAllowance(item.attachments)
-                    : 0;
-                return (
-                  sum +
-                  (historical === null ? 0 : Buffer.byteLength(historical.text)) +
-                  nativeAttachments
-                );
-              }, 0)
-            : 0;
+          if (!sameNativeThread) return 0;
+          // The estimate counts every accepted earlier run, so it reads them all.
+          const full = acceptedInput(yield* fullHistory, loadedProviderThread, settledHandoffs);
+          const { nativeInputRunIds, legacyInputRunIds, legacyRecoveredRunIds } = full;
+          return (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce(
+            (sum, item) => {
+              const acceptedNatively =
+                item.providerThreadId === providerThread.id &&
+                item.runId !== null &&
+                (nativeInputRunIds.has(item.runId) ||
+                  (legacyInputRunIds.has(item.runId) &&
+                    !coveredItemIds.has(item.id) &&
+                    !legacyRecoveredRunIds.has(item.runId)));
+              if (item.runId === run.id || (!acceptedNatively && !deliveredItemIds.has(item.id)))
+                return sum;
+              const historical = historicalMessage(item);
+              const nativeAttachments =
+                item.type === "user_message" && acceptedNatively
+                  ? attachmentTokenAllowance(item.attachments)
+                  : 0;
+              return (
+                sum +
+                (historical === null ? 0 : Buffer.byteLength(historical.text)) +
+                nativeAttachments
+              );
+            },
+            0,
+          );
         });
         const modelContextWindow =
           knownModelWindow ??
@@ -1091,7 +1236,7 @@ export const layer: Layer.Layer<
         };
         // The resume fallback summary already covers every earlier run in order. A
         // retry copy after it would rank older missed requests as the newest history.
-        const missedRuns = projection.runs.filter(
+        const missedRuns = history.runs.filter(
           (source) =>
             !resumeFellBack &&
             source.ordinal < run.ordinal &&
@@ -1173,6 +1318,7 @@ export const layer: Layer.Layer<
             type: "provider_resume_fallback",
           });
           const createdAt = yield* DateTime.now;
+          const full = yield* fullHistory;
           const handoff = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
             targetRunId: run.id,
@@ -1183,11 +1329,11 @@ export const layer: Layer.Layer<
             toProviderInstanceId: run.providerInstanceId,
             coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
             strategy: "full_thread_summary",
-            runs: projection.runs,
+            runs: full.runs,
             items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
               (item) =>
                 item.runId === null ||
-                projection.runs.some(
+                full.runs.some(
                   (source) => source.id === item.runId && source.ordinal < run.ordinal,
                 ),
             ),
@@ -1409,7 +1555,10 @@ export const layer: Layer.Layer<
               }),
         );
         if (resumed._tag === "Success") {
-          const context = handoffContextForThread(resumed.success);
+          const context = handoffContextForThread(
+            resumed.success,
+            yield* inputHistoryFor(resumed.success),
+          );
           context.budget = yield* Effect.cached(context.budget);
           resumedHandoffContext = context;
           resumedRetryHandoff = yield* prepareRetryHandoff(context);
@@ -1426,7 +1575,10 @@ export const layer: Layer.Layer<
           );
           if (fits) return resumed.success;
           const freshThread = { ...resumed.success, nativeThreadRef: null };
-          const freshContext = handoffContextForThread(freshThread);
+          const freshContext = handoffContextForThread(
+            freshThread,
+            yield* inputHistoryFor(freshThread),
+          );
           const { handoff } = yield* recoveryHandoff;
           const fitsFresh = yield* deliverContextHandoffs({
             handoffs: withRecoveryHandoff(handoff),
@@ -1545,7 +1697,9 @@ export const layer: Layer.Layer<
         return;
       }
       const now = yield* DateTime.now;
-      const handoffContext = resumedHandoffContext ?? handoffContextForThread(loadedProviderThread);
+      const handoffContext =
+        resumedHandoffContext ??
+        handoffContextForThread(loadedProviderThread, yield* inputHistoryFor(loadedProviderThread));
       const {
         sameNativeThread,
         handoffUsage,

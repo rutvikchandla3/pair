@@ -867,6 +867,13 @@ export interface ProjectionStoreV2Shape {
   readonly getTurnStartContext: (
     threadId: ThreadId,
     runId: RunId,
+    /**
+     * Reads runs, attempts, provider turns and compaction messages for the newest `recentRuns`
+     * runs under the `recentRuns` filter's guard, plus what turn start reads across history:
+     * the run, failed or interrupted runs of its provider thread, targets of ready handoffs, the
+     * provider thread's newest turn and its latest-usage turn.
+     */
+    options?: { readonly recentRuns?: number },
   ) => Effect.Effect<
     Pick<
       OrchestrationV2ThreadProjection,
@@ -5180,18 +5187,100 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const javascriptTrimWhitespace =
       " \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
 
-    const getTurnStartContext: ProjectionStoreV2Shape["getTurnStartContext"] = (threadId, runId) =>
+    /** Run and provider-turn ids for a recent-run turn-start read; undefined reads everything. */
+    const turnStartWindow = Effect.fn("ProjectionStore.turnStartWindow")(function* (
+      threadId: ThreadId,
+      runId: RunId,
+      limit: number,
+    ) {
+      const [run] = yield* sql<{
+        readonly provider_thread_id: string | null;
+        readonly native_thread_id: string | null;
+      }>`
+        SELECT run.provider_thread_id,
+          json_extract(provider_thread.payload_json, '$.nativeThreadRef.nativeId') AS native_thread_id
+        FROM orchestration_v2_projection_runs AS run
+        LEFT JOIN orchestration_v2_projection_provider_threads AS provider_thread
+          ON provider_thread.provider_thread_id = run.provider_thread_id
+        WHERE run.run_id = ${runId} AND run.thread_id = ${threadId}
+      `;
+      if (run === undefined) return undefined;
+      // The turn latestNativeContextUsage would pick from every turn: the same filters, and its
+      // first-read-wins tie rule over the raw timestamp string.
+      const providerTurns = yield* sql<{
+        readonly provider_turn_id: string;
+        readonly run_id: string | null;
+      }>`
+        SELECT * FROM (
+          SELECT provider_turn_id, NULL AS run_id
+          FROM orchestration_v2_projection_provider_turns
+          WHERE provider_thread_id = ${run.provider_thread_id}
+          ORDER BY ordinal DESC LIMIT 1
+        )
+        UNION ALL
+        SELECT * FROM (
+          SELECT turn.provider_turn_id, attempt.run_id
+          FROM orchestration_v2_projection_provider_turns AS turn
+          JOIN orchestration_v2_projection_run_attempts AS attempt
+            ON attempt.attempt_id = turn.run_attempt_id
+          JOIN orchestration_v2_projection_runs AS owner ON owner.run_id = attempt.run_id
+          WHERE turn.provider_thread_id = ${run.provider_thread_id}
+            AND turn.run_attempt_id IS NOT NULL
+            AND json_extract(turn.payload_json, '$.tokenUsage') IS NOT NULL
+            AND attempt.provider_thread_id = ${run.provider_thread_id}
+            AND attempt.root_node_id = turn.node_id
+            AND json_extract(attempt.payload_json, '$.nativeThreadId') = ${run.native_thread_id}
+          ORDER BY json_extract(turn.payload_json, '$.tokenUsage.updatedAt') DESC, turn.ordinal ASC
+          LIMIT 1
+        )
+      `;
+      const anchors = yield* sql<{ readonly run_id: string }>`
+        SELECT run_id FROM orchestration_v2_projection_runs
+        WHERE thread_id = ${threadId} AND status IN ('failed', 'interrupted')
+          AND provider_thread_id = ${run.provider_thread_id}
+        UNION
+        SELECT target_run_id FROM orchestration_v2_projection_context_handoffs
+        WHERE thread_id = ${threadId} AND status = 'ready' AND target_run_id IS NOT NULL
+      `;
+      const runIds = yield* recentRunIds(threadId, {
+        limit,
+        runIds: [
+          runId,
+          ...anchors.map((row) => RunId.make(row.run_id)),
+          ...providerTurns.flatMap((row) => (row.run_id === null ? [] : [RunId.make(row.run_id)])),
+        ],
+      });
+      return runIds === undefined
+        ? undefined
+        : {
+            runIds,
+            providerTurnIds: encodeIdList(providerTurns.map((row) => row.provider_turn_id)),
+          };
+    });
+
+    const getTurnStartContext: ProjectionStoreV2Shape["getTurnStartContext"] = (
+      threadId,
+      runId,
+      options,
+    ) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
             const thread = yield* getThread(threadId);
+            const window =
+              options?.recentRuns === undefined
+                ? undefined
+                : yield* turnStartWindow(threadId, runId, options.recentRuns);
             const runs = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_runs
-              WHERE thread_id = ${threadId} ORDER BY ordinal ASC
+              WHERE ${window === undefined ? sql`thread_id = ${threadId}` : sql`+thread_id = ${threadId} AND run_id IN (SELECT value FROM json_each(${window.runIds}))`}
+              ORDER BY ordinal ASC
             `.pipe(Effect.flatMap(decodeRows(decodeRunPayload, threadId)));
             const attempts = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_run_attempts
-              WHERE thread_id = ${threadId} ORDER BY run_id ASC, attempt_ordinal ASC
+              WHERE thread_id = ${threadId}
+                ${window === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${window.runIds}))`}
+              ORDER BY run_id ASC, attempt_ordinal ASC
             `.pipe(Effect.flatMap(decodeRows(decodeRunAttemptPayload, threadId)));
             const nodes = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_nodes
@@ -5207,9 +5296,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT payload_json FROM orchestration_v2_projection_provider_threads
               WHERE thread_id = ${threadId} ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeProviderThreadPayload, threadId)));
+            // Without an index on run_attempt_id this walks the thread's provider-turn rows, but
+            // decodes only the window's.
             const providerTurns = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_provider_turns
-              WHERE thread_id = ${threadId} ORDER BY provider_thread_id ASC, ordinal ASC
+              WHERE thread_id = ${threadId}
+                ${
+                  window === undefined
+                    ? sql``
+                    : sql`AND (run_attempt_id IN (SELECT attempt_id FROM orchestration_v2_projection_run_attempts WHERE run_id IN (SELECT value FROM json_each(${window.runIds})))
+                      OR provider_turn_id IN (SELECT value FROM json_each(${window.providerTurnIds})))`
+                }
+              ORDER BY provider_thread_id ASC, ordinal ASC
             `.pipe(Effect.flatMap(decodeRows(decodeProviderTurnPayload, threadId)));
             const checkpointScopes = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
@@ -5241,9 +5339,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE thread_id = ${threadId} AND (
                 message_id IN (SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
                   WHERE thread_id = ${threadId} AND run_id = ${runId})
-                OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
-                -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
-                OR (role = 'user' AND trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
+                OR (${window === undefined ? sql`1` : sql`run_id IN (SELECT value FROM json_each(${window.runIds}))`} AND (
+                  (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
+                  -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
+                  OR (role = 'user' AND trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
+                ))
               ) ORDER BY created_at ASC, message_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeMessagePayload, threadId)));
             const conversation = yield* sql<{ present: number }>`
