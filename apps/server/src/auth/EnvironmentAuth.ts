@@ -906,13 +906,22 @@ export const make = Effect.gen(function* () {
       const header = request.headers[PAIR_USER_HEADER];
       const person = decodePairUserHeader(header);
       // An identity that is sent but unreadable never falls back to the caller's own claim.
-      return header !== undefined && Option.isNone(person)
-        ? Effect.fail(
-            new ServerAuthInvalidCredentialError({
-              diagnostic: "Pair Builder requests need a valid X-Pair-User identity.",
-            }),
-          )
-        : Effect.succeed(person);
+      if (header !== undefined && Option.isNone(person)) {
+        return Effect.fail(
+          new ServerAuthInvalidCredentialError({
+            diagnostic: "Pair Builder requests need a valid X-Pair-User identity.",
+          }),
+        );
+      }
+      // A proxied browser's request carries the token ambiently, like a cookie.
+      if (Option.isSome(person) && !isBrowserOriginAllowed(request, trustedBrowserOrigins)) {
+        return Effect.fail(
+          new ServerAuthInvalidCredentialError({
+            diagnostic: "Pair Builder requests are only accepted from the Builder's own origin.",
+          }),
+        );
+      }
+      return Effect.succeed(person);
     };
 
   // Runs inside each authenticate span. The proxy adds the token to every request it forwards,

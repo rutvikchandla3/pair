@@ -1069,6 +1069,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             serverAuth.authenticatePairBuilderIngress(proxied(ada, "wrong-token")),
           ))._tag,
         ).toBe("ServerAuthInvalidCredentialError");
+        expect(
+          (yield* Effect.flip(
+            serverAuth.authenticatePairBuilderIngress(
+              proxied({ ...ada, origin: "https://elsewhere.example" }),
+            ),
+          ))._tag,
+        ).toBe("ServerAuthInvalidCredentialError");
 
         // Revoking the session only closes its sockets; the next proxied request opens another.
         yield* sessions.revoke(first.sessionId);
