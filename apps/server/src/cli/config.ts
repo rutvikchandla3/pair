@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import {
   OtlpHeadersFromString,
@@ -242,6 +243,97 @@ const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
   Config.map(Option.getOrUndefined),
 );
 
+const optionalTrimmedString = (name: string) =>
+  Config.String(name).pipe(
+    Config.option,
+    Config.map((value) => Option.getOrUndefined(value)?.trim() || undefined),
+  );
+
+const optionalTrimmedRedacted = (name: string) =>
+  Config.Redacted(name).pipe(
+    Config.option,
+    Config.map(Option.map((value) => Redacted.value(value).trim())),
+    Config.map(Option.filter((value) => value.length > 0)),
+    Config.map(Option.map((value) => Redacted.make(value))),
+    Config.map(Option.getOrUndefined),
+  );
+
+const PairBuilderEnvConfig = Config.all({
+  ingressToken: optionalTrimmedRedacted("PAIR_BUILDER_INGRESS_TOKEN"),
+  sandboxId: optionalTrimmedString("PAIR_BUILDER_SANDBOX_ID"),
+  workspaceRoot: optionalTrimmedString("PAIR_BUILDER_WORKSPACE_ROOT"),
+  eventsUrl: optionalTrimmedString("PAIR_BUILDER_EVENTS_URL"),
+  eventsToken: optionalTrimmedRedacted("PAIR_BUILDER_EVENTS_TOKEN"),
+  task: optionalTrimmedString("PAIR_BUILDER_TASK"),
+});
+
+/**
+ * Agents and terminals inherit the server's environment, so once ServerConfig holds the host-mode
+ * secrets the server process drops them from it.
+ */
+export const releasePairBuilderSecrets = Effect.fn("config.releasePairBuilderSecrets")(
+  function* () {
+    const environment = yield* HostProcess.Environment;
+    delete environment.PAIR_BUILDER_INGRESS_TOKEN;
+    delete environment.PAIR_BUILDER_EVENTS_TOKEN;
+  },
+);
+
+const PairBuilderTask = Schema.Struct({
+  key: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  title: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+const decodePairBuilderTask = Schema.decodeUnknownOption(Schema.fromJsonString(PairBuilderTask));
+
+const failPairBuilderConfig = (message: string) =>
+  Effect.fail(
+    new Config.ConfigError(new Schema.SchemaError(new SchemaIssue.InvalidValue({ message }))),
+  );
+
+/** Values never reach the errors: the tokens are secrets and the task is the customer's text. */
+const resolvePairBuilderHostConfig = Effect.fn("config.resolvePairBuilderHostConfig")(function* (
+  env: Config.Success<typeof PairBuilderEnvConfig>,
+) {
+  if (env.ingressToken === undefined) return undefined;
+  const path = yield* Path.Path;
+  if (env.workspaceRoot === undefined || !path.isAbsolute(env.workspaceRoot)) {
+    return yield* failPairBuilderConfig(
+      "PAIR_BUILDER_WORKSPACE_ROOT must be an absolute path when PAIR_BUILDER_INGRESS_TOKEN is set.",
+    );
+  }
+  let events: ServerConfig.PairBuilderHostConfig["events"];
+  if (env.eventsUrl !== undefined) {
+    const url = URL.parse(env.eventsUrl);
+    if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
+      return yield* failPairBuilderConfig("PAIR_BUILDER_EVENTS_URL must be an http(s) URL.");
+    }
+    if (env.eventsToken === undefined) {
+      return yield* failPairBuilderConfig(
+        "PAIR_BUILDER_EVENTS_TOKEN is required when PAIR_BUILDER_EVENTS_URL is set.",
+      );
+    }
+    events = { url, token: env.eventsToken };
+  }
+  let workspaceTitle: string | undefined;
+  if (env.task !== undefined) {
+    const task = decodePairBuilderTask(env.task);
+    if (Option.isNone(task)) {
+      return yield* failPairBuilderConfig("PAIR_BUILDER_TASK must be a JSON object.");
+    }
+    const parts = [task.value.key, task.value.title]
+      .map((part) => part?.trim() ?? "")
+      .filter((part) => part.length > 0);
+    workspaceTitle = parts.length > 0 ? parts.join(": ") : undefined;
+  }
+  return {
+    ingressToken: env.ingressToken,
+    sandboxId: env.sandboxId,
+    workspaceRoot: path.resolve(env.workspaceRoot),
+    workspaceTitle,
+    events,
+  } satisfies ServerConfig.PairBuilderHostConfig;
+});
+
 export interface CliServerFlags {
   readonly mode: Option.Option<ServerConfig.RuntimeMode>;
   readonly port: Option.Option<number>;
@@ -375,6 +467,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const env = yield* EnvServerConfig;
+  const pairBuilder = yield* resolvePairBuilderHostConfig(yield* PairBuilderEnvConfig);
   const normalizedFlags = {
     mode: flags.mode ?? Option.none(),
     port: flags.port ?? Option.none(),
@@ -517,7 +610,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const resourceMonitorPath = bootstrap?.resourceMonitorPath;
   const autoBootstrapProjectFromCwd = Option.getOrElse(
     resolveOptionPrecedence(
-      cloudOnly ? Option.some(false) : Option.none(),
+      // Host mode bootstraps the Builder's workspace project instead, without a starter thread.
+      cloudOnly || pairBuilder !== undefined ? Option.some(false) : Option.none(),
       Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
       isHeadlessStartup ? Option.some(false) : Option.none(),
       normalizedFlags.autoBootstrapProjectFromCwd,
@@ -661,6 +755,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServePort,
     ...(restoreMode ? { restoreMode } : {}),
     ...(runnerListener === undefined ? {} : { runnerListener }),
+    ...(pairBuilder === undefined ? {} : { pairBuilder }),
   };
 
   return config;

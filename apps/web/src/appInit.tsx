@@ -1,6 +1,10 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientSettings } from "@t3tools/contracts/settings";
-import { createBrowserHistory, createHashHistory } from "@tanstack/react-router";
+import {
+  createBrowserHistory,
+  createHashHistory,
+  createMemoryHistory,
+} from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 
 import { applyAppearanceContrast } from "./appearanceContrast";
@@ -55,6 +59,8 @@ import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommand
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells } from "./state/threads";
 import { resolveThreadRouteTarget } from "./threadRoutes";
+import { startEmbedBridge } from "./embed/bridge";
+import { embedConfig } from "./embed/mode";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
 function startClientAppearance(): void {
@@ -160,6 +166,14 @@ function startThreadOverlayRetention(router: AppRouter): void {
   });
 }
 
+function createAppRouter(): AppRouter {
+  // The embedding host owns the page address, so the app keeps its own history in memory.
+  if (embedConfig.embedded) return getRouter(createMemoryHistory({ initialEntries: ["/"] }));
+  // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
+  if (isElectron) return getRouter(createHashHistory());
+  return getRouter(createBrowserHistory(), import.meta.env.BASE_URL);
+}
+
 /**
  * Starts every app-lifetime service once, before the first render, and returns the router.
  * They run for the life of the page, so their disposers are dropped here.
@@ -168,8 +182,7 @@ export function startAppServices(): AppRouter {
   // Ahead of the history: the provider auth code must leave the address before anything reads it.
   startProviderAuthDelivery();
 
-  // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-  const router = getRouter(isElectron ? createHashHistory() : createBrowserHistory());
+  const router = createAppRouter();
 
   if (isElectron) {
     syncDocumentElectronPlatformClasses(navigator.platform);
@@ -179,10 +192,12 @@ export function startAppServices(): AppRouter {
   installDesktopPasteAsText(window.desktopBridge, window);
 
   startClientAppearance();
-  startDocumentTitle();
+  // An embedding host owns the page title and the theme.
+  if (embedConfig.embedded) startEmbedBridge(router, embedConfig);
+  else startDocumentTitle();
   startEnvironmentThemeRepaint();
   startBrowserChromeThemeSync(router);
-  startDefaultThemeAdoption();
+  if (!embedConfig.embedded) startDefaultThemeAdoption();
   startModelPreferencesMigration();
   startAgentOpenedPreviews();
   if (isElectron) startElectronBrowserHost();

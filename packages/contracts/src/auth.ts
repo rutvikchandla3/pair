@@ -26,6 +26,8 @@ export const ServerAuthSessionMethod = Schema.Literals([
   "browser-session-cookie",
   "bearer-access-token",
   "dpop-access-token",
+  /** Pair Builder host mode: its proxy vouches for the browser's user on every request. */
+  "pair-builder-ingress",
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 

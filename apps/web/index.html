@@ -213,6 +213,20 @@
         };
 
         try {
+          // Embedded in a host page (src/embed/protocol.ts), the host's theme parameter decides
+          // and T3's stored theme is not this page's.
+          const params = new URLSearchParams(window.location.search);
+          if (params.get("embed") === "1" && window.parent !== window) {
+            const hostTheme = params.get("theme");
+            const isDark =
+              hostTheme === "dark" ||
+              (hostTheme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+            const color = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+            document.documentElement.classList.toggle("dark", isDark);
+            document.documentElement.style.backgroundColor = color;
+            setThemeColor(color);
+            return;
+          }
           const storedTheme = window.localStorage.getItem("t3code:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           const LEGACY_THEME_IDS = {

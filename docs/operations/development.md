@@ -249,6 +249,23 @@ export check's workspace selectors as more workspaces become clean. Review calle
 deleting code; production mode can also report development scripts and test fixtures.
 Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
 
+## Web bundle under a sub-path
+
+A host can serve the web app from a path on its own origin. Build it with that path as Vite's base:
+
+```sh
+cd apps/web && vp build --base /builder/_workspaces/t3code/
+```
+
+Opened directly, the bundle talks to a server mounted at the same path, so a reverse proxy that
+strips the prefix before the server needs nothing else. A host page that embeds the bundle in a
+same-origin iframe instead loads
+`<base>index.html?embed=1&server=<server path>&thread=<thread id or new>&theme=<light or dark>`
+and talks to it with the messages in
+[`embed/protocol.ts`](../../apps/web/src/embed/protocol.ts). The host's proxy must authenticate
+the browser, because an embedded page shows no pairing screen. See
+[remote architecture](../internals/remote.md#embedded-in-a-host-page).
+
 ## Desktop artifacts
 
 Local artifact builds are unsigned by default and write to `release/`:

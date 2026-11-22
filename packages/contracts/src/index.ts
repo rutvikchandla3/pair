@@ -11,6 +11,7 @@ export * from "./presence.ts";
 export * from "./push.ts";
 export * from "./environment.ts";
 export * from "./environmentHttp.ts";
+export * from "./pairBuilder.ts";
 export * from "./relayClient.ts";
 export * from "./desktopBootstrap.ts";
 export * from "./desktopBrowser.ts";

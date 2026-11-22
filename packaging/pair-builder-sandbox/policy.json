@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "organization": "Pair Builder",
+  "settings": {
+    "defaultModelSelection": {
+      "value": { "instanceId": "claudeAgent", "model": "claude-sonnet-5-5" },
+      "locked": false
+    },
+    "defaultThreadEnvMode": { "value": "local", "locked": false },
+    "textGenerationModelSelection": {
+      "value": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+      "locked": false
+    },
+    "enableProviderUpdateChecks": { "value": false, "locked": true }
+  },
+  "limits": {
+    "connect": false,
+    "telemetry": false,
+    "providers": { "allowedDrivers": ["claudeAgent"] },
+    "updates": { "mode": "off" }
+  }
+}

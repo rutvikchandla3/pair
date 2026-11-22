@@ -62,6 +62,11 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
+import {
+  PairBuilderHostSessionError,
+  PairBuilderHostSessionRequest,
+  PairBuilderHostSessionResult,
+} from "./pairBuilder.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
   PullRequestDiffInput,
@@ -227,7 +232,10 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "pair_builder_host_disabled",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedError<EnvironmentResourceNotFoundError>()(
@@ -880,6 +888,19 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+// The Builder authenticates with its ingress token, which the handler checks; it is not a session.
+class EnvironmentPairBuilderHttpApi extends HttpApiGroup.make("pairBuilder").add(
+  HttpApiEndpoint.post("createSession", "/api/host/sessions", {
+    payload: PairBuilderHostSessionRequest,
+    success: PairBuilderHostSessionResult,
+    error: [
+      EnvironmentAuthInvalidError,
+      EnvironmentResourceNotFoundError,
+      PairBuilderHostSessionError,
+    ],
+  }),
+) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -888,4 +909,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(EnvironmentPairBuilderHttpApi) {}

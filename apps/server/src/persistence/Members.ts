@@ -34,6 +34,8 @@ export const MemberRecord = Schema.Struct({
   /** Null while bound means the token stopped working and the member must reconnect. */
   githubConnectedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
   githubSource: Schema.optionalKey(Schema.NullOr(MemberGitHubSource)),
+  /** The Pair Builder user this member is, in host mode; kept after removal. */
+  pairBuilderUserId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type MemberRecord = typeof MemberRecord.Type;
 
@@ -46,6 +48,7 @@ export const InsertMemberInput = Schema.Struct({
   createdAt: IsoDateTime,
   /** A username an admin pre-set; it binds to an account id on the member's first GitHub sign-in. */
   githubLogin: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  pairBuilderUserId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type InsertMemberInput = typeof InsertMemberInput.Type;
 
@@ -135,7 +138,8 @@ const make = Effect.gen(function* () {
     github_user_id AS "githubUserId",
     github_login AS "githubLogin",
     github_connected_at AS "githubConnectedAt",
-    github_source AS "githubSource"
+    github_source AS "githubSource",
+    pair_builder_user_id AS "pairBuilderUserId"
   `;
 
   const listRows = SqlSchema.findAll({
@@ -157,11 +161,12 @@ const make = Effect.gen(function* () {
     Request: InsertMemberInput,
     execute: (input) => sql`
       INSERT INTO members (
-        id, name, role, git_name, git_email, is_owner, created_at, github_login
+        id, name, role, git_name, git_email, is_owner, created_at, github_login,
+        pair_builder_user_id
       )
       VALUES (
         ${input.id}, ${input.name}, ${input.role}, ${input.gitName}, ${input.gitEmail}, 0,
-        ${input.createdAt}, ${input.githubLogin ?? null}
+        ${input.createdAt}, ${input.githubLogin ?? null}, ${input.pairBuilderUserId ?? null}
       )
     `,
   });

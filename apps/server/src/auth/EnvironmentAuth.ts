@@ -24,6 +24,7 @@ import {
   type MemberId,
   type DpopFailureReason as DpopFailureReasonType,
   mcpClientScopes,
+  teamRoleScopes,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -54,9 +55,17 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as PairBuilderMembers from "../team/PairBuilderMembers.ts";
 import * as TeamState from "../team/TeamState.ts";
+import {
+  decodePairUserHeader,
+  makeIngressTokenMatcher,
+  PAIR_USER_HEADER,
+  type PairBuilderPerson,
+} from "./PairBuilderIngress.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
+const PAIR_BUILDER_SUBJECT = "pair-builder";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
 
 export interface IssuedPairingLink {
@@ -610,6 +619,13 @@ export class EnvironmentAuth extends Context.Service<
     readonly authenticateBrowserSession: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    /**
+     * Checks a request carries the Pair Builder ingress token, and returns the person its
+     * `X-Pair-User` names, if any. Fails outside host mode.
+     */
+    readonly authenticatePairBuilderIngress: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<Option.Option<PairBuilderPerson>, ServerAuthCredentialError>;
   }
 >()("t3/auth/EnvironmentAuth") {}
 
@@ -762,7 +778,12 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
   const teamState = yield* TeamState.TeamState;
+  const pairBuilderMembers = yield* PairBuilderMembers.PairBuilderMembers;
   const devAuth = resolveReusableDevAuth(config);
+  const matchesIngressToken =
+    config.pairBuilder === undefined
+      ? undefined
+      : makeIngressTokenMatcher(config.pairBuilder.ingressToken);
   const githubAppConfigured =
     ((yield* HostProcess.Environment)[CLIENT_ID_VARIABLE]?.trim() ?? "") !== "";
 
@@ -874,9 +895,88 @@ export const make = Effect.gen(function* () {
     ...config.devAllowedOrigins,
   ]);
 
+  const authenticatePairBuilderIngress: EnvironmentAuth["Service"]["authenticatePairBuilderIngress"] =
+    Effect.fn("EnvironmentAuth.authenticatePairBuilderIngress")(function* (request) {
+      if (matchesIngressToken === undefined || parseBearerToken(request) === null) {
+        return yield* new ServerAuthMissingCredentialError({});
+      }
+      if (!matchesIngressToken(request)) {
+        return yield* new ServerAuthInvalidCredentialError({});
+      }
+      const header = request.headers[PAIR_USER_HEADER];
+      const person = decodePairUserHeader(header);
+      // An identity that is sent but unreadable never falls back to the caller's own claim.
+      if (header !== undefined && Option.isNone(person)) {
+        return yield* new ServerAuthInvalidCredentialError({
+          diagnostic: "Pair Builder requests need a valid X-Pair-User identity.",
+        });
+      }
+      // A proxied browser's request carries the token ambiently, like a cookie.
+      if (Option.isSome(person) && !isBrowserOriginAllowed(request, trustedBrowserOrigins)) {
+        return yield* new ServerAuthInvalidCredentialError({
+          diagnostic: "Pair Builder requests are only accepted from the Builder's own origin.",
+        });
+      }
+      return person;
+    });
+
+  // Runs inside each authenticate span. The proxy adds the token to every request it forwards,
+  // so it is as ambient as a cookie and gets the same origin check.
+  const authenticateIngressPerson = Effect.fnUntraced(function* (
+    request: HttpServerRequest.HttpServerRequest,
+    person: Option.Option<PairBuilderPerson>,
+  ) {
+    if (Option.isNone(person)) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "Pair Builder requests need a valid X-Pair-User identity.",
+      });
+    }
+    if (!isBrowserOriginAllowed(request, trustedBrowserOrigins)) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "Pair Builder requests are only accepted from the Builder's own origin.",
+      });
+    }
+    const member = yield* pairBuilderMembers.resolve(person.value).pipe(
+      Effect.catchTags({
+        PairBuilderMemberRemovedError: (cause) =>
+          Effect.fail(
+            new ServerAuthInvalidCredentialError({
+              diagnostic: "This Pair Builder user's team member was removed.",
+              cause,
+            }),
+          ),
+        PairBuilderMemberWriteError: (cause) =>
+          Effect.fail(new ServerAuthSessionCredentialValidationError({ cause })),
+      }),
+    );
+    const session = yield* sessions
+      .ensureMemberSession({
+        memberId: member.id,
+        subject: PAIR_BUILDER_SUBJECT,
+        method: "pair-builder-ingress",
+        scopes: teamRoleScopes(member.role),
+        label: "Pair Builder",
+      })
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionCredentialValidationError({ cause })));
+    return {
+      sessionId: session.sessionId,
+      subject: session.subject,
+      memberId: session.memberId,
+      method: session.method,
+      scopes: session.scopes,
+      storedScopes: session.scopes,
+    } satisfies AuthenticatedSession;
+  });
+
   const authenticateRequest = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
+    if (matchesIngressToken?.(request) === true) {
+      return authenticateIngressPerson(
+        request,
+        decodePairUserHeader(request.headers[PAIR_USER_HEADER]),
+      );
+    }
     const dpopToken = parseDpopToken(request);
     const credential = resolveRequestCredential(request);
     if (!credential?.token) {
@@ -1555,6 +1655,7 @@ export const make = Effect.gen(function* () {
     issueMcpClientSession,
     consumeMcpApprovalCode,
     authenticateBrowserSession,
+    authenticatePairBuilderIngress,
   });
 });
 
@@ -1605,6 +1706,7 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
+  Layer.provideMerge(PairBuilderMembers.layer),
   Layer.provideMerge(TeamState.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
