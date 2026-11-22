@@ -16,6 +16,7 @@ import {
   type OrchestrationV2Sandbox,
   type OrchestrationV2ThreadShellSandbox,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
@@ -3337,6 +3338,225 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       })).runs;
       assert.equal(recovery?.status, "completed");
       assert.deepEqual(recovery?.restartCancelledBackgroundWork, work);
+    }),
+  );
+  it.effect("bot flush reads look runs, provider threads and usage up by index, as before", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("bot-flush-reads");
+      const template = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const at = (minutes: number) =>
+        DateTime.add(DateTime.makeUnsafe("2026-11-01T00:00:00.000Z"), { minutes });
+      const root = ProviderThreadId.make("provider-thread:bot-flush:root");
+      const child = ProviderThreadId.make("provider-thread:bot-flush:child");
+      const putProviderThread = (id: ProviderThreadId, ownerNodeId: NodeId | null) =>
+        store.apply({
+          id: EventId.make(`event:bot-flush:${id}`),
+          type: "provider-thread.updated",
+          threadId,
+          driver,
+          providerInstanceId,
+          occurredAt: at(0),
+          payload: {
+            id,
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: ownerNodeId === null ? threadId : null,
+            ownerNodeId,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: at(0),
+            updatedAt: at(0),
+          },
+        });
+      yield* putProviderThread(root, null);
+      // A child thread owned by one of this thread's nodes belongs to it.
+      yield* putProviderThread(child, NodeId.make("node:bot-flush:3"));
+      const putRun = (ordinal: number, status: OrchestrationV2Run["status"]) =>
+        store.apply({
+          id: EventId.make(`event:bot-flush:run:${ordinal}`),
+          type: "run.created",
+          threadId,
+          runId: RunId.make(`run:bot-flush:${ordinal}`),
+          nodeId: NodeId.make(`node:bot-flush:${ordinal}`),
+          driver,
+          providerInstanceId,
+          occurredAt: at(ordinal),
+          payload: {
+            ...template,
+            id: RunId.make(`run:bot-flush:${ordinal}`),
+            ordinal,
+            providerThreadId: root,
+            userMessageId: MessageId.make(`message:bot-flush:${ordinal}`),
+            rootNodeId: NodeId.make(`node:bot-flush:${ordinal}`),
+            status,
+            startedAt: status === "queued" ? null : at(ordinal),
+            completedAt: status === "completed" ? at(ordinal) : null,
+          },
+        });
+      for (const ordinal of [2, 3, 4, 5]) yield* putRun(ordinal, "completed");
+      yield* putRun(6, "running");
+      yield* putRun(7, "queued");
+      yield* store.apply({
+        id: EventId.make("event:bot-flush:node:3"),
+        type: "node.updated",
+        threadId,
+        runId: RunId.make("run:bot-flush:3"),
+        nodeId: NodeId.make("node:bot-flush:3"),
+        driver,
+        occurredAt: at(3),
+        payload: {
+          id: NodeId.make("node:bot-flush:3"),
+          threadId,
+          runId: RunId.make("run:bot-flush:3"),
+          rootNodeId: NodeId.make("node:bot-flush:3"),
+          parentNodeId: null,
+          kind: "root_turn",
+          status: "completed",
+          countsForRun: true,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: at(3),
+          completedAt: at(3),
+        },
+      });
+
+      const plan = (statement: string) =>
+        sql
+          .unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statement}`)
+          .pipe(Effect.map((rows) => rows.map((row) => row.detail).join("\n")));
+      const traced = <A, E, R>(read: Effect.Effect<A, E, R>, marker: string) =>
+        Effect.gen(function* () {
+          const { statements, tracer } = traceSqlStatements();
+          const value = yield* read.pipe(Effect.withTracer(tracer));
+          const statement = statements.find((query) => query.includes(marker))!;
+          return { value, plan: yield* plan(statement) };
+        });
+
+      // Runs: active ones plus the latest started, then also narrowed to named runs.
+      const active = ["queued", "preparing", "starting", "running", "waiting"] as const;
+      const scannedRuns = (named: ReadonlyArray<string> | null) =>
+        sql<{ readonly ordinal: number }>`
+          SELECT ordinal FROM orchestration_v2_projection_runs
+          WHERE thread_id = ${threadId}
+            ${named === null ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${JSON.stringify(named)}))`}
+            AND (status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+              OR run_id = (
+                SELECT run_id FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${threadId}
+                  AND (status <> 'cancelled' OR json_extract(payload_json, '$.startedAt') IS NOT NULL)
+                ORDER BY ordinal DESC LIMIT 1))
+          ORDER BY ordinal ASC
+        `.pipe(Effect.map((rows) => rows.map((row) => row.ordinal)));
+      const runs = yield* traced(
+        store.getThreadRecords(threadId, ["runs"], { runStatuses: active, includeLatestRun: true }),
+        "Candidate ids",
+      );
+      assert.deepEqual(
+        runs.value.runs.map((run) => run.ordinal),
+        yield* scannedRuns(null),
+      );
+      assert.match(runs.plan.split("\n")[0]!, /USING (INDEX sqlite_autoindex|INTEGER PRIMARY KEY)/);
+      const named = [RunId.make("run:bot-flush:2"), RunId.make("run:bot-flush:6")];
+      assert.deepEqual(
+        (yield* store.getThreadRecords(threadId, ["runs"], {
+          runStatuses: active,
+          includeLatestRun: true,
+          runIds: named,
+        })).runs.map((run) => run.ordinal),
+        yield* scannedRuns(named),
+      );
+
+      // Provider threads: the same rows as listing the thread's nodes, without listing them.
+      const threads = yield* traced(
+        store.getThreadRecords(threadId, ["providerThreads"], { providerThreadIds: [root, child] }),
+        "checked per named row",
+      );
+      assert.deepEqual(threads.value.providerThreads.map((thread) => thread.id).toSorted(), [
+        child,
+        root,
+      ]);
+      assert.notMatch(threads.plan, /nodes_thread_run_idx \(thread_id=\?\)$/m);
+
+      // Usage: the bounded slice picks what the full read picks as turns open, end and reopen.
+      const putTurn = (
+        ordinal: number,
+        status: "running" | "completed",
+        usedAt: number | null,
+        id = `event:bot-flush:turn:${ordinal}:${status}:${usedAt}`,
+      ) =>
+        store.apply({
+          id: EventId.make(id),
+          type: "provider-turn.updated",
+          threadId,
+          nodeId: NodeId.make(`node:bot-flush:turn:${ordinal}`),
+          driver,
+          occurredAt: at(ordinal),
+          payload: {
+            id: ProviderTurnId.make(`provider-turn:bot-flush:${ordinal}`),
+            providerThreadId: root,
+            nodeId: NodeId.make(`node:bot-flush:turn:${ordinal}`),
+            runAttemptId: RunAttemptId.make(`attempt:bot-flush:${ordinal}`),
+            nativeTurnRef: null,
+            ordinal,
+            status,
+            startedAt: at(ordinal),
+            completedAt: status === "completed" ? at(ordinal) : null,
+            ...(usedAt === null
+              ? {}
+              : {
+                  tokenUsage: {
+                    usedTokens: usedAt * 1_000,
+                    updatedAt: DateTime.formatIso(at(usedAt)),
+                  },
+                }),
+          },
+        });
+      for (const ordinal of [1, 2, 3, 4, 5])
+        yield* putTurn(ordinal, "completed", ordinal === 2 ? 10 : null);
+      let memo: { through: number | null; bestId: ProviderTurnId | null } = {
+        through: null,
+        bestId: null,
+      };
+      const agrees = Effect.gen(function* () {
+        const full = yield* store.getThreadRecords(threadId, ["providerTurns"], {
+          providerTurnThreadIds: [root],
+          latestProviderTurnUsageOnly: true,
+        });
+        const bounded = yield* traced(
+          store.getThreadRecords(threadId, ["providerTurns"], {
+            providerTurnThreadIds: [root],
+            providerTurnsSince: { providerThreadId: root, ...memo },
+          }),
+          "provider_turns",
+        );
+        const answer = bounded.value.providerTurns.find((turn) => turn.tokenUsage !== undefined);
+        assert.strictEqual(answer?.id, full.providerTurns[0]?.id);
+        assert.notMatch(bounded.plan, /provider_turns_thread_idx \(thread_id=\?\)/);
+        const next = ProjectionStore.nextProviderTurnsSince(root, bounded.value.providerTurns);
+        memo = { through: next.through, bestId: next.bestId };
+        return answer?.ordinal;
+      });
+      assert.strictEqual(yield* agrees, 2);
+      // Read while turn 6 runs without usage; it then reports later usage and ends.
+      yield* putTurn(6, "running", null);
+      assert.strictEqual(yield* agrees, 2);
+      assert.strictEqual(memo.through, 5);
+      yield* putTurn(6, "completed", 20);
+      assert.strictEqual(yield* agrees, 6);
+      // A late report reopens ended turn 3 with the newest usage.
+      yield* putTurn(3, "running", 30);
+      assert.strictEqual(yield* agrees, 3);
     }),
   );
   it.effect("record reads select subagents by id", () => subagentRecordsSelectById);

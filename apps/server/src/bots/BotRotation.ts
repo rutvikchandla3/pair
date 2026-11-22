@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -154,6 +155,10 @@ const make = Effect.gen(function* () {
   >();
   const budget = yield* sessionTokenBudget;
   const registerRotation = yield* SessionRotation.makeRegister;
+  // Per home thread, so a flush reads only turns since the last one; lost on restart.
+  const usageMemos = yield* Ref.make(
+    new Map<ThreadId, NonNullable<ProjectionStore.ProjectionRecordFilter["providerTurnsSince"]>>(),
+  );
 
   const freshSessionSeed: SessionRotation.SessionRotationShape["freshSessionSeed"] = Effect.fn(
     "BotRotation.freshSessionSeed",
@@ -209,8 +214,9 @@ const make = Effect.gen(function* () {
     function* (threadId: ThreadId, runId: RunId) {
       while (true) {
         const thread = yield* projections.getThread(threadId);
-        const active =
-          thread.activeProviderThreadId === null ? [] : [thread.activeProviderThreadId];
+        const providerThreadId = thread.activeProviderThreadId;
+        const active = providerThreadId === null ? [] : [providerThreadId];
+        const memo = (yield* Ref.get(usageMemos)).get(threadId);
         const records = yield* projections.getThreadRecords(
           threadId,
           ["runs", "providerThreads", "providerTurns"],
@@ -219,9 +225,23 @@ const make = Effect.gen(function* () {
             includeLatestRun: true,
             providerThreadIds: active,
             providerTurnThreadIds: active,
-            latestProviderTurnUsageOnly: true,
+            ...(providerThreadId === null
+              ? { latestProviderTurnUsageOnly: true }
+              : {
+                  providerTurnsSince:
+                    memo?.providerThreadId === providerThreadId
+                      ? memo
+                      : { providerThreadId, through: null, bestId: null },
+                }),
           },
         );
+        if (providerThreadId !== null) {
+          const next = ProjectionStore.nextProviderTurnsSince(
+            providerThreadId,
+            records.providerTurns,
+          );
+          yield* Ref.update(usageMemos, (memos) => new Map(memos).set(threadId, next));
+        }
         // A newer run is going or done; its own completion decides.
         // A removed queued message leaves a cancelled run that never started.
         const latest = records.runs

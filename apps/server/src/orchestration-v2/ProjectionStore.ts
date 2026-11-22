@@ -401,6 +401,16 @@ export interface ProjectionRecordFilter {
   readonly providerTurnThreadIds?: ReadonlyArray<ProviderThreadId>;
   /** Only the provider turn whose token usage was updated last. */
   readonly latestProviderTurnUsageOnly?: true;
+  /**
+   * Instead of `latestProviderTurnUsageOnly`, a bounded slice for callers that remember the last
+   * answer: the provider thread's turns after `through` (with `through: null`, its latest-usage
+   * turn), `bestId`, every open turn and its newest turn, latest usage first.
+   */
+  readonly providerTurnsSince?: {
+    readonly providerThreadId: ProviderThreadId;
+    readonly through: number | null;
+    readonly bestId: ProviderTurnId | null;
+  };
   readonly runtimeRequestStatuses?: ReadonlyArray<OrchestrationV2RuntimeRequest["status"]>;
   readonly contextTransferStatuses?: ReadonlyArray<OrchestrationV2ContextTransfer["status"]>;
   readonly subagentIds?: ReadonlyArray<NodeId>;
@@ -422,6 +432,27 @@ export interface ProjectionRecordFilter {
    */
   readonly recentRuns?: RecentRunsFilter;
 }
+
+/**
+ * The `providerTurnsSince` for the next lookup, from this one's turns: through the turns before
+ * the first open one (every turn up to it had ended), with this lookup's answer as `bestId`.
+ * Exact while an ended turn's usage changes only by reopening it, which adapters do because they
+ * write usage for the active turn, and while usage times never go back.
+ */
+export const nextProviderTurnsSince = (
+  providerThreadId: ProviderThreadId,
+  turns: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "id" | "ordinal" | "completedAt" | "tokenUsage">
+  >,
+) => {
+  const open = turns.filter((turn) => turn.completedAt === null).map((turn) => turn.ordinal);
+  return {
+    providerThreadId,
+    through:
+      open.length > 0 ? Math.min(...open) - 1 : Math.max(0, ...turns.map((turn) => turn.ordinal)),
+    bestId: turns.find((turn) => turn.tokenUsage !== undefined)?.id ?? null,
+  };
+};
 
 export interface RecentRunsFilter {
   readonly limit: number;
@@ -3843,6 +3874,38 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : undefined;
         // A window read looks rows up by run; `+` keeps SQLite off the thread-wide indexes.
         const ownThread = recentRunsJson === undefined ? sql`thread_id` : sql`+thread_id`;
+        const since = filter?.providerTurnsSince;
+        const providerTurnsSinceRows =
+          since === undefined
+            ? sql``
+            : sql`AND rowid IN (
+                ${
+                  since.through === null
+                    ? sql`SELECT r FROM (
+                        SELECT rowid AS r FROM orchestration_v2_projection_provider_turns
+                        WHERE provider_thread_id = ${since.providerThreadId}
+                          AND json_extract(payload_json, '$.tokenUsage') IS NOT NULL
+                        ORDER BY julianday(json_extract(payload_json, '$.tokenUsage.updatedAt')) DESC,
+                          ordinal ASC
+                        LIMIT 1
+                      )`
+                    : sql`SELECT rowid FROM orchestration_v2_projection_provider_turns
+                        WHERE provider_thread_id = ${since.providerThreadId} AND ordinal > ${since.through}`
+                }
+                UNION ALL
+                SELECT rowid FROM orchestration_v2_projection_provider_turns
+                WHERE provider_turn_id = ${since.bestId}
+                UNION ALL
+                SELECT rowid FROM orchestration_v2_projection_provider_turns
+                WHERE completed_at IS NULL AND +provider_thread_id = ${since.providerThreadId}
+                UNION ALL
+                SELECT r FROM (
+                  SELECT rowid AS r FROM orchestration_v2_projection_provider_turns
+                  WHERE provider_thread_id = ${since.providerThreadId}
+                  ORDER BY ordinal DESC
+                  LIMIT 1
+                )
+              )`;
         const inRecentRuns =
           recentRunsJson === undefined
             ? sql``
@@ -4090,19 +4153,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_runs
-            WHERE ${ownThread} = ${threadId}
+            WHERE ${filter?.runStatuses === undefined ? ownThread : sql`+thread_id`} = ${threadId}
               ${filter?.runIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.runIds)}))`}
               ${
                 filter?.runStatuses === undefined
                   ? sql``
-                  : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
-                    OR (${filter.includeLatestRun === true ? 1 : 0} = 1 AND run_id = (
+                  : sql`-- Candidate ids through the status and ordinal indexes; an OR of them walks every run.
+                    AND run_id IN (
                       SELECT run_id FROM orchestration_v2_projection_runs
                       WHERE thread_id = ${threadId}
-                        AND (status <> 'cancelled' OR json_extract(payload_json, '$.startedAt') IS NOT NULL)
-                      ORDER BY ordinal DESC
-                      LIMIT 1
-                    )))`
+                        AND status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
+                      UNION ALL
+                      SELECT * FROM (
+                        SELECT run_id FROM orchestration_v2_projection_runs
+                        WHERE thread_id = ${threadId} AND ${filter.includeLatestRun === true ? 1 : 0} = 1
+                          AND (status <> 'cancelled' OR json_extract(payload_json, '$.startedAt') IS NOT NULL)
+                        ORDER BY ordinal DESC
+                        LIMIT 1
+                      )
+                    )`
               }
               ${inRecentRuns}
             ORDER BY ordinal ASC
@@ -4250,8 +4319,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
-            FROM orchestration_v2_projection_provider_threads
-            WHERE (thread_id = ${threadId}
+            FROM orchestration_v2_projection_provider_threads AS provider_thread
+            WHERE ${
+              filter?.providerThreadIds === undefined
+                ? sql`(thread_id = ${threadId}
                OR owner_node_id IN (
                  SELECT node_id
                  FROM orchestration_v2_projection_nodes
@@ -4263,8 +4334,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                  FROM orchestration_v2_projection_subagents
                  WHERE thread_id = ${threadId}
                    AND provider_thread_id IS NOT NULL
-               ))
-              ${filter?.providerThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerThreadIds)}))`}
+               ))`
+                : sql`provider_thread.provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerThreadIds)}))
+              -- The same membership, checked per named row instead of listing every node.
+              AND (provider_thread.thread_id = ${threadId}
+                OR EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_nodes
+                  WHERE node_id = provider_thread.owner_node_id AND ${ownThread} = ${threadId}
+                    ${recentRows("nodes")}
+                )
+                OR EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_subagents AS subagent
+                  WHERE subagent.provider_thread_id = provider_thread.provider_thread_id
+                    AND subagent.thread_id = ${threadId}
+                ))`
+            }
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
               : sql<PayloadRow>`
@@ -4284,17 +4368,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_turns
-            WHERE thread_id = ${threadId}
+            WHERE ${filter?.providerTurnsSince === undefined ? sql`thread_id` : sql`+thread_id`} = ${threadId}
+              ${providerTurnsSinceRows}
               ${filter?.providerTurnAttemptIds === undefined ? sql`` : sql`AND run_attempt_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnAttemptIds)}))`}
               ${filter?.providerTurnThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnThreadIds)}))`}
               ${recentRunsJson === undefined ? sql`` : sql`AND (run_attempt_id IS NULL OR run_attempt_id IN (SELECT attempt_id FROM orchestration_v2_projection_run_attempts WHERE run_id IN (SELECT value FROM json_each(${recentRunsJson}))))`}
               ${
-                filter?.latestProviderTurnUsageOnly === true
-                  ? sql`AND json_extract(payload_json, '$.tokenUsage') IS NOT NULL
+                filter?.providerTurnsSince !== undefined
+                  ? sql`ORDER BY julianday(json_extract(payload_json, '$.tokenUsage.updatedAt')) DESC,
+            provider_thread_id ASC, ordinal ASC`
+                  : filter?.latestProviderTurnUsageOnly === true
+                    ? sql`AND json_extract(payload_json, '$.tokenUsage') IS NOT NULL
             ORDER BY julianday(json_extract(payload_json, '$.tokenUsage.updatedAt')) DESC,
               provider_thread_id ASC, ordinal ASC
             LIMIT 1`
-                  : sql`ORDER BY provider_thread_id ASC, ordinal ASC`
+                    : sql`ORDER BY provider_thread_id ASC, ordinal ASC`
               }
           `
               : sql<PayloadRow>`
