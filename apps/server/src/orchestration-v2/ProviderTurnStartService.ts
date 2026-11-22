@@ -38,6 +38,8 @@ import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
+import * as SessionRotation from "./SessionRotation.ts";
+import { currentSessionUsage } from "./SessionRotation.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
@@ -176,6 +178,8 @@ export const layer: Layer.Layer<
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
     // CLI and test runtimes have no team; their messages are never labelled.
     const teamState = yield* Effect.serviceOption(TeamState.TeamState);
+    // Without one, every turn resumes its native session.
+    const sessionRotation = yield* Effect.serviceOption(SessionRotation.SessionRotation);
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
       function* (cwd: string) {
@@ -1203,6 +1207,7 @@ export const layer: Layer.Layer<
           ...effectiveHandoffs.filter((candidate) => candidate.targetRunId === run.id),
         ];
       };
+      let freshSessionSeed = "";
       let resumedRetryHandoff: ReadonlyArray<OrchestrationV2ContextHandoff> | undefined;
       let resumedHandoffContext: ReturnType<typeof handoffContextForThread> | undefined;
       let portableForkFallback: OrchestrationV2ContextHandoff | undefined;
@@ -1344,6 +1349,40 @@ export const layer: Layer.Layer<
               existingProviderThread: providerThread,
             }),
           );
+        }
+        // Commands and restart continuations act on the session they resume.
+        const rotationSeed =
+          Option.isNone(sessionRotation) ||
+          goalCommand ||
+          isCompactionCommandMessage(message) ||
+          run.restartContinuationOfRunId !== undefined
+            ? null
+            : yield* sessionRotation.value.freshSessionSeed({
+                threadId: projection.thread.id,
+                messageId: message.id,
+                runOrdinal: run.ordinal,
+                usage: currentSessionUsage(
+                  latestNativeContextUsage(projection, providerThread),
+                  providerThread,
+                ),
+              });
+        if (rotationSeed !== null) {
+          if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
+          // A fresh session on the same row, seeded by its owner instead of the old transcript.
+          const fresh = yield* loadFromProvider(
+            session.ensureThread({
+              threadId: projection.thread.id,
+              title: projection.thread.title,
+              modelSelection: run.modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+              providerSessionId,
+              existingProviderThread: { ...providerThread, nativeThreadRef: null },
+              forceNewNativeThread: true,
+            }),
+          );
+          if (fresh === undefined) return undefined;
+          freshSessionSeed = rotationSeed;
+          return fresh;
         }
         const uncertainDelivery = projection.contextHandoffs.some(
           (handoff) =>
@@ -1695,7 +1734,13 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote, lineageNote]
+          const context = [
+            freshSessionSeed,
+            delivery.context,
+            sideChatContext,
+            restartNote,
+            lineageNote,
+          ]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1759,6 +1804,7 @@ export const layer: Layer.Layer<
         ),
       );
       const deliverySession =
+        freshSessionSeed === "" &&
         effectiveHandoffs.length === 0 &&
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
