@@ -187,6 +187,36 @@ it.effect("answers an ask with remember and wakes with the bot_learn line", () =
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
+it.effect("refuses to change an answer given elsewhere when asked to answer only an open ask", () =>
+  Effect.gen(function* () {
+    const bots = yield* BotService.BotService;
+    const bot = yield* createBot(bots);
+    const ask = yield* bots.createAsk(bot.id, {
+      jobId: null,
+      question: "Ship it?",
+      why: "",
+      options: ["Yes", "No"],
+      pick: null,
+    });
+    yield* bots.resolveAsk(bot.id, ask.id, { answerKind: "text", answer: "Yes" });
+
+    const failure = yield* bots
+      .answerAsk(caller, {
+        askId: ask.id,
+        kind: "option",
+        answer: "No",
+        remember: false,
+        ifOpen: true,
+      })
+      .pipe(Effect.flip);
+    assert.strictEqual(failure.reason, "already-answered");
+    const after = (yield* bots.snapshotForBot(bot.id)).asks.find(
+      (candidate) => candidate.id === ask.id,
+    );
+    assert.strictEqual(after?.answer, "Yes");
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
 it.effect("stops a job's sessions through thread.stop", () =>
   Effect.gen(function* () {
     const bots = yield* BotService.BotService;

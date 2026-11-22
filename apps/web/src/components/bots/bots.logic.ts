@@ -8,7 +8,6 @@ import {
   type BotSession,
   botSessionArchived,
   type BotsSnapshot,
-  type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { BotFacePose } from "@t3tools/client-runtime/bot-identity";
@@ -222,22 +221,26 @@ function homeThreadWorking(bot: Bot, shells: ShellLookup): boolean {
 }
 
 /**
- * The bot page's header status. `needs` is a button that scrolls the chat to the oldest open ask;
- * `text` is plain muted copy. Session names, never job numbers.
+ * The bot page's header status. `needs` is a button that opens the bot's questions; `text` is
+ * plain muted copy. Session names, never job numbers.
  */
 export type BotStatusLine =
-  | { readonly kind: "needs"; readonly label: string; readonly focusRunId: RunId | null }
+  | { readonly kind: "needs"; readonly label: string }
   | { readonly kind: "text"; readonly label: string };
 
-/** The title of the newest session of the ask's job, falling back to the job title. */
-function askTitle(snapshot: BotsSnapshot, ask: BotAsk): string | null {
+/** What an ask is about: the newest session of its job, falling back to the job's title. */
+export function askAbout(
+  snapshot: BotsSnapshot,
+  ask: BotAsk,
+): { readonly title: string; readonly threadId: ThreadId | null } | null {
   if (ask.jobId === null) return null;
   const sessions = snapshot.sessions
     .filter((session) => session.jobId === ask.jobId)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const newest = sessions[0];
-  if (newest !== undefined) return newest.title;
-  return snapshot.jobs.find((job) => job.id === ask.jobId)?.title ?? null;
+  if (newest !== undefined) return { title: newest.title, threadId: newest.threadId };
+  const job = snapshot.jobs.find((candidate) => candidate.id === ask.jobId);
+  return job === undefined ? null : { title: job.title, threadId: null };
 }
 
 export function botStatusLine(
@@ -251,9 +254,9 @@ export function botStatusLine(
     const oldest = asks[0]!;
     const label =
       asks.length === 1
-        ? `${askTitle(snapshot, oldest) ?? bot.name} needs you`
+        ? `${askAbout(snapshot, oldest)?.title ?? bot.name} needs you`
         : `${asks.length} questions for you`;
-    return { kind: "needs", label, focusRunId: oldest.homeRunId };
+    return { kind: "needs", label };
   }
   if (bot.paused) return { kind: "text", label: "Paused" };
   const working = workingSessionCount(snapshot, bot.id, shells, now);

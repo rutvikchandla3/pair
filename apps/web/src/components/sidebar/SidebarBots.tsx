@@ -213,6 +213,9 @@ function BotGroup(props: {
       <Link
         to="/bots/$environmentId/$botId"
         params={{ environmentId: props.environmentId, botId: props.bot.id }}
+        // While questions wait, the row opens them as the header pill does; on the bot's own page it
+        // keeps whatever is open.
+        search={selected ? true : askCount > 0 ? { questions: true } : {}}
         aria-current={selected ? "page" : undefined}
         className={cn(botRowClass, selected && "bg-sidebar-row-active")}
       >

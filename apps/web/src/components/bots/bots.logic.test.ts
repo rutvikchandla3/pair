@@ -223,7 +223,6 @@ describe("botStatusLine", () => {
     expect(botStatusLine(data, bot(), undefined, NOW)).toEqual({
       kind: "needs",
       label: "Rate limit threads API needs you",
-      focusRunId: RUN,
     });
   });
 
@@ -235,7 +234,6 @@ describe("botStatusLine", () => {
     expect(botStatusLine(data, bot(), undefined, NOW)).toEqual({
       kind: "needs",
       label: "Upgrade Effect needs you",
-      focusRunId: null,
     });
   });
 

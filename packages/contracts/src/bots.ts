@@ -453,6 +453,8 @@ export const BotsAnswerAskInput = Schema.Struct({
   /** Required unless `kind` is `bot-decides`. */
   answer: Schema.optionalKey(Schema.String),
   remember: Schema.Boolean,
+  /** Fail with `already-answered` instead of changing an answer given elsewhere. */
+  ifOpen: Schema.optionalKey(Schema.Boolean),
 });
 export type BotsAnswerAskInput = typeof BotsAnswerAskInput.Type;
 
@@ -479,6 +481,12 @@ export type BotsNoteInput = typeof BotsNoteInput.Type;
 
 /** `message` reaches users and the bot verbatim: never put an unvetted cause in it. */
 export class BotsError extends Schema.TaggedError<BotsError>()("BotsError", {
-  reason: Schema.Literals(["not-found", "invalid-request", "unavailable", "cloud-only"]),
+  reason: Schema.Literals([
+    "not-found",
+    "invalid-request",
+    "unavailable",
+    "cloud-only",
+    "already-answered",
+  ]),
   message: Schema.String,
 }) {}
