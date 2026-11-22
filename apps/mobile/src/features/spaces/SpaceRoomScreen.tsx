@@ -17,16 +17,27 @@ import {
   spaceNewDividerIndex,
   spaceSystemLineText,
   spaceThreadsByTask,
+  spacePostPreview,
   splitSpacePostText,
 } from "@t3tools/client-runtime/spaces";
 import { spacePairFeedItems, spacePairRoom } from "@t3tools/client-runtime/spaceAgent";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
-import { EnvironmentId, type Space, SpaceId, type SpaceRoomEntry } from "@t3tools/contracts";
+import {
+  type ChatImageAttachment,
+  EnvironmentId,
+  type Space,
+  SpaceId,
+  type SpacePostAttachments,
+  type SpaceRoomEntry,
+} from "@t3tools/contracts";
 import { type ReactNode, useState } from "react";
 import { FlatList, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { FilePreviewGallery } from "../../components/FilePreviewGallery";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import type { FilePreviewItem } from "../../components/FilePreviewModal.types";
 import { MemberAvatar } from "../../components/MemberAvatar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -58,6 +69,8 @@ import {
   useSpaceUndoNotice,
 } from "./space-notices";
 import { type SpacePairFeedContext, SpacePairFeedRow, SpacePairStatus } from "./SpacePairFeed";
+import { MessageAttachmentFile, MessageAttachmentImage } from "../threads/ThreadFeed";
+import { SpaceMark } from "./SpaceMark";
 import { SpaceRecordLine } from "./SpaceRecordLine";
 
 type Params = { readonly environmentId: string; readonly spaceId: string };
@@ -110,6 +123,7 @@ export function SpaceRoomScreen(props: StaticScreenProps<Params>) {
 
 function RoomHeader(props: {
   readonly title: string;
+  readonly mark?: ReactNode;
   readonly subtitle: string | null;
   readonly members: ReactNode;
   readonly trailing?: ReactNode;
@@ -122,7 +136,8 @@ function RoomHeader(props: {
         accessibilityLabel="Back"
         onPress={() => navigation.goBack()}
       />
-      <View className="min-w-0 flex-1 py-1.5">
+      {props.mark}
+      <View className={cn("min-w-0 flex-1 py-1.5", props.mark !== undefined && "pl-1.5")}>
         <Text numberOfLines={1} className="text-base font-t3-bold text-foreground">
           {props.title}
         </Text>
@@ -179,7 +194,7 @@ function SpaceNotMember(props: {
   const count = props.room.memberCount;
   return (
     <View className="flex-1 items-center justify-center gap-3 px-8">
-      <SymbolView name="person.2" size={28} tintColorClassName="accent-icon-muted" />
+      <SpaceMark space={{ id: props.room.spaceId, name: props.room.name }} size="xl" />
       <Text className="text-center text-lg font-t3-bold text-foreground">
         {left && !props.room.requested
           ? `You left ${props.room.name}`
@@ -241,6 +256,7 @@ function SpaceRoom(props: {
   // Read once: the visit tracker moves the watermark while the room is open.
   const [visitedAt] = useState(() => roomShell?.lastVisitedAt ?? null);
   const [quote, setQuote] = useState<SpacePost | null>(null);
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   // "Ask again" refills the composer; the count remounts it with the new draft.
   const [draft, setDraft] = useState<{ readonly n: number; readonly text: string } | null>(null);
@@ -383,24 +399,33 @@ function SpaceRoom(props: {
               <Text className="text-xs font-t3-medium text-foreground-secondary">
                 {viewer.nameOf(entry.quote.authorId)}
               </Text>{" "}
-              {entry.quote.text}
+              {spacePostPreview({ text: entry.quote.text })}
             </Text>
           )}
-          <Text selectable className="text-base text-foreground">
-            {segments.map((segment, index) =>
-              segment.type === "text" ? (
-                segment.text
-              ) : (
-                <Text
-                  // oxlint-disable-next-line react/no-array-index-key -- segments have no identity
-                  key={index}
-                  className="text-base font-t3-medium text-primary-text"
-                >
-                  {segment.text}
-                </Text>
-              ),
-            )}
-          </Text>
+          {entry.text.length === 0 ? null : (
+            <Text selectable className="text-base text-foreground">
+              {segments.map((segment, index) =>
+                segment.type === "text" ? (
+                  segment.text
+                ) : (
+                  <Text
+                    // oxlint-disable-next-line react/no-array-index-key -- segments have no identity
+                    key={index}
+                    className="text-base font-t3-medium text-primary-text"
+                  >
+                    {segment.text}
+                  </Text>
+                ),
+              )}
+            </Text>
+          )}
+          {entry.attachments === undefined || entry.attachments.length === 0 ? null : (
+            <SpacePostAttachmentList
+              environmentId={environmentId}
+              attachments={entry.attachments}
+              onPressPreview={setPreviewFile}
+            />
+          )}
           {entry.pairRequested ? (
             <SpacePairStatus reply={pairRoom.byTrigger.get(entry.id)} context={pairContext} />
           ) : null}
@@ -479,6 +504,7 @@ function SpaceRoom(props: {
     >
       <RoomHeader
         title={space.name}
+        mark={<SpaceMark space={space} size="lg" />}
         subtitle={whereText}
         members={avatars}
         trailing={
@@ -574,7 +600,75 @@ function SpaceRoom(props: {
           bottomInset={insets.bottom}
         />
       ) : null}
+      <FilePreviewModal source={previewFile} onRequestClose={() => setPreviewFile(null)} />
     </KeyboardAvoidingView>
+  );
+}
+
+function SpacePostAttachmentList(props: {
+  readonly environmentId: EnvironmentId;
+  readonly attachments: SpacePostAttachments;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+}) {
+  const images = props.attachments.filter((attachment) => attachment.type === "image");
+  const files = props.attachments.filter((attachment) => attachment.type === "file");
+  return (
+    <>
+      {images.length === 0 ? null : (
+        <SpacePostImages
+          environmentId={props.environmentId}
+          images={images}
+          onPressPreview={props.onPressPreview}
+        />
+      )}
+      {files.map((file) => (
+        <MessageAttachmentFile
+          key={file.id}
+          environmentId={props.environmentId}
+          attachment={file}
+          onPressPreview={props.onPressPreview}
+          onPlaybackStart={() => undefined}
+        />
+      ))}
+    </>
+  );
+}
+
+function SpacePostImages(props: {
+  readonly environmentId: EnvironmentId;
+  readonly images: ReadonlyArray<ChatImageAttachment>;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+}) {
+  const lone = props.images.length === 1;
+  const gallery = props.images.map((image): FilePreviewItem => ({
+    kind: "image",
+    name: image.name,
+    environmentId: props.environmentId,
+    resource: {
+      _tag: "attachment",
+      attachmentId: image.id,
+      fileName: image.name,
+      mimeType: image.mimeType,
+    },
+  }));
+  return (
+    <FilePreviewGallery value={gallery}>
+      <View className="flex-row flex-wrap gap-1.5 pt-1.5">
+        {props.images.map((image) => (
+          <View key={image.id} className="overflow-hidden rounded-xl">
+            <MessageAttachmentImage
+              environmentId={props.environmentId}
+              attachmentId={image.id}
+              name={image.name}
+              mimeType={image.mimeType}
+              className={lone ? "bg-subtle" : "w-28 bg-subtle"}
+              {...(lone ? { maxWidth: 240 } : { height: 112 })}
+              onPressPreview={props.onPressPreview}
+            />
+          </View>
+        ))}
+      </View>
+    </FilePreviewGallery>
   );
 }
 

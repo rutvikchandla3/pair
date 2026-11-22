@@ -2,7 +2,12 @@ import { useAtomValue } from "@effect/atom-react";
 import { type StaticScreenProps, StackActions, useNavigation } from "@react-navigation/native";
 import { SHARED_WITH_YOU_STATE_LABEL } from "@t3tools/client-runtime/inbox";
 import { FORMER_MEMBER } from "@t3tools/client-runtime/state/team";
-import { EnvironmentId, type MemberId, type SharedWithYouItem } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type MemberId,
+  type SharedWithYouItem,
+  type Space,
+} from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { FlatList, Pressable, type TextInputInstance, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -24,7 +29,9 @@ import {
 } from "../../state/inbox";
 import { usePresence } from "../../state/presence";
 import { useDebouncedValue } from "../../state/queries";
+import { useSpaceList } from "../../state/spaces";
 import { useTeamRoster, useThreadTeamActions } from "../../state/team";
+import { SpaceMark } from "../spaces/SpaceMark";
 import { PageTopBar } from "./PageTopBar";
 import { sharedWithYouRows } from "./inboxModel";
 
@@ -43,6 +50,8 @@ export function SharedWithYouScreen(props: StaticScreenProps<Params>) {
   const filters = useAtomValue(sharedWithYouFiltersAtom(environmentId));
   const shared = useSharedWithYouPages(environmentId, filters, query);
   const { members } = useTeamRoster(environmentId);
+  const { spaces } = useSpaceList(environmentId);
+  const spaceById = new Map(spaces.map((space) => [space.id, space]));
   const presence = usePresence(environmentId);
   const rows = sharedWithYouRows(shared.items, shared.people);
   const filtered = hasSharedWithYouFilters(filters) || query !== "";
@@ -103,6 +112,7 @@ export function SharedWithYouScreen(props: StaticScreenProps<Params>) {
             <SharedThreadRow
               environmentId={environmentId}
               item={row.item}
+              space={row.item.spaceId === undefined ? undefined : spaceById.get(row.item.spaceId)}
               onPress={() =>
                 navigation.dispatch(
                   StackActions.push("Thread", { environmentId, threadId: row.item.threadId }),
@@ -154,6 +164,7 @@ function PresenceDot(props: { readonly status: "online" | "away" | undefined }) 
 function SharedThreadRow(props: {
   readonly environmentId: EnvironmentId;
   readonly item: SharedWithYouItem;
+  readonly space: Space | undefined;
   readonly onPress: () => void;
 }) {
   const { item } = props;
@@ -180,7 +191,9 @@ function SharedThreadRow(props: {
         onPress={props.onPress}
         className="min-h-12 flex-row items-center gap-3 border-b border-border-subtle px-4 py-2 active:opacity-70"
       >
-        {item.taskId === undefined ? null : (
+        {props.space !== undefined ? (
+          <SpaceMark space={props.space} size="sm" />
+        ) : item.taskId === undefined ? null : (
           <SymbolView name="person.2" size={13} tintColorClassName="accent-icon-muted" />
         )}
         <View className="min-w-0 flex-1 gap-0.5">

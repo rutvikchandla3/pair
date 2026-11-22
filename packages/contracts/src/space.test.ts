@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { Space, SpaceSystemLine, SpaceTask, ThreadSpace } from "./space.ts";
+import { Space, SpaceEmoji, SpaceSystemLine, SpaceTask, ThreadSpace } from "./space.ts";
 
 const json = (schema: Schema.Codec<unknown, unknown>) => {
   const codec = Schema.toCodecJson(schema);
@@ -153,5 +153,17 @@ describe("space task contracts", () => {
       archivedBy: null,
     };
     expect(json(Space).decodes(space)).toBe(valid);
+  });
+
+  it.each([
+    { emoji: "🚀", valid: true },
+    { emoji: "👍🏽", valid: true },
+    { emoji: "🇺🇸", valid: true },
+    { emoji: "👨‍👩‍👧", valid: true },
+    { emoji: "a", valid: false },
+    { emoji: "🚀🚀", valid: false },
+    { emoji: "", valid: false },
+  ])("takes $emoji as a space emoji: $valid", ({ emoji, valid }) => {
+    expect(json(SpaceEmoji).decodes(emoji)).toBe(valid);
   });
 });

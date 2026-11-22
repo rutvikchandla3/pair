@@ -2,11 +2,13 @@ import {
   MemberId,
   MessageId,
   OrchestratorMcpFailure,
+  SPACE_POST_MAX_ATTACHMENTS,
   SpaceBrief,
   SpaceId,
   SpaceMention,
   SpaceMutation,
   SpaceName,
+  SpacePostText,
   SpaceRoomEntry,
   SpaceTaskDescription,
   SpaceTaskId,
@@ -19,6 +21,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import { McpAttachmentInput } from "../attachment/input.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SpaceService from "../../../space/SpaceService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -84,12 +87,15 @@ const SpaceReadTool = Tool.make("t3_space_read", {
 const SpacePostTool = Tool.make("t3_space_post", {
   ...shared,
   description:
-    "Post to a space's room as your member. Mention members with `mentions`; an agent's post never asks @pair to reply.",
+    "Post to a space's room as your member. Mention members with `mentions`; an agent's post never asks @pair to reply. `attachments` takes files from `t3_attachment_prepare_upload`; `text` may then be empty.",
   parameters: Schema.Struct({
     spaceId: SpaceId,
-    text: TrimmedNonEmptyString,
+    text: SpacePostText,
     mentions: Schema.optionalKey(Schema.Array(SpaceMention)),
     quoteEntryId: Schema.optionalKey(MessageId),
+    attachments: Schema.optionalKey(
+      Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(SPACE_POST_MAX_ATTACHMENTS)),
+    ),
   }),
   success: Schema.Struct({ entryId: MessageId }),
 }).annotate(Tool.Destructive, false);

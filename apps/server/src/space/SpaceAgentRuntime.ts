@@ -28,6 +28,14 @@ export interface SpaceTextBlock {
 export type SpaceContentBlock =
   | SpaceTextBlock
   | {
+      readonly type: "image";
+      readonly source: {
+        readonly type: "base64";
+        readonly media_type: string;
+        readonly data: string;
+      };
+    }
+  | {
       readonly type: "tool_use";
       readonly id: string;
       readonly name: string;

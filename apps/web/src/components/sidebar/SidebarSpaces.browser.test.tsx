@@ -115,8 +115,8 @@ describe("SidebarSpaceList", () => {
       .element(screen.getByRole("link", { name: "Space 2" }))
       .toHaveAttribute("aria-current", "page");
     await expect
-      .element(screen.getByRole("link", { name: /Space 1/ }))
-      .toHaveTextContent("Space 1");
+      .element(screen.getByRole("link", { name: /Space 1/ }).getByText("Space 1", { exact: true }))
+      .toBeVisible();
     expect(screen.getByLabelText("Unread").elements()).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Space 6" }).elements()).toHaveLength(0);
     expect(screen.getByText("Archived").elements()).toHaveLength(0);

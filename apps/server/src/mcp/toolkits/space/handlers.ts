@@ -9,6 +9,7 @@ import { spaceThreadActivity } from "@t3tools/shared/spaceThreadActivity";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
+import { attachmentIsPendingUpload } from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as SpaceService from "../../../space/SpaceService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
@@ -105,6 +106,19 @@ export const layer = McpToolAccess.toLayer(SpaceToolkit, {
       const { caller, spaces } = yield* spaceCaller;
       const random = yield* SecureRandom.SecureRandom;
       const messageId = MessageId.make(`space-post:${yield* random.uuidV4()}`);
+      const attachments = input.attachments ?? [];
+      if (!attachments.every(attachmentIsPendingUpload)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Attachments must be pending uploads from t3_attachment_prepare_upload.",
+        });
+      }
+      if (input.text.length === 0 && attachments.length === 0) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "A post needs text or an attachment.",
+        });
+      }
       const { entry } = yield* spaces
         .post(caller, {
           spaceId: input.spaceId,
@@ -112,6 +126,7 @@ export const layer = McpToolAccess.toLayer(SpaceToolkit, {
           text: input.text,
           mentions: input.mentions ?? [],
           ...(input.quoteEntryId === undefined ? {} : { quoteEntryId: input.quoteEntryId }),
+          ...(attachments.length === 0 ? {} : { attachments }),
         })
         .pipe(Effect.mapError(failure));
       return { entryId: entry.id };

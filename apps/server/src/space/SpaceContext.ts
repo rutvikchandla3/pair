@@ -1,4 +1,7 @@
 import {
+  type ChatFileAttachment,
+  type ChatImageAttachment,
+  isProviderSendTurnSupportedImageMimeType,
   isSpaceActiveMember,
   type MemberId,
   type OrchestrationV2ThreadShell,
@@ -6,19 +9,25 @@ import {
   type SpaceAction,
   SpaceError,
   type SpaceNoteItem,
+  type SpacePostAttachments,
   type SpaceRoomEntry,
   type SpaceTask,
   type SpaceTaskStatus,
   spaceTaskIsOpen,
 } from "@t3tools/contracts";
+import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 import { type SpaceThreadActivity, spaceThreadActivity } from "@t3tools/shared/spaceThreadActivity";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
+import { resolveExtractedTextPath } from "../provider/DocumentText.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import type * as Members from "../persistence/Members.ts";
 import { TeamState } from "../team/TeamState.ts";
@@ -42,6 +51,7 @@ export const SPACE_CONTEXT_BUDGETS = {
   tasks: 2_500,
   trigger: 4_000,
   post: 1_000,
+  file: 4_000,
   toolResult: 3_000,
 } as const;
 
@@ -61,7 +71,8 @@ export const capTokens = (text: string, tokens: number, marker: string) =>
     ? text
     : `${text.slice(0, tokens * 4 - marker.length - 1)}${marker}`;
 
-const SECTION_TAG = /<(\/?)(space|brief|notes|room|tasks|trigger|task_output|already_done)\b/gi;
+const SECTION_TAG =
+  /<(\/?)(space|brief|notes|room|tasks|trigger|task_output|already_done|file)\b/gi;
 
 /** Untrusted text can't open or close one of the prompt's sections (§11). */
 export const fence = (text: string) => text.replace(SECTION_TAG, "‹$1$2");
@@ -243,6 +254,32 @@ interface TranscriptLine {
   readonly text: string;
 }
 
+/** The Messages API takes images up to 5 MB once base64-encoded and 8000 px on a side. */
+const PAIR_IMAGE_MAX_BYTES = 3_750_000;
+const PAIR_IMAGE_MAX_SIDE = 8000;
+/** All of a post's images, base64-encoded; the request as a whole must stay under 32 MB. */
+const PAIR_IMAGES_MAX_ENCODED_BYTES = 20_000_000;
+
+/** Larger text files are cut to the `file` budget anyway; this bounds the read. */
+const PAIR_FILE_MAX_BYTES = 1_000_000;
+const TEXT_MIME =
+  /^text\/|[/+](?:json|xml|yaml|x-yaml|toml|javascript|typescript|x-sh|csv|markdown)$/i;
+
+const attachmentsNote = (attachments: SpacePostAttachments | undefined) => {
+  if (attachments === undefined || attachments.length === 0) return "";
+  const images = attachments.filter((attachment) => attachment.type === "image").length;
+  const files = attachments.filter((attachment) => attachment.type === "file");
+  const parts = [
+    ...(images === 0 ? [] : [`${images} image${images === 1 ? "" : "s"}`]),
+    ...(files.length === 0
+      ? []
+      : [
+          `file${files.length === 1 ? "" : "s"}: ${files.map((file) => fence(file.name)).join(", ")}`,
+        ]),
+  ];
+  return ` [${parts.join("; ")}]`;
+};
+
 const postLine = (id: string, who: string, at: string, text: string) => {
   const head = `[${id} · ${who} · ${timeLabel(at)}] `;
   const marker = ` … (read ${id} for the rest)`;
@@ -344,6 +381,72 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStoreV2;
   const team = yield* TeamState;
   const tools = yield* SpaceAgentTools;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+
+  const imageBlock = (image: ChatImageAttachment, budget: { remaining: number }) => {
+    const path = resolveAttachmentPath({ attachmentsDir, attachment: image });
+    const skipped = block(`(image ${fence(image.name)} could not be shown)`);
+    if (
+      path === null ||
+      image.sizeBytes > PAIR_IMAGE_MAX_BYTES ||
+      !isProviderSendTurnSupportedImageMimeType(image.mimeType)
+    ) {
+      return Effect.succeed<SpaceContentBlock>(skipped);
+    }
+    return fileSystem.readFile(path).pipe(
+      Effect.map((bytes): SpaceContentBlock => {
+        const dimensions = readImageDimensions(bytes);
+        if (
+          dimensions !== null &&
+          Math.max(dimensions.width, dimensions.height) > PAIR_IMAGE_MAX_SIDE
+        ) {
+          return skipped;
+        }
+        const data = Buffer.from(bytes).toString("base64");
+        if (data.length > budget.remaining) return skipped;
+        budget.remaining -= data.length;
+        return {
+          type: "image",
+          source: { type: "base64", media_type: image.mimeType.toLowerCase(), data },
+        };
+      }),
+      Effect.orElseSucceed(() => skipped),
+    );
+  };
+
+  /** A text file, or a document's extracted text; anything else is only named. */
+  const fileBlock = Effect.fn("SpaceContext.fileBlock")(function* (file: ChatFileAttachment) {
+    const skipped = block(`(file ${fence(file.name)} can't be opened here)`);
+    const path = resolveAttachmentPath({ attachmentsDir, attachment: file });
+    if (path === null) return skipped;
+    const textPath = TEXT_MIME.test(file.mimeType)
+      ? path
+      : yield* resolveExtractedTextPath(path).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        );
+    if (textPath === undefined) return skipped;
+    const size = yield* fileSystem.stat(textPath).pipe(
+      Effect.map((info) => Number(info.size)),
+      Effect.orElseSucceed(() => Number.POSITIVE_INFINITY),
+    );
+    if (size > PAIR_FILE_MAX_BYTES) return skipped;
+    const text = yield* fileSystem.readFileString(textPath).pipe(Effect.option);
+    if (Option.isNone(text)) return skipped;
+    return block(
+      `<file name="${fence(file.name).replaceAll('"', "&quot;")}" untrusted="true">\n${capTokens(fence(text.value), SPACE_CONTEXT_BUDGETS.file, " … (cut)")}\n</file>`,
+    );
+  });
+
+  /** The tagged post's attachments, so Pair sees what was shared; one it can't read is named. */
+  const attachmentBlocks = Effect.fn("SpaceContext.attachmentBlocks")(function* (
+    attachments: SpacePostAttachments,
+  ) {
+    const budget = { remaining: PAIR_IMAGES_MAX_ENCODED_BYTES };
+    return yield* Effect.forEach(attachments, (attachment) =>
+      attachment.type === "image" ? imageBlock(attachment, budget) : fileBlock(attachment),
+    );
+  });
 
   const assemble = Effect.fn("SpaceContext.assemble")(
     function* (scope: SpaceReplyScope) {
@@ -419,9 +522,10 @@ const make = Effect.gen(function* () {
                     ? `${members.name(entry.authorId)}'s agent`
                     : members.name(entry.authorId),
                   entry.createdAt,
-                  entry.quote === undefined
+                  (entry.quote === undefined
                     ? entry.text
-                    : `(quoting ${entry.quote.entryId}) ${entry.text}`,
+                    : `(quoting ${entry.quote.entryId}) ${entry.text}`) +
+                    attachmentsNote(entry.attachments),
                 )
               : `[${entry.id} · room · ${timeLabel(entry.createdAt)}] ${systemLineText(entry, members)}`,
         })),
@@ -523,7 +627,9 @@ const make = Effect.gen(function* () {
               ),
               SPACE_CONTEXT_BUDGETS.trigger,
               ` … (cut; space_message_read ${trigger.id} has the rest)`,
-            )}\n</trigger>`;
+            )}${attachmentsNote(trigger.attachments)}\n</trigger>`;
+      const triggerAttachments =
+        trigger?.type === "post" ? yield* attachmentBlocks(trigger.attachments ?? []) : [];
 
       const already = (yield* projections.listSpaceActions({ roomMessageId: triggerId })).filter(
         (action) => action.state === "done" || action.state === "proposed",
@@ -548,6 +654,7 @@ const make = Effect.gen(function* () {
         block(openText),
         block(tasksText),
         block(triggerText),
+        ...triggerAttachments,
       ];
       return {
         system: [block(SPACE_AGENT_INSTRUCTIONS, "1h")],

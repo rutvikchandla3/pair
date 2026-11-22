@@ -240,6 +240,8 @@ export const RPC_THREAD_TARGET_EXEMPT: { readonly [M in WsMethod]?: string } = {
   [WS_METHODS.pullRequestsSetFilesViewed]:
     "Paths are inside a pull request, marked on the code host.",
   [WS_METHODS.pullRequestsSubmitReview]: "Paths are inside a pull request, sent to the code host.",
+  [WS_METHODS.spacesPost]:
+    "`.attachments[].source.accessibility.root` is a snapshot's accessibility tree, not a path; attachments are claimed into the space's own room thread.",
 };
 
 /**
