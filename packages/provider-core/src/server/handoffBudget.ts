@@ -32,6 +32,7 @@ export function latestNativeContextUsage(
         usage: ThreadTokenUsageSnapshot;
         modelSelection: ModelSelection;
         reportedAt: string;
+        promptCacheExpiresAt?: string;
       }
     | undefined;
   for (const turn of projection.providerTurns) {
@@ -59,6 +60,9 @@ export function latestNativeContextUsage(
       },
       modelSelection: run.modelSelection,
       reportedAt: turn.tokenUsage.updatedAt,
+      ...(turn.tokenUsage.promptCacheExpiresAt === undefined
+        ? {}
+        : { promptCacheExpiresAt: turn.tokenUsage.promptCacheExpiresAt }),
     };
   }
   return latest;

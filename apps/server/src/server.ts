@@ -170,6 +170,7 @@ import * as BotPictures from "./bots/BotPictures.ts";
 import * as BotService from "./bots/BotService.ts";
 import * as BotStore from "./bots/BotStore.ts";
 import * as BotHome from "./bots/BotHome.ts";
+import * as BotRotation from "./bots/BotRotation.ts";
 import * as BotCloudSessions from "./bots/BotCloudSessions.ts";
 import * as BotSessions from "./bots/BotSessions.ts";
 import * as BotWatcher from "./bots/BotWatcher.ts";
@@ -272,6 +273,7 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
+import * as SessionRotation from "./orchestration-v2/SessionRotation.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
@@ -1134,17 +1136,28 @@ const layerMakeRoutes = Layer.mergeAll(
   // One `layerBotService` reference: the wake loop and BotSessions share it.
   Layer.provide(
     Layer.mergeAll(
-      BotSessions.layer.pipe(
-        Layer.provide(layerPeerForwarding),
-        Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
-      ),
       Layer.effectDiscard(
         Effect.gen(function* () {
           const home = yield* BotHome.BotHome;
           yield* home.start();
         }),
       ).pipe(Layer.provide(BotHome.layer)),
-    ).pipe(Layer.provideMerge(layerBotService)),
+      // Reaches the turn start through SessionRotation's slot.
+      Layer.effectDiscard(
+        Effect.gen(function* () {
+          const rotation = yield* BotRotation.BotRotation;
+          yield* rotation.start();
+        }),
+      ).pipe(Layer.provide(BotRotation.layer), Layer.provide(ProjectionStoreV2.layer)),
+    ).pipe(
+      Layer.provideMerge(
+        BotSessions.layer.pipe(
+          Layer.provide(layerPeerForwarding),
+          Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+        ),
+      ),
+      Layer.provideMerge(layerBotService),
+    ),
   ),
   // Branch off, its summary, Start from main and Move to my own machine; LineageRepos carries
   // commits between machines for every lineage action.
@@ -1572,6 +1585,8 @@ const layerMakeServer = Layer.unwrap(
       ),
       // The effect worker's lineage step executor, filled once BranchLineageService is built.
       Layer.provide(BranchLineageStepExecutorLive.layer),
+      // The turn start's session rotation, filled once BotRotation starts.
+      Layer.provide(SessionRotation.layerSlot),
       Layer.provideMerge(
         RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
       ),

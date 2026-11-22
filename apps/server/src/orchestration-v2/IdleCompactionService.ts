@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Stream from "effect/Stream";
 
+import { BotThreads } from "../bots/botThreads.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { idleCompactionWindow } from "./IdleCompaction.ts";
@@ -32,6 +33,8 @@ export const make = Effect.gen(function* () {
 
   const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
     function* (threadId: ThreadId, completedRunId: RunId) {
+      // A bot's home thread starts fresh sessions instead (BotRotation).
+      if (BotThreads.homeBotId(threadId) !== undefined) return;
       let runId = completedRunId;
       // Loops after the wait or a retarget: the thread may have moved on.
       while (true) {

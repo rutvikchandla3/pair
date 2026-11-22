@@ -186,7 +186,10 @@ question, and that question is the visible message.
 1. **You write.** The message lands in the home thread like any message.
 2. **The bot plans** with `bot_brief` (memory, voice, limits, projects, open jobs and their
    sessions' live state, open questions). It calls `bot_brief` every turn, so its state comes from
-   the server, not from chat history, and survives context compaction. For new work it calls
+   the server, not from chat history. The home thread never compacts: once its provider session
+   passes 150k tokens of context (`T3CODE_BOT_SESSION_TOKEN_BUDGET`; 0 starts every turn fresh),
+   or is about to go cold with more than 50k, the bot gets one turn to save notes, and its next
+   turn starts a fresh session seeded with its brief and the chat's last 30 messages. For new work it calls
    `bot_job_create` (title, request, and a project unless the work is outside one) and
    `bot_start_session` for each independent piece, replies with the session links, and ends the
    turn. It never waits on a session in its turn.
