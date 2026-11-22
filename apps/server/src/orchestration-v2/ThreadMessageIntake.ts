@@ -3,12 +3,13 @@ import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments
 import {
   type ChatAttachment,
   type OrchestrationV2Command,
-  type OrchestrationV2ThreadShell,
+  type OrchestrationV2AppThread,
   MemberId,
   type SandboxStopByIdInput,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -181,13 +182,19 @@ const assertMayFork = Effect.fn("ThreadMessageIntake.assertMayFork")(function* (
   });
 });
 
+/** What the intake rules read of a thread; the shell copies each field from the thread row. */
+type IntakeThread = Pick<
+  OrchestrationV2AppThread,
+  "space" | "ownerId" | "sandboxId" | "lineage" | "interactionMode"
+>;
+
 /** A cloud thread's side chat is read-only for anyone but its holder: it stays in plan mode. */
 const assertSideChatReadOnly = Effect.fn("ThreadMessageIntake.assertSideChatReadOnly")(function* (
   command: Extract<
     OrchestrationV2Command,
     { readonly type: "message.dispatch" | "thread.interaction-mode.set" }
   >,
-  shell: OrchestrationV2ThreadShell,
+  shell: IntakeThread,
 ) {
   if (shell.sandboxId === undefined || shell.lineage.sideChat !== true) return;
   if (command.actorId === undefined) return;
@@ -239,7 +246,7 @@ const SPACE_TASK_GUARDED_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> =
  */
 const assertSpaceRules = Effect.fn("ThreadMessageIntake.assertSpaceRules")(function* (
   command: OrchestrationV2Command & { readonly threadId: ThreadId },
-  shell: OrchestrationV2ThreadShell,
+  shell: IntakeThread,
 ) {
   const space = shell.space;
   if (space === undefined) return;
@@ -266,7 +273,16 @@ const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission
   if (command.type === "thread.fork") return yield* assertMayFork(command);
   if (!ROOM_MEMBER_COMMANDS.has(command.type) && "threadId" in command) {
     const threads = yield* ThreadManagement.ThreadManagementService;
-    const shell = yield* threads.getThreadShell(command.threadId);
+    // The thread row, not the shell: building a shell totals the whole thread's history.
+    const shell = yield* threads.getThreadRecords(command.threadId, []).pipe(
+      Effect.map(({ thread }) => (thread.deletedAt === null ? thread : null)),
+      Effect.catchTags({
+        OrchestratorProjectionError: (error) =>
+          Predicate.isTagged(error.cause, "ProjectionStoreThreadNotFoundError")
+            ? Effect.succeed(null)
+            : Effect.fail(error),
+      }),
+    );
     if (shell !== null) {
       yield* assertSpaceRules(command, shell);
       if (command.type === "message.dispatch" || command.type === "thread.interaction-mode.set") {
