@@ -896,33 +896,29 @@ export const make = Effect.gen(function* () {
   ]);
 
   const authenticatePairBuilderIngress: EnvironmentAuth["Service"]["authenticatePairBuilderIngress"] =
-    (request) => {
+    Effect.fn("EnvironmentAuth.authenticatePairBuilderIngress")(function* (request) {
       if (matchesIngressToken === undefined || parseBearerToken(request) === null) {
-        return Effect.fail(new ServerAuthMissingCredentialError({}));
+        return yield* new ServerAuthMissingCredentialError({});
       }
       if (!matchesIngressToken(request)) {
-        return Effect.fail(new ServerAuthInvalidCredentialError({}));
+        return yield* new ServerAuthInvalidCredentialError({});
       }
       const header = request.headers[PAIR_USER_HEADER];
       const person = decodePairUserHeader(header);
       // An identity that is sent but unreadable never falls back to the caller's own claim.
       if (header !== undefined && Option.isNone(person)) {
-        return Effect.fail(
-          new ServerAuthInvalidCredentialError({
-            diagnostic: "Pair Builder requests need a valid X-Pair-User identity.",
-          }),
-        );
+        return yield* new ServerAuthInvalidCredentialError({
+          diagnostic: "Pair Builder requests need a valid X-Pair-User identity.",
+        });
       }
       // A proxied browser's request carries the token ambiently, like a cookie.
       if (Option.isSome(person) && !isBrowserOriginAllowed(request, trustedBrowserOrigins)) {
-        return Effect.fail(
-          new ServerAuthInvalidCredentialError({
-            diagnostic: "Pair Builder requests are only accepted from the Builder's own origin.",
-          }),
-        );
+        return yield* new ServerAuthInvalidCredentialError({
+          diagnostic: "Pair Builder requests are only accepted from the Builder's own origin.",
+        });
       }
-      return Effect.succeed(person);
-    };
+      return person;
+    });
 
   // Runs inside each authenticate span. The proxy adds the token to every request it forwards,
   // so it is as ambient as a cookie and gets the same origin check.
