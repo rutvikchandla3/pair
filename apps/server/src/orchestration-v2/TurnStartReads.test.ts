@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { latestNativeContextUsage } from "@t3tools/provider-core/server/handoffBudget";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const layerDatabase = Layer.mergeAll(
@@ -585,6 +586,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
       const start = DateTime.makeUnsafe("2026-11-01T00:00:00.000Z");
       const at = (minutes: number) => DateTime.add(start, { minutes });
       const threadId = ThreadId.make("thread:recent-turn-start");
@@ -758,7 +760,22 @@ it.effect(
       const ordinals = (records: { readonly runs: ReadonlyArray<OrchestrationV2Run> }) =>
         records.runs.map((run) => run.ordinal);
       const full = yield* store.getTurnStartContext(threadId, runId);
-      const recent = yield* store.getTurnStartContext(threadId, runId, { recentRuns: 3 });
+      const { queries, trace } = traceSqlRouting();
+      const recent = yield* trace(store.getTurnStartContext(threadId, runId, { recentRuns: 3 }));
+      const plan = (marker: string) =>
+        sql
+          .unsafe<{ readonly detail: string }>(
+            `EXPLAIN QUERY PLAN ${queries.find(({ query }) => query.includes(marker))!.query}`,
+          )
+          .pipe(Effect.map((rows) => rows.map((row) => row.detail).join("\n")));
+      assert.include(
+        yield* plan("'$.tokenUsage.updatedAt') DESC, turn.ordinal"),
+        "provider_turns_usage_idx (provider_thread_id=?)",
+      );
+      assert.include(
+        yield* plan("OR provider_turn_id IN"),
+        "provider_turns_attempt_idx (run_attempt_id=?)",
+      );
       assert.deepEqual(ordinals(recent), [2, 3, 4, 6, 7, 8]);
       assert.deepEqual(
         recent.providerTurns.map((turn) => turn.ordinal),

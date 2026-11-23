@@ -3802,12 +3802,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         SELECT
           (SELECT MIN(ordinal) FROM segment) AS floor,
           (SELECT MIN(began) FROM segment) AS segment_start,
-          (
-            SELECT MAX(COALESCE(completed_at, '9999'))
-            FROM orchestration_v2_projection_runs
-            WHERE thread_id = ${threadId}
-              AND ordinal < (SELECT MIN(ordinal) FROM segment)
-              AND status NOT IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+          -- MAX(COALESCE(completed_at, '9999')) as two lookups on the completion index.
+          COALESCE(
+            (
+              SELECT '9999' FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND completed_at IS NULL
+                AND +ordinal < (SELECT MIN(ordinal) FROM segment)
+                AND status NOT IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+            ),
+            (
+              SELECT completed_at FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND completed_at IS NOT NULL
+                AND +ordinal < (SELECT MIN(ordinal) FROM segment)
+                AND status NOT IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+              ORDER BY completed_at DESC
+              LIMIT 1
+            )
           ) AS omitted_end
       `;
       if (
@@ -4368,11 +4378,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_turns
-            WHERE ${filter?.providerTurnsSince === undefined ? sql`thread_id` : sql`+thread_id`} = ${threadId}
+            WHERE ${filter?.providerTurnsSince === undefined ? ownThread : sql`+thread_id`} = ${threadId}
               ${providerTurnsSinceRows}
               ${filter?.providerTurnAttemptIds === undefined ? sql`` : sql`AND run_attempt_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnAttemptIds)}))`}
               ${filter?.providerTurnThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnThreadIds)}))`}
-              ${recentRunsJson === undefined ? sql`` : sql`AND (run_attempt_id IS NULL OR run_attempt_id IN (SELECT attempt_id FROM orchestration_v2_projection_run_attempts WHERE run_id IN (SELECT value FROM json_each(${recentRunsJson}))))`}
+              ${recentRunsJson === undefined ? sql`` : sql`AND ((thread_id = ${threadId} AND run_attempt_id IS NULL) OR run_attempt_id IN (SELECT attempt_id FROM orchestration_v2_projection_run_attempts WHERE run_id IN (SELECT value FROM json_each(${recentRunsJson}))))`}
               ${
                 filter?.providerTurnsSince !== undefined
                   ? sql`ORDER BY julianday(json_extract(payload_json, '$.tokenUsage.updatedAt')) DESC,
@@ -5312,7 +5322,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           JOIN orchestration_v2_projection_run_attempts AS attempt
             ON attempt.attempt_id = turn.run_attempt_id
           JOIN orchestration_v2_projection_runs AS owner ON owner.run_id = attempt.run_id
-          WHERE turn.provider_thread_id = ${run.provider_thread_id}
+          WHERE ${run.native_thread_id} IS NOT NULL
+            AND turn.provider_thread_id = ${run.provider_thread_id}
             AND turn.run_attempt_id IS NOT NULL
             AND json_extract(turn.payload_json, '$.tokenUsage') IS NOT NULL
             AND attempt.provider_thread_id = ${run.provider_thread_id}
@@ -5384,11 +5395,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT payload_json FROM orchestration_v2_projection_provider_threads
               WHERE thread_id = ${threadId} ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeProviderThreadPayload, threadId)));
-            // Without an index on run_attempt_id this walks the thread's provider-turn rows, but
-            // decodes only the window's.
             const providerTurns = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_provider_turns
-              WHERE thread_id = ${threadId}
+              WHERE ${window === undefined ? sql`thread_id` : sql`+thread_id`} = ${threadId}
                 ${
                   window === undefined
                     ? sql``
