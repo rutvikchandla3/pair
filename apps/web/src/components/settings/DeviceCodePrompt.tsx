@@ -1,8 +1,6 @@
 import type { SourceControlSignInPrompt } from "@t3tools/contracts";
-import { Check, Copy } from "lucide";
-import { ExternalLinkIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 
-import { MorphIcon } from "~/components/MorphIcon";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 
@@ -51,7 +49,7 @@ export function DeviceCodePrompt({ prompt }: { readonly prompt: SourceControlSig
             aria-label="Copy code"
             onClick={() => copyToClipboard(prompt.userCode, undefined)}
           >
-            <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+            {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
           </Button>
         </div>
         <div className="grid gap-2 @2xl:justify-items-end">

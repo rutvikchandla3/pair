@@ -1,14 +1,10 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   type ThreadRepository,
   isWorkspaceProject,
   threadRepositories,
 } from "@t3tools/client-runtime/state/workspaces";
-import * as Option from "effect/Option";
 
-import { useProject, useQuietThreadShell } from "./entities";
-import { useEnvironmentThread } from "./threads";
-import { useSelectedThreadWorktreePath, useThreadWorktreePath } from "./use-thread-detail";
+import { useSelectedThreadWorktreePath } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { resolvePreferredThreadWorktreePath } from "../features/terminal/terminalLaunchContext";
 
@@ -48,29 +44,4 @@ export function useSelectedThreadRepositories(): ReadonlyArray<ThreadRepository>
     { ...selectedThread, worktreePath: selectedThreadWorktreePath },
     selectedThreadProject,
   );
-}
-
-/**
- * Resolves a thread's cwd the way the selected thread's does, for a thread that is not the
- * current route's: the shell, or the loaded detail when the shell is missing, picks the project.
- */
-export function useThreadCwd(ref: ScopedThreadRef | null): string | null {
-  const shell = useQuietThreadShell(ref);
-  const detailState = useEnvironmentThread(
-    shell === null ? (ref?.environmentId ?? null) : null,
-    shell === null ? (ref?.threadId ?? null) : null,
-  );
-  const detailThread = Option.getOrNull(detailState.data)?.thread ?? null;
-  const detailWorktreePath = useThreadWorktreePath(ref);
-  const projectId = shell?.projectId ?? detailThread?.projectId ?? null;
-  const project = useProject(
-    ref === null || projectId === null ? null : { environmentId: ref.environmentId, projectId },
-  );
-  const worktreePath = resolvePreferredThreadWorktreePath({
-    threadShellWorktreePath: shell?.worktreePath ?? null,
-    threadDetailWorktreePath: detailWorktreePath,
-  });
-  // A cloud thread's files are on its machine; until it has a worktree there is nothing to read.
-  const cloud = (shell?.source.sandboxId ?? detailThread?.sandboxId) !== undefined;
-  return worktreePath ?? (cloud ? null : (project?.workspaceRoot ?? null));
 }

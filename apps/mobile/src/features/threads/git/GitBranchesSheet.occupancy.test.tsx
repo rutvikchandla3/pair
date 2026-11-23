@@ -19,7 +19,6 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
-vi.mock("../../../components/ui/AppBar", () => ({ AppBar: () => null }));
 vi.mock("../../../components/ui/SheetHeader", () => ({ SheetHeader: () => null }));
 vi.mock("../../../components/ui/ScreenContent", () => ({
   ScreenContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -61,7 +60,7 @@ vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   }),
 }));
 vi.mock("../../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
-vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } }));
+vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { branch: () => null } }));
 
 import { GitBranchesSheet } from "./GitBranchesSheet";
 

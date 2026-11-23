@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type ProjectRoot,
+  type PullRequestSummary,
   type ThreadId,
   type ThreadLinkedPullRequest,
   type ThreadPullRequestKey,
@@ -13,6 +14,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -23,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
 import { pullRequestKey } from "../git/linkCreatedPullRequest.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -53,6 +56,19 @@ function samePullRequest(
     left.number === right.number &&
     left.url === right.url
   );
+}
+
+function pullRequestPredatesThread(
+  pullRequest: Pick<PullRequestSummary, "state" | "closedAt" | "mergedAt">,
+  createdAt: DateTime.Utc,
+): boolean {
+  const terminalAt =
+    pullRequest.state === "merged"
+      ? pullRequest.mergedAt
+      : pullRequest.state === "closed"
+        ? pullRequest.closedAt
+        : null;
+  return terminalAt != null && Date.parse(terminalAt) < DateTime.toEpochMillis(createdAt);
 }
 
 function pullRequestMatchesProject(
@@ -407,9 +423,22 @@ export const make = Effect.gen(function* () {
                 }
               : null;
 
+          // Only a new association is refused: a thread keeps a PR it already saved, and a PR the
+          // user checked out stays with the threads made for it, however long ago it closed.
+          const isHistoricalFor = (thread: (typeof group)[number]) =>
+            detected !== null &&
+            pullRequestPredatesThread(detected, thread.createdAt) &&
+            !samePullRequest(thread.branchPullRequest, detectedReference);
+          const dropsHistorical =
+            detected !== null &&
+            first.branch !== null &&
+            group.some(isHistoricalFor) &&
+            !(yield* git.checkedOutPullRequest({ cwd, branch: first.branch, url: detected.url }));
+
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
-              let branchPullRequest = detectedReference;
+              let branchPullRequest =
+                dropsHistorical && isHistoricalFor(thread) ? null : detectedReference;
               if (
                 branchPullRequest === null &&
                 thread.branch !== null &&
@@ -541,8 +570,16 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // At most one queued request per thread, so a turn end's events share one lookup.
+  // A request after that lookup starts queues another, so later host changes are still read.
+  const queuedThreadRequests = new Map<ThreadId, { threadId: ThreadId; refresh: boolean }>();
+
   const worker = yield* makeDrainableWorker((request: RefreshRequest) =>
-    synchronize(request).pipe(
+    Effect.suspend(() => {
+      if (request.threadId !== null) queuedThreadRequests.delete(request.threadId);
+      return synchronize(request);
+    }).pipe(
+      Effect.provideService(GitVcsDriver.BackgroundGitWork, true),
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) =>
@@ -553,15 +590,27 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const enqueueThread = (threadId: ThreadId, refresh: boolean) =>
+    Effect.suspend(() => {
+      const queued = queuedThreadRequests.get(threadId);
+      if (queued !== undefined) {
+        queued.refresh ||= refresh;
+        return Effect.void;
+      }
+      const request = { threadId, refresh };
+      queuedThreadRequests.set(threadId, request);
+      return worker.enqueue(request);
+    });
+
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.created":
       case "thread.unarchived":
       case "thread.metadata-updated":
-        return worker.enqueue({ threadId: event.threadId, refresh: false });
+        return enqueueThread(event.threadId, false);
       case "thread.unsettled":
       case "checkpoint.captured":
-        return worker.enqueue({ threadId: event.threadId, refresh: true });
+        return enqueueThread(event.threadId, true);
       case "run.updated":
         if (
           event.payload.status === "completed" ||
@@ -569,7 +618,7 @@ export const make = Effect.gen(function* () {
           event.payload.status === "cancelled" ||
           event.payload.status === "interrupted"
         ) {
-          return worker.enqueue({ threadId: event.threadId, refresh: true });
+          return enqueueThread(event.threadId, true);
         }
         break;
     }

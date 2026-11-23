@@ -37,7 +37,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { openSettings } from "../settings/settings-navigation";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { MachineNotice } from "./ThreadMachineNotices";
 
 const FAILURE_TITLE = "Could not continue in cloud";

@@ -70,3 +70,15 @@ export class ServerCliRunnerBundleCheckError extends Schema.TaggedError<ServerCl
     return `Runner bundle check "${this.check}" failed: ${this.detail}`;
   }
 }
+
+export class ServerCliBootstrapTooLargeError extends Schema.TaggedError<ServerCliBootstrapTooLargeError>()(
+  "ServerCliBootstrapTooLargeError",
+  {
+    bootstrapPath: Schema.String,
+    bytes: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `${this.bootstrapPath} is ${this.bytes} bytes. The CLI was bundled into the executable bootstrap; keep ./binMain.ts external.`;
+  }
+}

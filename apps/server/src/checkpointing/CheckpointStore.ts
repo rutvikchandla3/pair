@@ -323,12 +323,15 @@ export const make = Effect.gen(function* () {
   const presentRoots = (cwd: string, roots: ReadonlyArray<string>) =>
     presentRootsWith(vcsRegistry, cwd, roots);
 
-  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd, roots) =>
-    roots === undefined
-      ? vcsRegistry
-          .detect({ cwd, requestedKind: "git" })
-          .pipe(Effect.map((repository) => repository !== null))
-      : presentRoots(cwd, roots).pipe(Effect.map((present) => present.length > 0));
+  // The registry reads an unreadable repository as none; ask Git again so that fails here.
+  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = Effect.fn(
+    "CheckpointStore.isGitRepository",
+  )(function* (cwd, roots) {
+    if (roots !== undefined) return (yield* presentRoots(cwd, roots)).length > 0;
+    if ((yield* vcsRegistry.detect({ cwd, requestedKind: "git" })) !== null) return true;
+    const git = yield* vcsRegistry.get("git");
+    return (yield* git.detectRepository(cwd)) !== null;
+  });
 
   const captureRoots: CheckpointStore["Service"]["captureRoots"] = Effect.fn("captureRoots")(
     function* (input) {

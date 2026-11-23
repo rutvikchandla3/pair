@@ -254,15 +254,15 @@ export function providerStreamForViewer(
   );
 }
 
-/** Titles by thread id, without threads the viewer may not open. */
-export function titlesVisibleToViewer(
+/** Titles, or other values by thread id, without threads the viewer may not open. */
+export function titlesVisibleToViewer<V>(
   viewer: ThreadViewer | null,
-  titles: Readonly<Record<ThreadId, string>>,
-): Effect.Effect<Readonly<Record<ThreadId, string>>> {
+  titles: Readonly<Record<ThreadId, V>>,
+): Effect.Effect<Readonly<Record<ThreadId, V>>> {
   const access = viewer?.access;
   if (access === undefined) return Effect.succeed(titles);
   return Effect.map(access.caughtUp, () => {
-    const visible: Record<ThreadId, string> = {};
+    const visible: Record<ThreadId, V> = {};
     for (const [key, title] of Object.entries(titles)) {
       const threadId = ThreadId.make(key);
       if (access.allowsThreadId(threadId)) visible[threadId] = title;

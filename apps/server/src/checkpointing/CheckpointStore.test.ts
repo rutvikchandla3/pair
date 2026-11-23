@@ -137,6 +137,19 @@ describe.each(layers)("on the %s host", (_hostKind, layerTest) =>
         expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
       }),
     );
+    it.effect("fails the repository probe that other callers read as no repository", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* git(tmp, ["init"]);
+        yield* writeTextFile(NodePath.join(tmp, ".git", "config"), "invalid config\n");
+        const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        expect(yield* registry.detect({ cwd: tmp })).toBeNull();
+        const probe = yield* Effect.flip(checkpointStore.isGitRepository(tmp));
+        expect(probe._tag).toBe("VcsProcessExitError");
+      }),
+    );
     it.effect("runs the same processes and disk checks for a turn's baseline and capture", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

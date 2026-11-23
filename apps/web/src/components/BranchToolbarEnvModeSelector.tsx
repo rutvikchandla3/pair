@@ -110,7 +110,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     return (
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
-        <TooltipPopup>{forcedWorktreeReason ?? lockedLabel}</TooltipPopup>
+        <TooltipPopup>
+          {forcedWorktreeReason ??
+            (effectiveEnvMode !== "cloud" && activeWorktreePath ? activeWorktreePath : lockedLabel)}
+        </TooltipPopup>
       </Tooltip>
     );
   }

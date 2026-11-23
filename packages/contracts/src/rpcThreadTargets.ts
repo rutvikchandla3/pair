@@ -113,10 +113,12 @@ export const RPC_THREAD_TARGETS: {
   ],
   [WS_METHODS.providerUploadFeedback]: thread,
   [WS_METHODS.subscribeVcsStatus]: cwd,
+  [WS_METHODS.subscribeVcsBranch]: cwd,
   [WS_METHODS.subscribeWorktreeSetup]: thread,
   [WS_METHODS.worktreeSetupCancel]: thread,
   [WS_METHODS.vcsPull]: cwd,
   [WS_METHODS.vcsRefreshStatus]: cwd,
+  [WS_METHODS.vcsRefreshBranch]: cwd,
   [WS_METHODS.vcsListRefs]: cwd,
   [WS_METHODS.vcsCreateWorktree]: (input) => paths(input.cwd, input.path),
   [WS_METHODS.vcsRemoveWorktree]: (input) => paths(input.cwd, input.path),
@@ -174,6 +176,7 @@ export const RPC_THREAD_TARGETS: {
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: thread,
   [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: (input) => paths(input.worktreePath),
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: thread,
+  [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: thread,
   [WS_METHODS.lineageRead]: thread,
   [WS_METHODS.threadBranchOffDraft]: (input) => [{ threadId: input.sourceThreadId }],
   [WS_METHODS.threadBranchOff]: (input) => [{ threadId: input.sourceThreadId }],
@@ -222,6 +225,8 @@ export const RPC_THREAD_TARGET_EXEMPT: { readonly [M in WsMethod]?: string } = {
     "A refused or revoked subscription must look like a missing thread's (11 §4), not fail: the handler asserts access and ends it with ThreadAccessRevoked.",
   [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]:
     "A batch: the handler drops the titles the viewer cannot open, so one hidden id does not fail the rest.",
+  [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]:
+    "A batch: the handler drops the threads the viewer cannot open, so one hidden id does not fail the rest.",
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]:
     "`before` is a page cursor, not a target; the page's SQL keeps only threads the viewer can open.",
   [WS_METHODS.sandboxStopById]:

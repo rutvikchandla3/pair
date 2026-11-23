@@ -39,6 +39,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -106,6 +107,16 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
   }
 }
 
+/** A change the project's rules refuse, such as an invalid script ID: the caller's input is wrong, nothing failed. */
+export class ProjectInvalidError extends Schema.TaggedError<ProjectInvalidError>()(
+  "ProjectInvalidError",
+  { projectId: ProjectId, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const PAIR_CLOUD_WORKSPACE_MESSAGE = "On Pair Cloud, add a project by its GitHub URL.";
 
 /** `<checkoutsDir>/<projectId>`, or null for an id that is not one plain folder name. */
@@ -146,6 +157,7 @@ export type ProjectServiceError =
   | ProjectConflictError
   | ProjectNotEmptyError
   | ProjectWorkspaceError
+  | ProjectInvalidError
   | ProjectOperationError;
 
 export class ProjectService extends Context.Service<
@@ -168,6 +180,11 @@ export class ProjectService extends Context.Service<
       workspaceRoot: string,
       options?: { readonly includeDeleted?: boolean },
     ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
+    /**
+     * Where to scan `cwd`'s workspace inventory. A thread's removed managed worktree scans its
+     * project, which turn start recreates the worktree from; anything else, or a failure, is `cwd`.
+     */
+    readonly workspaceScanDirectory: (cwd: string) => Effect.Effect<string>;
     readonly snapshot: Effect.Effect<ProjectSnapshot, ProjectOperationError>;
     /**
      * A page of active projects in creation order, each with its repository
@@ -216,6 +233,7 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   // Optional so offline CLI runtimes skip it; the mirror's startup sweep catches anything missed.
   const checkpointMirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
+  const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
   const { cloudOnly, checkoutsDir, baseDir } = yield* ServerConfig.ServerConfig;
@@ -461,6 +479,8 @@ export const make = Effect.gen(function* () {
       case "ProjectRootsInvalidError":
       case "ProjectReferencedByWorkspaceError":
         return yield* new ProjectWorkspaceError({ projectId, reason: rejection.message });
+      case "ProjectCommandInvariantError":
+        return yield* new ProjectInvalidError({ projectId, detail: rejection.detail });
       default:
         return yield* dispatchError(
           rejection ?? receipt.error ?? "The command was previously rejected.",
@@ -485,6 +505,22 @@ export const make = Effect.gen(function* () {
       const row = yield* readRow(projectId, options);
       return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
     },
+  );
+
+  const workspaceScanDirectory = Effect.fn("ProjectService.workspaceScanDirectory")(
+    function* (cwd: string) {
+      if (yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true))) return cwd;
+      if (!(yield* isManagedWorktreePath(cwd))) return cwd;
+      const snapshot = yield* Effect.flatten(
+        threadProjections.readShellSnapshot({ worktreePath: cwd }),
+      );
+      const thread = [...snapshot.threads, ...snapshot.archivedThreads].find(
+        (candidate) => candidate.branch !== null,
+      );
+      if (thread === undefined) return cwd;
+      return Option.getOrUndefined(yield* readRow(thread.projectId))?.workspaceRoot ?? cwd;
+    },
+    (effect, cwd) => Effect.orElseSucceed(effect, () => cwd),
   );
 
   const getByWorkspaceRoot: ProjectService["Service"]["getByWorkspaceRoot"] = Effect.fn(
@@ -868,6 +904,7 @@ export const make = Effect.gen(function* () {
     delete: deleteProject,
     getById,
     getByWorkspaceRoot,
+    workspaceScanDirectory,
     snapshot,
     listPage,
     getShell,

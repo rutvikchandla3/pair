@@ -10,7 +10,7 @@ import { listLinkedPullRequestThreads } from "./linkedThreads.ts";
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.effect(
-  "finds active and archived threads for exactly one pull request, excluding deleted, dismissed, and side chat links",
+  "finds active, settled, and archived threads for exactly one pull request, excluding deleted, dismissed, and side chat links",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -44,6 +44,14 @@ it.effect(
           id: "other-org",
           host: "dev.azure.com",
           repository: "other/project/_git/web",
+          number: 7,
+          source: "manual",
+        },
+        { id: "settled", host: "github.com", repository: "acme/web", number: 7, source: "manual" },
+        {
+          id: "auto-settled",
+          host: "github.com",
+          repository: "acme/web",
           number: 7,
           source: "manual",
         },
@@ -95,6 +103,8 @@ it.effect(
       for (const fixture of fixtures) {
         const payload = yield* encodePayload({
           linkedPullRequest: null,
+          settledOverride: ["settled", "archived"].includes(fixture.id) ? "settled" : null,
+          settledAt: fixture.id === "auto-settled" ? archivedAt : null,
           ...(fixture.id === "side-chat" ? { lineage: { sideChat: true } } : {}),
           pullRequests: [{ ...fixture, linkedAt: createdAt, snapshot: null, stack: null }],
         });
@@ -166,8 +176,28 @@ it.effect(
       });
       expect(result).toEqual({
         threads: [
-          { id: "archived", projectId: "project-1", title: "archived", archivedAt },
-          { id: "active", projectId: "project-1", title: "active", archivedAt: null },
+          { id: "archived", projectId: "project-1", title: "archived", archivedAt, settled: true },
+          {
+            id: "active",
+            projectId: "project-1",
+            title: "active",
+            archivedAt: null,
+            settled: false,
+          },
+          {
+            id: "auto-settled",
+            projectId: "project-1",
+            title: "auto-settled",
+            archivedAt: null,
+            settled: true,
+          },
+          {
+            id: "settled",
+            projectId: "project-1",
+            title: "settled",
+            archivedAt: null,
+            settled: true,
+          },
         ],
       });
       // The pull request stays; a thread the reader cannot open is left out.

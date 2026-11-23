@@ -43,6 +43,11 @@ import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
+import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
+import * as SpeechService from "./speech/SpeechService.ts";
+import * as CloudSpeech from "./speech/CloudSpeech.ts";
+import { speechHttpApiLayer } from "./speech/http.ts";
+import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -118,7 +123,9 @@ import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
+import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
+import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
@@ -267,7 +274,6 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as AntigravityUsage from "./provider/Drivers/AntigravityUsage.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
@@ -370,9 +376,7 @@ const layerUsage = UsageService.layer.pipe(
       AntigravityUsage.layer,
       MuseUsageHome.layer,
       CodexUsageHistory.layer,
-      CursorUsageAccounts.layer.pipe(
-        Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
-      ),
+      CursorUsageAccounts.layer.pipe(Layer.provide(CursorAccountReader.layer)),
     ).pipe(Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerSecretStore.layer)))),
   ),
   Layer.provide(layerServerSettings),
@@ -817,6 +821,20 @@ const layerPeerForwarding = PeerForwarding.layer.pipe(
   Layer.provideMerge(PeerLinks.layer),
 );
 
+// The desktop app and the background service start the server again after it exits.
+const layerServerRestart = Layer.effect(
+  DatabaseStorage.ServerRestart,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+    // As in runServerCommand, only the desktop app passes a bootstrap token; `serve --mode desktop` by hand has no supervisor.
+    const desktopLaunched = config.mode === "desktop" && config.desktopBootstrapToken !== undefined;
+    if (!desktopLaunched && !launcher.managed) return null;
+    // Stop as a SIGTERM would: runMain's listener interrupts the server, so its shutdown path runs.
+    return Effect.sync(() => void process.emit("SIGTERM"));
+  }),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   Layer.effectDiscard(
@@ -835,7 +853,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
-  DatabaseStorage.layer.pipe(Layer.provide(ProjectionMaintenance.layer)),
+  DatabaseStorage.layer.pipe(
+    Layer.provide(ProjectionMaintenance.layer),
+    Layer.provide(layerServerRestart),
+  ),
   layerThreadPullRequestWorker,
   DelegatedTaskAnalytics.layer,
   Layer.effectDiscard(
@@ -877,6 +898,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
+  ProviderInstallation.layer,
   ReplayMarkers.layer,
   MemberProviderAccounts.layer,
   TeamRemoval.layer,
@@ -893,70 +915,76 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       ),
     ),
   ),
-).pipe(
-  Layer.provideMerge(layerOrchestrationApplication),
-  // ProjectService reads the mirror optionally, so it must sit above the orchestration layers.
-  // The lifecycle worker and the viewer-lease RPC share one SandboxActivity; the reconciler and
-  // Settings → Cloud share one SandboxRestoreMode. ThreadAccess shares the EventSink's index.
-  Layer.provideMerge(
-    Layer.mergeAll(
-      CheckpointMirror.layer,
-      SandboxActivity.layer.pipe(
-        Layer.provide(Layer.merge(ProjectionStoreV2.layer, layerThreadAccess)),
+)
+  .pipe(
+    Layer.provideMerge(layerOrchestrationApplication),
+    // ProjectService reads the mirror optionally, so it must sit above the orchestration layers.
+    // The lifecycle worker and the viewer-lease RPC share one SandboxActivity; the reconciler and
+    // Settings → Cloud share one SandboxRestoreMode. ThreadAccess shares the EventSink's index.
+    Layer.provideMerge(
+      Layer.mergeAll(
+        CheckpointMirror.layer,
+        SandboxActivity.layer.pipe(
+          Layer.provide(Layer.merge(ProjectionStoreV2.layer, layerThreadAccess)),
+        ),
+        SandboxRestoreMode.layer,
+        layerThreadAccess,
       ),
-      SandboxRestoreMode.layer,
-      layerThreadAccess,
     ),
-  ),
-  Layer.provideMerge(
-    // Inference takes one factory's requirements; name every kind's.
-    ComputeDriverRegistry.layer<
-      Exclude<
-        Effect.Services<
-          ReturnType<
-            | typeof DockerComputeDriver.make
-            | typeof GceComputeDriver.make
-            | typeof BoatComputeDriver.make
-            | typeof Agent37ComputeDriver.make
-          >
-        >,
-        Scope.Scope
-      >
-    >({
-      docker: DockerComputeDriver.make,
-      gce: GceComputeDriver.make,
-      boat: BoatComputeDriver.make,
-      agent37: Agent37ComputeDriver.make,
-    }),
-  ),
-  Layer.provideMerge(SandboxBootstrapSource.layer),
-  Layer.provideMerge(SandboxCredentialRevocation.layer),
-  Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
-  Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
-  Layer.provideMerge(SecretResolver.layer),
-  Layer.provideMerge(layerServerSettings),
-  Layer.provideMerge(layerSourceControlProviderRegistry),
-  Layer.provideMerge(layerGit),
-  Layer.provideMerge(layerVcs),
-  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
-  Layer.provideMerge(layerPersistence),
-  Layer.provideMerge(
-    Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
-  ),
-  Layer.provideMerge(ProviderRegistry.layer),
-  Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
-  // Provider sessions in a sandbox start on the same cloud env as its terminals.
-  Layer.provideMerge(layerSandboxProcessEnvironment),
-  // Provider hydration builds the Claude runner, which reports agents to the same scanner the
-  // terminal and preview layers share.
-  Layer.provideMerge(layerPortScanner),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      AntigravityInstallation.AntigravityInstallation.layer,
-      CodexInstallation.CodexInstallation.layer,
+    Layer.provideMerge(
+      // Inference takes one factory's requirements; name every kind's.
+      ComputeDriverRegistry.layer<
+        Exclude<
+          Effect.Services<
+            ReturnType<
+              | typeof DockerComputeDriver.make
+              | typeof GceComputeDriver.make
+              | typeof BoatComputeDriver.make
+              | typeof Agent37ComputeDriver.make
+            >
+          >,
+          Scope.Scope
+        >
+      >({
+        docker: DockerComputeDriver.make,
+        gce: GceComputeDriver.make,
+        boat: BoatComputeDriver.make,
+        agent37: Agent37ComputeDriver.make,
+      }),
     ),
-  ),
-);
+    Layer.provideMerge(SandboxBootstrapSource.layer),
+    Layer.provideMerge(SandboxCredentialRevocation.layer),
+    Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
+    Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+    Layer.provideMerge(SecretResolver.layer),
+    Layer.provideMerge(layerServerSettings),
+    Layer.provideMerge(layerSourceControlProviderRegistry),
+    Layer.provideMerge(layerGit),
+    Layer.provideMerge(layerVcs),
+    Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+    Layer.provideMerge(layerPersistence),
+  )
+  .pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
+    ),
+    Layer.provideMerge(ProviderRegistry.layer),
+    Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+    // Provider sessions in a sandbox start on the same cloud env as its terminals.
+    Layer.provideMerge(layerSandboxProcessEnvironment),
+    // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
+    // reference, so the runtime layer shares it.
+    Layer.provideMerge(ProviderInstallationGate.layer),
+    // Provider hydration builds the Claude runner, which reports agents to the same scanner the
+    // terminal and preview layers share.
+    Layer.provideMerge(layerPortScanner),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        AntigravityInstallation.AntigravityInstallation.layer,
+        CodexInstallation.CodexInstallation.layer,
+      ),
+    ),
+  );
 
 const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerPtyAdapter),
@@ -1054,6 +1082,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
+      Layer.provide(speechHttpApiLayer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(PairBuilderHttp.layer),
@@ -1075,6 +1104,7 @@ const layerMakeRoutes = Layer.mergeAll(
         RunnerRoute.layerWhen(endpoint.dialsOverTcp),
       ),
     ),
+    speechStreamRouteLayer,
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
@@ -1098,116 +1128,130 @@ const layerMakeRoutes = Layer.mergeAll(
       ),
     ),
   ),
-).pipe(
-  Layer.provide(
-    PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
-  ),
-  // delegate_task to a linked environment, from /mcp and the follower above.
-  Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
-  // Per-member thread views for WebSocket, HTTP and /mcp readers.
-  Layer.provide(ProjectionStoreV2.layer),
-  // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
-  Layer.provide(PeerLinkRequests.layer),
-  // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
-  Layer.provide(layerPullRequestService),
-  // The same activity instance RunExecutionService reports to, by layer memoization.
-  Layer.provide(
-    ServerBrowser.layer.pipe(
-      Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+)
+  .pipe(
+    Layer.provide(
+      PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
     ),
-  ),
-  Layer.provide(PreviewBrowser.layer),
-  // Links to other environments, shared by Settings (WebSocket), agents (/mcp) and moves.
-  Layer.provide(
-    Layer.merge(
-      layerPeerForwarding,
-      CloudMoves.layer.pipe(Layer.provide(CloudMoveClient.layer)),
-    ).pipe(Layer.provideMerge(PeerMcpClient.layer), Layer.provideMerge(PeerLinks.layer)),
-  ),
-  // Spaces for WebSocket clients and /mcp agents.
-  Layer.provide(
-    SpaceService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          ProjectionStoreV2.layer,
-          IdAllocator.layer,
-          SpaceIntake.layer,
-          SpaceWorkspaces.layer.pipe(
-            Layer.provide(Layer.merge(RuntimeLayer.layerProjectService, IdAllocator.layer)),
+    // delegate_task to a linked environment, from /mcp and the follower above.
+    Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+    // Per-member thread views for WebSocket, HTTP and /mcp readers.
+    Layer.provide(ProjectionStoreV2.layer),
+    // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
+    Layer.provide(PeerLinkRequests.layer),
+    // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
+    Layer.provide(layerPullRequestService),
+    // The same activity instance RunExecutionService reports to, by layer memoization.
+    Layer.provide(
+      ServerBrowser.layer.pipe(
+        Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+      ),
+    ),
+    Layer.provide(PreviewBrowser.layer),
+    // Links to other environments, shared by Settings (WebSocket), agents (/mcp) and moves.
+    Layer.provide(
+      Layer.merge(
+        layerPeerForwarding,
+        CloudMoves.layer.pipe(Layer.provide(CloudMoveClient.layer)),
+      ).pipe(Layer.provideMerge(PeerMcpClient.layer), Layer.provideMerge(PeerLinks.layer)),
+    ),
+    // Spaces for WebSocket clients and /mcp agents.
+    Layer.provide(
+      SpaceService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ProjectionStoreV2.layer,
+            IdAllocator.layer,
+            SpaceIntake.layer,
+            SpaceWorkspaces.layer.pipe(
+              Layer.provide(Layer.merge(RuntimeLayer.layerProjectService, IdAllocator.layer)),
+            ),
           ),
         ),
       ),
     ),
-  ),
-  // Each member's Inbox and Shared with you, for WebSocket clients.
-  Layer.provide(
-    InboxService.layer.pipe(Layer.provide(ProjectionStoreV2.layer), Layer.provide(layerBotService)),
-  ),
-  // Bots: storage and the wake queue, for WebSocket clients and the bot home thread.
-  // One `layerBotService` reference: the wake loop and BotSessions share it.
-  Layer.provide(
-    Layer.mergeAll(
-      Layer.effectDiscard(
-        Effect.gen(function* () {
-          const home = yield* BotHome.BotHome;
-          yield* home.start();
-        }),
-      ).pipe(Layer.provide(BotHome.layer)),
-      // Reaches the turn start through SessionRotation's slot.
-      Layer.effectDiscard(
-        Effect.gen(function* () {
-          const rotation = yield* BotRotation.BotRotation;
-          yield* rotation.start();
-        }),
-      ).pipe(Layer.provide(BotRotation.layer), Layer.provide(ProjectionStoreV2.layer)),
-    ).pipe(
-      Layer.provideMerge(
-        BotSessions.layer.pipe(
-          Layer.provide(layerPeerForwarding),
-          Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
-        ),
-      ),
-      Layer.provideMerge(layerBotService),
-    ),
-  ),
-  // Branch off, its summary, Start from main and Move to my own machine; LineageRepos carries
-  // commits between machines for every lineage action.
-  Layer.provide(
-    BranchOffServiceLive.layer.pipe(
-      Layer.provideMerge(LineageReposLive.layer),
-      Layer.provide(Layer.mergeAll(ProjectionStoreV2.layer, IdAllocator.layer, LineageGit.layer)),
-    ),
-  ),
-  // Update, Offer, Apply and Revert for WebSocket clients and /mcp agents; it also runs the steps
-  // the effect worker reaches through BranchLineageStepExecutorLive's slot.
-  Layer.provide(
-    Layer.mergeAll(
-      BranchLineageStepExecutorLive.layerRegister,
-      Layer.effectDiscard(
-        Effect.gen(function* () {
-          const reactor = yield* BranchLineageReactor.BranchLineageReactor;
-          yield* reactor.start();
-        }),
-      ).pipe(Layer.provide(BranchLineageReactor.layer)),
-    ).pipe(
-      Layer.provideMerge(BranchLineageService.layer),
-      Layer.provide(LineageReposLive.layer),
-      Layer.provide(
-        Layer.mergeAll(
-          ProjectionStoreV2.layer,
-          IdAllocator.layer,
-          LineageGit.layer,
-          RuntimeLayer.layerCheckpointService,
-        ),
+    // Each member's Inbox and Shared with you, for WebSocket clients.
+    Layer.provide(
+      InboxService.layer.pipe(
+        Layer.provide(ProjectionStoreV2.layer),
+        Layer.provide(layerBotService),
       ),
     ),
-  ),
-  Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
-  Layer.provide(layerCommandReadiness),
-  Layer.provide(ServerHttp.layerBrowserApiCors),
-  Layer.provide(ServerHttp.layerHttpCompression),
-);
+    // Bots: storage and the wake queue, for WebSocket clients and the bot home thread.
+    // One `layerBotService` reference: the wake loop and BotSessions share it.
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.effectDiscard(
+          Effect.gen(function* () {
+            const home = yield* BotHome.BotHome;
+            yield* home.start();
+          }),
+        ).pipe(Layer.provide(BotHome.layer)),
+        // Reaches the turn start through SessionRotation's slot.
+        Layer.effectDiscard(
+          Effect.gen(function* () {
+            const rotation = yield* BotRotation.BotRotation;
+            yield* rotation.start();
+          }),
+        ).pipe(Layer.provide(BotRotation.layer), Layer.provide(ProjectionStoreV2.layer)),
+      ).pipe(
+        Layer.provideMerge(
+          BotSessions.layer.pipe(
+            Layer.provide(layerPeerForwarding),
+            Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+          ),
+        ),
+        Layer.provideMerge(layerBotService),
+      ),
+    ),
+    // Branch off, its summary, Start from main and Move to my own machine; LineageRepos carries
+    // commits between machines for every lineage action.
+    Layer.provide(
+      BranchOffServiceLive.layer.pipe(
+        Layer.provideMerge(LineageReposLive.layer),
+        Layer.provide(Layer.mergeAll(ProjectionStoreV2.layer, IdAllocator.layer, LineageGit.layer)),
+      ),
+    ),
+    // Update, Offer, Apply and Revert for WebSocket clients and /mcp agents; it also runs the steps
+    // the effect worker reaches through BranchLineageStepExecutorLive's slot.
+    Layer.provide(
+      Layer.mergeAll(
+        BranchLineageStepExecutorLive.layerRegister,
+        Layer.effectDiscard(
+          Effect.gen(function* () {
+            const reactor = yield* BranchLineageReactor.BranchLineageReactor;
+            yield* reactor.start();
+          }),
+        ).pipe(Layer.provide(BranchLineageReactor.layer)),
+      ).pipe(
+        Layer.provideMerge(BranchLineageService.layer),
+        Layer.provide(LineageReposLive.layer),
+        Layer.provide(
+          Layer.mergeAll(
+            ProjectionStoreV2.layer,
+            IdAllocator.layer,
+            LineageGit.layer,
+            RuntimeLayer.layerCheckpointService,
+          ),
+        ),
+      ),
+    ),
+  )
+  .pipe(
+    Layer.provide(
+      SpeechService.layer.pipe(
+        Layer.provide(layerServerSettings),
+        Layer.provide(SpeechModelStore.layer),
+      ),
+    ),
+    Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
+    Layer.provide(layerServerSettings),
+    Layer.provide(PreviewAutomationBroker.layer),
+    Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
+    Layer.provide(layerCommandReadiness),
+    Layer.provide(ServerHttp.layerBrowserApiCors),
+    Layer.provide(ServerHttp.layerHttpCompression),
+  );
 
 const layerMakeServer = Layer.unwrap(
   Effect.gen(function* () {

@@ -8,13 +8,18 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Rpc, RpcGroup, RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 
-import { encodedChunkBytes, withOutputWindow } from "./rpcOutputWindow.ts";
+import {
+  encodedChunkBytes,
+  type OutputWindowOptions,
+  withOutputWindow,
+} from "./rpcOutputWindow.ts";
 
 const jsonBytes = (chunk: RpcMessage.ResponseChunkEncoded) =>
   new TextEncoder().encode(JSON.stringify(chunk)).byteLength;
 
 const textWindow = {
-  isWindowed: (tag: string) => tag === "windowed",
+  isWindowed: (tag: string) => tag === "windowed" || tag === "counted",
+  isCountOnly: (tag: string) => tag === "counted",
   maxChunks: 8,
   maxBytes: 64 * 1024,
   sizeOf: jsonBytes,
@@ -31,7 +36,7 @@ interface Row<A> {
   readonly tag: string;
   readonly success: Schema.Codec<A, unknown>;
   readonly serialization: Layer.Layer<RpcSerialization.RpcSerialization>;
-  readonly window: typeof textWindow;
+  readonly window: OutputWindowOptions;
   readonly value: (index: number) => A;
   readonly limit: number;
 }
@@ -60,6 +65,7 @@ const binary = (size: number, limit: number): Row<Uint8Array> => ({
 const rows: ReadonlyArray<Row<string> | Row<Uint8Array>> = [
   text("windowed", 1, 8),
   text("windowed", 64 * 1024, 1),
+  text("counted", 64 * 1024, 8),
   text("other", 1, 1),
   binary(64 * 1024, 1),
   binary(48 * 1024, 2),

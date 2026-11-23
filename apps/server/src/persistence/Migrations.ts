@@ -81,7 +81,6 @@ import Migration0075 from "./Migrations/075_SubagentDeliveryState.ts";
 import Migration0076 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
 import Migration0077 from "./Migrations/077_RepairBooleanSettledOverride.ts";
 import Migration0078 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
-
 import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
 import Migration0080 from "./Migrations/080_TeamMembers.ts";
 import Migration0081 from "./Migrations/081_AttributionBackfill.ts";
@@ -113,6 +112,9 @@ import Migration0106 from "./Migrations/106_BranchLineage.ts";
 import Migration0107 from "./Migrations/107_Bots.ts";
 import Migration0108 from "./Migrations/108_MemberPairBuilderUser.ts";
 import Migration0109 from "./Migrations/109_LongThreadReadIndexes.ts";
+import Migration0110 from "./Migrations/110_ScheduledTaskThreadMode.ts";
+import Migration0111 from "./Migrations/111_ProjectionMessageSearchText.ts";
+import Migration0112 from "./Migrations/112_TurnItemConversationIndex.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -225,6 +227,9 @@ const migrationEntries = [
   [107, "Bots", Migration0107],
   [108, "MemberPairBuilderUser", Migration0108],
   [109, "LongThreadReadIndexes", Migration0109],
+  [110, "ScheduledTaskThreadMode", Migration0110],
+  [111, "ProjectionMessageSearchText", Migration0111],
+  [112, "TurnItemConversationIndex", Migration0112],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -271,6 +276,25 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
     kind: "BadState",
     message: `This database's migration history would skip required schema migrations: ${skipped.join(", ")}. The migrator skips every id up to the highest recorded id (${latestRecordedId}), regardless of name. It was probably written by a different build. Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
   });
+});
+
+const latestMigrationId = Math.max(...migrationEntries.map(([id]) => id));
+
+// Mirrors the Migrator, which runs only ids above the highest recorded, plus the V2-preview reconciliation.
+export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (tables.length === 0) return true;
+  const rows = yield* sql<{ readonly latestId: number | null; readonly previewRows: number }>`
+    SELECT
+      MAX(migration_id) AS latestId,
+      SUM(name = 'OrchestrationV2' AND migration_id IN (53, 54)) AS previewRows
+    FROM effect_sql_migrations
+  `;
+  const row = rows[0];
+  return (row?.latestId ?? 0) < latestMigrationId || (row?.previewRows ?? 0) > 0;
 });
 
 const run = Migrator.make({});

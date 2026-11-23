@@ -28,7 +28,7 @@ import {
 import * as TeamState from "../../../team/TeamState.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { reaches, sendActorId } from "../../threadAccess.ts";
+import { reaches, sendActorId, threadNotFound } from "../../threadAccess.ts";
 import {
   type ListThreadPullRequestsResult,
   PullRequestLinkFailedError,
@@ -42,7 +42,6 @@ import {
   type PullRequestTargetInput,
   PullRequestWatchFailedError,
   PullRequestWatchFromSubagentError,
-  PullRequestThreadNotFoundError,
   PullRequestThreadRequiredError,
   PullRequestGuideFailedError,
   PullRequestProjectNotFoundError,
@@ -240,7 +239,7 @@ const make = Effect.gen(function* () {
         )
       : Option.none();
     if (Option.isNone(thread) || thread.value.deletedAt !== null) {
-      return yield* new PullRequestThreadNotFoundError({ threadId });
+      return yield* threadNotFound(engine, scope, threadId, `Thread ${threadId} was not found.`);
     }
     return thread.value;
   });

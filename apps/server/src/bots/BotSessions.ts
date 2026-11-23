@@ -496,7 +496,8 @@ const make = Effect.gen(function* () {
       const root = project.workspaceRoot;
       // Only a git project can give a session its own worktree. Anything else, the scratch
       // project included, runs in place; the scratch project gives each thread its own folder.
-      const inWorktree = yield* git.isRepository(root).pipe(Effect.orElseSucceed(() => false));
+      const inWorktree =
+        (yield* git.repositoryRoot(root).pipe(Effect.orElseSucceed(() => null))) !== null;
       const baseRef = inWorktree
         ? ((yield* git.defaultBranch(root).pipe(Effect.orElseSucceed(() => null))) ??
           (yield* git.currentBranch(root).pipe(Effect.orElseSucceed(() => null))) ??

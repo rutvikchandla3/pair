@@ -27,7 +27,7 @@ import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { MemberAvatar } from "../../components/MemberAvatar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -245,7 +245,7 @@ export function SpaceComposer(props: {
                 )}
               >
                 {token.mention.type === "pair" ? (
-                  <SymbolView name="sparkles" size={18} tintColorClassName="accent-icon" />
+                  <SymbolView name="robot" size={18} tintColorClassName="accent-icon" />
                 ) : (
                   <MemberAvatar
                     member={{ name: token.label, color: member?.color ?? "#71717a" }}

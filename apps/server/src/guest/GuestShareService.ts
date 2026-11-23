@@ -53,9 +53,9 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoalescer.ts";
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
 import {
-  projectDomainEventForWire,
   projectTurnItemForDetail,
   projectTurnItemForWire,
+  threadStreamEventItem,
 } from "../orchestration-v2/WireProjection.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -567,11 +567,7 @@ const make = Effect.gen(function* () {
       .pipe(
         // Guests see the holder's view; another member's personal state is not theirs to see.
         Stream.filter((stored) => !isMemberThreadEvent(stored.event)),
-        Stream.map((stored) => ({
-          kind: "event" as const,
-          sequence: stored.sequence,
-          event: projectDomainEventForWire(stored.event),
-        })),
+        Stream.map(threadStreamEventItem),
         // Ending the source here flushes what the coalescer holds, so `ended` is not held back.
         Stream.takeUntil((item) => endsShare(item.event)),
         coalesceThreadLiveStream,

@@ -1,21 +1,35 @@
-import { type TerminalAttachStreamEvent, type TerminalEvent, WS_METHODS } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_V2_WS_METHODS,
+  type TerminalAttachStreamEvent,
+  type TerminalEvent,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import type * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Stream from "effect/Stream";
 import type { RpcServer } from "effect/rpc";
-import { withOutputWindow } from "@t3tools/shared/rpcOutputWindow";
+import { withOutputWindow as withRpcOutputWindow } from "@t3tools/shared/rpcOutputWindow";
 
 const MAX_PENDING_BYTES = 64 * 1024;
-const TERMINAL_STREAMS: ReadonlySet<string> = new Set([
+// Terminal output is small chunks, so its window also caps bytes. The other streams
+// window by count only: sizing a multi-MB thread snapshot would serialize it twice.
+const BYTE_WINDOWED_STREAMS: ReadonlySet<string> = new Set([
   WS_METHODS.terminalAttach,
   WS_METHODS.terminalObserve,
 ]);
+// One ACK round trip per chunk stalls sync on high-latency links.
+const COUNT_WINDOWED_STREAMS: ReadonlySet<string> = new Set([
+  WS_METHODS.subscribeServerConfig,
+  ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+  ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+]);
 
-export const withTerminalOutputWindow = (protocol: RpcServer.Protocol["Service"]) =>
-  withOutputWindow(protocol, {
-    isWindowed: (tag) => TERMINAL_STREAMS.has(tag),
+export const withOutputWindow = (protocol: RpcServer.Protocol["Service"]) =>
+  withRpcOutputWindow(protocol, {
+    isWindowed: (tag) => BYTE_WINDOWED_STREAMS.has(tag) || COUNT_WINDOWED_STREAMS.has(tag),
+    isCountOnly: (tag) => COUNT_WINDOWED_STREAMS.has(tag),
     maxChunks: 8,
     maxBytes: MAX_PENDING_BYTES,
     sizeOf: (chunk) => Buffer.byteLength(JSON.stringify(chunk)),

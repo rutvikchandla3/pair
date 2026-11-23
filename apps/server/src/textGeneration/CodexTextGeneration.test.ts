@@ -1,10 +1,12 @@
 import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  ProjectId,
   ProviderDriverKind,
   type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -39,6 +41,7 @@ import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import * as TextGenerators from "./TextGenerators.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
@@ -69,6 +72,8 @@ interface FakeCodexInput {
   stdinMustContain?: string;
   stdinMustNotContain?: string;
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
+  requiredCwd?: string;
+  requireInstructions?: string;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -82,6 +87,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
     mcpServers: input.mcpServers ?? [],
+    requiredCwd: input.requiredCwd ?? null,
+    requireInstructions: input.requireInstructions ?? null,
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -115,6 +122,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "let seenImage = false;",
         'let seenServiceTier = "";',
         'let seenReasoningEffort = "";',
+        'let instructions = "";',
         "for (let index = 0; index < args.length; index += 1) {",
         '  if (args[index] === "--image") {',
         "    index += 1;",
@@ -122,6 +130,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  } else if (args[index] === "--config") {',
         "    index += 1;",
         '    const value = args[index] ?? "";',
+        '    if (value.startsWith("developer_instructions=")) instructions = JSON.parse(value.slice("developer_instructions=".length));',
         '    if (value.startsWith("service_tier=")) seenServiceTier = value;',
         '    if (value.startsWith("model_reasoning_effort=")) seenReasoningEffort = value;',
         '  } else if (args[index] === "--output-last-message") {',
@@ -136,6 +145,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  process.stderr.write(message + "\\n");',
         "  process.exit(code);",
         "}",
+        'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
+        'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
         "if (check.requireArg !== null && !originalArgs.includes(` ${check.requireArg} `)) {",
         '  fail("missing arg: " + check.requireArg, 8);',
         "}",
@@ -178,6 +189,8 @@ function withFakeCodexEnv<A, E, R>(
     launchArgs?: string;
     environment?: NodeJS.ProcessEnv;
     models?: ReadonlyArray<string>;
+    defaultModel?: string;
+    customModels?: ReadonlyArray<string>;
     managedRuntime?: boolean;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -186,7 +199,11 @@ function withFakeCodexEnv<A, E, R>(
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
-    const config = decodeCodexSettings({ binaryPath: codexPath, launchArgs: input.launchArgs });
+    const config = decodeCodexSettings({
+      binaryPath: codexPath,
+      launchArgs: input.launchArgs,
+      customModels: input.customModels,
+    });
     const textGeneration = yield* makeCodexTextGeneration(
       DEFAULT_TEST_MODEL_SELECTION.instanceId,
       config,
@@ -196,6 +213,7 @@ function withFakeCodexEnv<A, E, R>(
           slug,
           name: slug,
           isCustom: false,
+          ...(slug === input.defaultModel ? { isDefault: true } : {}),
           capabilities: null,
         })),
       ),
@@ -241,15 +259,40 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       }),
   );
 
-  it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(
-    "dispatches the qualified live model for %s",
-    (selectedModel) =>
+  it.effect.each([
+    {
+      selectedModel: "gpt-5.6-luna",
+      models: ["openai.gpt-5.6-luna"],
+      expected: "openai.gpt-5.6-luna",
+    },
+    {
+      selectedModel: "openai.gpt-5.6-luna",
+      models: ["openai.gpt-5.6-luna"],
+      expected: "openai.gpt-5.6-luna",
+    },
+    {
+      selectedModel: "openai.gpt-5.6-luna",
+      models: ["gpt-6-astra", "gpt-5.6-luna"],
+      defaultModel: "gpt-6-astra",
+      expected: "gpt-5.6-luna",
+    },
+    {
+      selectedModel: "gpt-6-luna",
+      models: ["gpt-5.6-luna", "gpt-6-astra"],
+      defaultModel: "gpt-6-astra",
+      expected: "gpt-6-astra",
+    },
+    { selectedModel: "gpt-6-luna", models: ["gpt-5.6-luna"], expected: "gpt-5.6-luna" },
+    { selectedModel: "gpt-6-luna", models: [], expected: "gpt-6-luna" },
+  ])(
+    "dispatches $expected for $selectedModel from $models",
+    ({ selectedModel, models, defaultModel, expected }) =>
       withFakeCodexEnv(
         {
-          output: JSON.stringify({ title: "Bedrock title" }),
-          models: ["openai.gpt-5.6-luna"],
-          requireArg: "--model openai.gpt-5.6-luna",
-          forbidArg: "--model gpt-5.6-luna",
+          output: JSON.stringify({ title: "Live title" }),
+          models,
+          ...(defaultModel ? { defaultModel } : {}),
+          requireArg: `--model ${expected}`,
         },
         (textGeneration) =>
           Effect.gen(function* () {
@@ -258,7 +301,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
               message: "Describe this change",
               modelSelection: createModelSelection(ProviderInstanceId.make("codex"), selectedModel),
             });
-            expect(result.title).toBe("Bedrock title");
+            expect(result.title).toBe("Live title");
           }),
       ),
   );
@@ -360,6 +403,49 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("drops the requested model's options when falling back to another model", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Live title" }),
+        models: ["gpt-6-astra"],
+        requireArg: '--model gpt-6-astra --config model_reasoning_effort="low"',
+        forbidArg: 'service_tier="priority"',
+      },
+      (textGeneration) =>
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Describe this change",
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna", [
+            { id: "reasoningEffort", value: "none" },
+            { id: "serviceTier", value: "priority" },
+          ]),
+        }),
+    ),
+  );
+
+  it.effect("sends a configured custom model the managed snapshot leaves out", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Live title" }),
+        models: ["gpt-6-astra", "gpt-5.6-luna"],
+        defaultModel: "gpt-6-astra",
+        customModels: ["gpt-5.6-luna-preview"],
+        managedRuntime: true,
+        requireArg: '--model gpt-5.6-luna-preview --config model_reasoning_effort="high"',
+      },
+      (textGeneration) =>
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Describe this change",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("codex"),
+            "gpt-5.6-luna-preview",
+            [{ id: "reasoningEffort", value: "high" }],
+          ),
+        }),
+    ),
+  );
+
   it.effect("omits a persisted service tier for managed ChatGPT text generation", () =>
     withFakeCodexEnv(
       {
@@ -380,10 +466,14 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates titles with the user's MCP servers and plugins off", () =>
+  it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
     withFakeCodexEnv(
       {
-        output: JSON.stringify({ title: "Remove default shapes" }),
+        output: JSON.stringify({ title: "Remove default shapes", body: "Removes default shapes." }),
+        launchArgs: "--config 'developer_instructions=\"Use TEAM: as the PR title prefix\"'",
+        requiredCwd: process.cwd(),
+        requireInstructions: "Use TEAM: as the PR title prefix",
+        forbidArg: "--config features.shell_tool=false",
         mcpServers: [
           { name: "augmenter", enabled: true },
           { name: "my.server", enabled: true },
@@ -394,9 +484,14 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          const result = yield* textGeneration.generateThreadTitle({
+          const result = yield* textGeneration.generatePrContent({
             cwd: process.cwd(),
-            message: "Augmenter task 1. Use the Augmenter MCP: link_thread when you start.",
+            baseBranch: "main",
+            headBranch: "remove-default-shapes",
+            commitSummary: "Remove default shapes",
+            diffSummary: "shapes.ts | 2 --",
+            diffPatch: "-addDefaultShapes();",
+            threadContext: "user: in a few minutes PR will be up then $babysit-pr",
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });
           expect(result.title).toBe("Remove default shapes");
@@ -458,8 +553,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           subject: "Add important change",
           body: "",
         }),
-        launchArgs: "--strict-config --listen off",
-        requireArg: "--strict-config",
+        launchArgs: "--strict-config --oss --local-provider ollama --listen off",
+        requireArg: "--strict-config --oss --local-provider ollama",
         forbidArg: "--listen",
       },
       (textGeneration) =>
@@ -580,18 +675,31 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
-it.effect.each([
-  { exhausted: false, signedIn: true, cloudOnly: false, memberOwned: false, fallsBack: false },
-  { exhausted: true, signedIn: true, cloudOnly: false, memberOwned: false, fallsBack: true },
-  { exhausted: false, signedIn: false, cloudOnly: true, memberOwned: false, fallsBack: true },
-  { exhausted: false, signedIn: false, cloudOnly: false, memberOwned: false, fallsBack: false },
-  { exhausted: false, signedIn: false, cloudOnly: true, memberOwned: true, fallsBack: false },
-])(
-  "text generation preflight: exhausted=$exhausted signedIn=$signedIn cloudOnly=$cloudOnly memberOwned=$memberOwned",
-  ({ exhausted, signedIn, cloudOnly, memberOwned, fallsBack }) =>
+const PREFLIGHT_ROWS = [
+  { state: "ready", cloudOnly: false, memberOwned: false, fallsBack: false },
+  { state: "pending", cloudOnly: false, memberOwned: false, fallsBack: false },
+  { state: "exhausted", cloudOnly: false, memberOwned: false, fallsBack: true },
+  { state: "not installed", cloudOnly: false, memberOwned: false, fallsBack: true },
+  {
+    state: "not installed, fallback disabled for project",
+    cloudOnly: false,
+    memberOwned: false,
+    fallsBack: false,
+  },
+  { state: "signed out", cloudOnly: false, memberOwned: false, fallsBack: true },
+  { state: "signed out, fallback failed", cloudOnly: false, memberOwned: false, fallsBack: false },
+  // Cloud-only falls back from any primary that can't generate, but never to a member's account.
+  { state: "pending", cloudOnly: true, memberOwned: false, fallsBack: true },
+  { state: "signed out", cloudOnly: true, memberOwned: true, fallsBack: false },
+] as const;
+
+it.effect.each(PREFLIGHT_ROWS)(
+  "text generation preflight: $state cloudOnly=$cloudOnly memberOwned=$memberOwned",
+  ({ state: primaryState, cloudOnly, memberOwned, fallsBack }) =>
     Effect.gen(function* () {
       const primary = ProviderInstanceId.make("codex");
       const fallback = ProviderInstanceId.make("claude_work");
+      const projectId = ProjectId.make("project-a");
       const selection = {
         instanceId: primary,
         model: "chat-model",
@@ -600,20 +708,31 @@ it.effect.each([
       const calls: ModelSelection[] = [];
       const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
         const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
-        const ready = signedIn || instanceId !== primary;
         const snapshot: ServerProvider = {
           instanceId,
           driver,
           enabled: true,
           installed: true,
-          status: ready ? "ready" : "error",
-          auth: { status: ready ? "authenticated" : "unauthenticated" },
+          status: "ready",
+          auth: { status: "authenticated" },
           version: null,
           checkedAt: "1970-01-01T00:00:00Z",
           models: [],
           slashCommands: [],
           skills: [],
-          ...(exhausted && instanceId === primary
+          ...(primaryState === "pending" && instanceId === primary
+            ? { installed: false, status: "warning", auth: { status: "unknown" } }
+            : {}),
+          ...(primaryState.startsWith("not installed") && instanceId === primary
+            ? { installed: false, status: "error", auth: { status: "unknown" } }
+            : {}),
+          ...(primaryState.startsWith("signed out") && instanceId === primary
+            ? { status: "error", auth: { status: "unauthenticated" } }
+            : {}),
+          ...(primaryState === "signed out, fallback failed" && instanceId === fallback
+            ? { status: "error", auth: { status: "unknown" } }
+            : {}),
+          ...(primaryState === "exhausted" && instanceId === primary
             ? {
                 usageLimits: {
                   checkedAt: "1970-01-01T00:00:00Z",
@@ -635,6 +754,7 @@ it.effect.each([
             generatePrContent: () => Effect.die("unused"),
             generateBranchName: () => Effect.die("unused"),
             generateReviewGuide: () => Effect.die("unused"),
+            generateTranscriptionPostProcessing: () => Effect.die("unused"),
             generateThreadTitle: (input) =>
               Effect.sync(() => {
                 calls.push(input.modelSelection);
@@ -659,10 +779,19 @@ it.effect.each([
                   ...(memberOwned ? { ownerMemberId: MemberId.make("member-alice") } : {}),
                 },
               },
+              ...(primaryState === "not installed, fallback disabled for project"
+                ? {
+                    projectSettingsOverrides: {
+                      [projectId]: { providerInstances: { [fallback]: { enabled: false } } },
+                    },
+                  }
+                : {}),
             }),
+            Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("unused"),
             }),
+            ProviderInstallationGate.layer,
           ),
         ),
         Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
@@ -673,6 +802,7 @@ it.effect.each([
           message: "hello",
           linkedContext: "",
           modelSelection: selection,
+          projectId,
         }),
       ).toEqual({ title: "Generated title" });
       expect(calls).toEqual([
@@ -739,6 +869,7 @@ it.effect.each([
                 ),
               ),
             ),
+          generateTranscriptionPostProcessing: () => Effect.die("unused"),
           generateThreadTitle: () => Effect.die("unused"),
         }),
       };
@@ -750,9 +881,11 @@ it.effect.each([
               getInstance: () => Effect.succeed(instance),
             }),
             ServerSettings.layerTest(),
+            Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("unused"),
             }),
+            ProviderInstallationGate.layer,
           ),
         ),
         Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
@@ -800,4 +933,92 @@ it.effect.each([
         expect(review.detail).toBe("reached");
       }
     }).pipe(Effect.scoped, Effect.provide(layerCodexTextGenerationTest)),
+);
+
+it.effect(
+  "a review guide aimed at a text generator falls back to an agent that can read the checkout",
+  () =>
+    Effect.gen(function* () {
+      const claude = ProviderInstanceId.make("claudeAgent");
+      const driver = ProviderDriverKind.make("claudeAgent");
+      const calls: ModelSelection[] = [];
+      const instance = {
+        instanceId: claude,
+        driverKind: driver,
+        continuationIdentity: { driverKind: driver, continuationKey: claude },
+        displayName: undefined,
+        enabled: true,
+        snapshot: {
+          getSnapshot: Effect.succeed<ServerProvider>({
+            instanceId: claude,
+            driver,
+            enabled: true,
+            installed: true,
+            status: "ready",
+            auth: { status: "authenticated" },
+            version: null,
+            checkedAt: "1970-01-01T00:00:00Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          }),
+        } as ProviderInstance["snapshot"],
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: TextGeneration.TextGeneration.of({
+          generateCommitMessage: () => Effect.die("unused"),
+          generatePrContent: () => Effect.die("unused"),
+          generateBranchName: () => Effect.die("unused"),
+          generateThreadTitle: () => Effect.die("unused"),
+          generateTranscriptionPostProcessing: () => Effect.die("unused"),
+          generateReviewGuide: (input) =>
+            Effect.sync(() => {
+              calls.push(input.modelSelection);
+              return {} as TextGeneration.ReviewGuideGenerationResult;
+            }),
+        }),
+      } satisfies ProviderInstance;
+      const serviceWith = (instances: ReadonlyArray<ProviderInstance>) =>
+        TextGeneration.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+                listInstances: Effect.succeed(instances),
+                getInstance: (id) =>
+                  Effect.succeed(instances.find((candidate) => candidate.instanceId === id)),
+              }),
+              ServerSettings.layerTest({}),
+              Layer.mock(TextGenerators.TextGenerators)({
+                runner: (id) =>
+                  Effect.succeed(
+                    id === "openrouter"
+                      ? () => Effect.die("a text generator cannot investigate")
+                      : undefined,
+                  ),
+              }),
+              Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+                resolveLink: () => Effect.die("unused"),
+              }),
+              ProviderInstallationGate.layer,
+            ),
+          ),
+        );
+      const input = {
+        cwd: "/tmp",
+        number: 1,
+        title: "Change",
+        description: "",
+        baseBranch: "main",
+        baseCommit: "abc",
+        settledReview: "",
+        modelSelection: { instanceId: ProviderInstanceId.make("openrouter"), model: "some/model" },
+      };
+      yield* (yield* serviceWith([instance])).generateReviewGuide(input);
+      expect(calls.map((selection) => selection.instanceId)).toEqual([claude]);
+
+      // With no agent ready, it says what is missing instead of looking up a provider by that id.
+      const failure = yield* Effect.flip((yield* serviceWith([])).generateReviewGuide(input));
+      expect(failure.detail).toMatch(
+        /^Review guides need a coding agent that can read the checkout/,
+      );
+    }).pipe(Effect.provide(layerCodexTextGenerationTest)),
 );

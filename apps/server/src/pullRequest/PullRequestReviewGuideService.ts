@@ -513,6 +513,7 @@ const make = Effect.gen(function* () {
               ...reviewGuideInputFromPullRequest(detail, activity, scratch.baseCommit),
               cwd: scratch.path,
               modelSelection,
+              projectId: input.projectId,
               instructions,
               stack: scratch.stack,
             }),

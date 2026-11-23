@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
+import * as Stream from "effect/Stream";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -100,6 +101,7 @@ function layerExecutorFor(input: {
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
         interrupt: input.interrupt ?? (() => Effect.void),
         steer: () => Effect.void,
+        applyModelSelection: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined
@@ -121,6 +123,7 @@ function layerExecutorFor(input: {
         detach: () => record("detach"),
         otherWorkingThreads: () => Effect.succeed([]),
         releaseUnlessBusy: () => Effect.succeed(true),
+        subscribePromptSuggestion: () => Stream.empty,
       }),
     ),
     Layer.succeed(
@@ -253,7 +256,7 @@ it.effect.each([
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       for (const count of stub ? [1, 5] : [1]) {
         yield* Ref.set(attemptCount, count);
-        yield* worker.runOnce;
+        yield* worker.runOnce();
       }
     }).pipe(Effect.provide(layerWorker));
     assert.deepEqual(
@@ -414,7 +417,7 @@ it.effect.each([
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       for (const count of [1, 5]) {
         yield* Ref.set(attemptCount, count);
-        const attempt = yield* Effect.forkChild(worker.runOnce);
+        const attempt = yield* Effect.forkChild(worker.runOnce());
         yield* TestClock.adjust("10 minutes");
         assert.isTrue(yield* Fiber.join(attempt));
         assert.deepEqual(yield* Ref.get(failures), count === 5 ? [message] : []);
@@ -511,7 +514,7 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(layerWorker),
       Effect.exit,
     );
@@ -599,7 +602,7 @@ it.effect("waits out a driver's retry-after hint, capped, instead of the backoff
         { attemptCount: 4, retryAfterMs: undefined },
       ]) {
         yield* Ref.set(attempt, next);
-        yield* worker.runOnce;
+        yield* worker.runOnce();
       }
     }).pipe(Effect.provide(layerWorker));
 
@@ -664,7 +667,7 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(layerWorker),
       Effect.exit,
     );
@@ -730,7 +733,7 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(layerWorker),
       Effect.exit,
     );

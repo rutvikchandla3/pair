@@ -38,6 +38,7 @@ export function dispatchWasNotAccepted(
     case "OrchestratorSubagentThreadReadOnlyError":
     case "OrchestratorLocalThreadReadOnlyError":
     case "OrchestratorThreadAboveModeLimitError":
+    case "OrchestratorProviderSelectionBusyError":
     case "OrchestratorRuntimeModeAboveCeilingError":
     case "OrchestratorSandboxCommandMovedError":
     case "ThreadManagementProviderInstanceDisabledError":

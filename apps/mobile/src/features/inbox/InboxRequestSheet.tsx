@@ -8,6 +8,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { SpaceSheetFrame } from "../spaces/SpaceSheetFrame";
 import { PendingApprovalCard } from "../threads/PendingApprovalCard";
@@ -21,6 +22,7 @@ export function InboxRequestSheet(_props: StaticScreenProps<Params>) {
   const navigation = useNavigation();
   const { selectedThread, selectedThreadRef } = useThreadSelection();
   const requests = useSelectedThreadRequests();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
   const canOperateThread = useEnvironmentScope(
     selectedThreadRef?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -58,6 +60,8 @@ export function InboxRequestSheet(_props: StaticScreenProps<Params>) {
         <View>
           <PendingUserInputCard
             environmentId={selectedThreadRef.environmentId}
+            threadId={selectedThreadRef.threadId}
+            workspaceRoot={selectedThreadCwd}
             canOperateThread={canOperateThread}
             pendingUserInput={requests.activePendingUserInput}
             maxHeight={maxHeight}

@@ -7,8 +7,12 @@ import { AppText as Text } from "../../components/ui/AppText";
 const SHOWN = 3;
 
 /** Teammates viewing this thread; away members are dimmed. */
-export function ThreadViewerStack(props: { readonly viewers: ReadonlyArray<PresentMember> }) {
-  const shown = props.viewers.slice(0, SHOWN);
+export function ThreadViewerStack(props: {
+  readonly viewers: ReadonlyArray<PresentMember>;
+  /** Avatars before the rest collapse into "+N". */
+  readonly max?: number;
+}) {
+  const shown = props.viewers.slice(0, props.max ?? SHOWN);
   const overflow = props.viewers.length - shown.length;
   return (
     <View

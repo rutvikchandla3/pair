@@ -42,10 +42,9 @@ const capture = Effect.fn("CheckpointCapture.capture")(function* (
   };
 });
 
-export const isGitCheckpointable = (cwd: string, roots?: ReadonlyArray<string>) =>
-  CheckpointStore.CheckpointStore.use((store) => store.isGitRepository(cwd, roots)).pipe(
-    Effect.orElseSucceed(() => false),
-  );
+// A failed probe is an operational error, not proof that the workspace has no repository.
+const isGitCheckpointable = (cwd: string, roots?: ReadonlyArray<string>) =>
+  CheckpointStore.CheckpointStore.use((store) => store.isGitRepository(cwd, roots));
 
 /** `commitOid` is null when nothing was captured, including when the ref already existed. */
 export const captureBaseline = Effect.fn("CheckpointCapture.captureBaseline")(function* (input: {
@@ -89,8 +88,12 @@ export const captureTurn = Effect.fn("CheckpointCapture.captureTurn")(function* 
     warnings,
   });
 
-  if (!(yield* isGitCheckpointable(input.cwd, input.roots))) {
-    return finish({ status: "missing", commitOid: null, files: [] });
+  const repository = yield* isGitCheckpointable(input.cwd, input.roots).pipe(
+    Effect.map((isRepository) => (isRepository ? ("repository" as const) : ("missing" as const))),
+    Effect.catch(warn("capture-failed", input.checkpointRef, "error" as const)),
+  );
+  if (repository !== "repository") {
+    return finish({ status: repository, commitOid: null, files: [] });
   }
 
   const captured = yield* capture(store, {

@@ -20,14 +20,22 @@ import { resolveSpawnCommand, type SpawnCommandOptions } from "@t3tools/shared/s
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/codexLaunchArgs.ts";
+import {
+  codexExecLaunchArgs,
+  codexMcpListLaunchArgs,
+  resolveCodexLaunchArgs,
+} from "../provider/codexLaunchArgs.ts";
 import type { CodexEffectiveRuntime } from "../provider/CodexManagedRuntime.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
-import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  codexModelFamily,
+  getModelSelectionStringOptionValue,
+  readCustomModelEntries,
+} from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
@@ -271,17 +279,32 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         machine?.environment ?? resolved?.environment ?? environment ?? hostInfo.environment;
       const models = yield* getModels;
       const requestedModel = modelSelection.model;
-      const model =
+      const listed = models.filter((candidate) => !candidate.isCustom);
+      // An unlisted slug is one this account can't run, e.g. gpt-6-luna on a ChatGPT login.
+      const requestedFamily = codexModelFamily(requestedModel);
+      const matchedModel =
         models.find((candidate) => candidate.slug === requestedModel)?.slug ??
-        models.find(
-          (candidate) => !candidate.isCustom && codexModelFamily(candidate.slug) === requestedModel,
+        // Managed snapshots omit configured custom models; send those as requested.
+        readCustomModelEntries(codexConfig.customModels).find(
+          (entry) => entry.slug === requestedModel,
         )?.slug ??
+        listed.find((candidate) => codexModelFamily(candidate.slug) === requestedFamily)?.slug;
+      const model =
+        matchedModel ??
+        listed.find((candidate) => candidate.isDefault)?.slug ??
+        listed.find((candidate) => !candidate.isLegacy)?.slug ??
+        listed[0]?.slug ??
         requestedModel;
+      // The selection's options were chosen for the requested model and may not fit a fallback.
+      const fellBack = matchedModel === undefined && model !== requestedModel;
       const launchArgs = resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment);
       const reasoningEffort =
-        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
+        (fellBack
+          ? undefined
+          : getModelSelectionStringOptionValue(modelSelection, "reasoningEffort")) ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
-      const serviceTier = resolved ? undefined : getCodexServiceTierOptionValue(modelSelection);
+      const serviceTier =
+        resolved || fellBack ? undefined : getCodexServiceTierOptionValue(modelSelection);
       // A machine runs the image's pinned codex on its own home, never this server's.
       const binary = machine === undefined ? effectiveConfig.binaryPath || "codex" : "codex";
       const env =
@@ -294,7 +317,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               }
             : {}),
         } satisfies NodeJS.ProcessEnv);
-      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
       const facts =
         machine === undefined ? undefined : { platform: hostInfo.platform, environment: env };
       const mcpServersOff = yield* listEnabledMcpServers({
@@ -303,14 +325,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         cwd: workingDirectory,
         env,
         facts,
-        // `codex mcp` rejects --strict-config; the overrides still apply.
-        launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
+        launchArgs: codexMcpListLaunchArgs(launchArgs),
       }).pipe(Effect.map(codexMcpServersOff));
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
           "exec",
-          ...execLaunchArgs,
+          ...codexExecLaunchArgs(launchArgs),
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
           ...(serverConfig.cloudOnly && investigate === undefined ? CODEX_NO_TOOL_ARGS : []),

@@ -70,6 +70,7 @@ interface ThreadDetailsPanelProps extends Pick<
   gitCwd: string | null;
   /** Where "Open in" opens: the selected repository for a workspace thread. */
   openInCwd: string | null;
+  workspaceMutationId: string | null;
   isGitRepo: boolean;
   /** A workspace thread's repositories; null for a thread in a single repository. */
   workspace: WorkspaceRepositoriesState | null;
@@ -255,6 +256,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         showActions={visible.gitActions}
                         showChanges={visible.changes}
                         gitCwd={gitCwd}
+                        workspaceMutationId={props.workspaceMutationId}
                         activeThreadRef={activeThreadRef}
                         {...(workspace && selectedRepository
                           ? {

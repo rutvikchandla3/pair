@@ -225,7 +225,8 @@ export const make = Effect.gen(function* () {
       if (!confined) return null;
     }
     const stat = yield* host.value.fileSystem.stat(expandedPath).pipe(Effect.option);
-    if (stat._tag === "None") return null;
+    // Server state files answer like missing paths, as readFile refuses them.
+    if (stat._tag === "None" || (yield* isServerInternalPath(expandedPath))) return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
     if (stat.value.type !== "File") return { kind: "other" } as const;
     let mimeType: string | undefined;
