@@ -1324,6 +1324,7 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
 
 const recentRunReadsKeepTheNewestRunsAndAnchors = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
+  const sql = yield* SqlClient.SqlClient;
   const start = yield* DateTime.now;
   const threadId = yield* addRolledBackRecoveryCandidate("recent-runs");
   const template = (yield* store.getThreadProjection(threadId)).runs[0]!;
@@ -1397,6 +1398,29 @@ const recentRunReadsKeepTheNewestRunsAndAnchors = Effect.gen(function* () {
     })).runs,
     [2, 4, 5, 6, 7, 8],
   );
+
+  // The guard reads the latest older completion through the completion index.
+  const { statements, tracer } = traceSqlStatements();
+  yield* store
+    .getThreadRecords(threadId, ["runs", "providerTurns"], { recentRuns: { limit: 3, runIds: [] } })
+    .pipe(Effect.withTracer(tracer));
+  const plan = (marker: string) =>
+    sql
+      .unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${statements.find((query) => query.includes(marker))!}`,
+      )
+      .pipe(Effect.map((rows) => rows.map((row) => row.detail).join("\n")));
+  const guardPlan = yield* plan("AS omitted_end");
+  assert.include(guardPlan, "runs_thread_completed_idx (thread_id=? AND completed_at=?)");
+  assert.include(guardPlan, "runs_thread_completed_idx (thread_id=? AND completed_at>?)");
+  const turnPlan = yield* plan("run_attempt_id IS NULL");
+  assert.include(turnPlan, "provider_turns_attempt_idx (run_attempt_id=? AND thread_id=?)");
+  assert.include(turnPlan, "provider_turns_attempt_idx (run_attempt_id=?)");
+
+  // An older run that ended with no completion time never ends, so nothing is left out.
+  yield* write(run(4, "completed", null));
+  assert.deepEqual((yield* read({ limit: 3, runIds: [] })).runs, [1, 2, 3, 4, 5, 6, 7, 8]);
+  yield* write(run(4, "completed", 45));
 
   // Run 5 ending after run 6 started could make it the latest, so nothing is left out.
   yield* write(run(5, "completed", 62));
@@ -9713,6 +9737,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         plan[0]!,
         /USING INDEX sqlite_autoindex_orchestration_v2_projection_runs_1 \(run_id=\?\)/,
       );
+      const turnRead = statements.find((query) => query.includes("AS provider_turn\n"))!;
+      const turnPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${turnRead}`,
+      )).map((row) => row.detail);
+      assert.include(turnPlan[0], "provider_turns_live_idx (thread_id=?)");
     }),
   );
   it.effect("dates a completion released by held background work at the release", () =>
