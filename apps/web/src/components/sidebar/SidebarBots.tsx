@@ -72,7 +72,7 @@ function NewBotButton() {
 function SessionRow(props: {
   readonly environmentId: EnvironmentId;
   readonly row: BotSidebarSession;
-  readonly selectedThreadId: string | null;
+  readonly selected: boolean;
   readonly archived?: boolean;
 }) {
   const { session } = props.row;
@@ -113,10 +113,10 @@ function SessionRow(props: {
           environmentId: cloud?.environmentId ?? props.environmentId,
           threadId: session.threadId,
         }}
-        aria-current={props.selectedThreadId === session.threadId ? "page" : undefined}
+        aria-current={props.selected ? "page" : undefined}
         className={cn(
           sessionRowClass,
-          props.selectedThreadId === session.threadId && "bg-sidebar-row-active",
+          props.selected && "bg-sidebar-row-active",
           props.archived && "text-sidebar-muted-foreground",
         )}
       >
@@ -178,7 +178,8 @@ function BotGroup(props: {
   readonly shells: ShellLookup;
   readonly now: number;
   readonly selectedBotId: string | null;
-  readonly selectedThreadId: string | null;
+  readonly routeEnvironmentId: string | null;
+  readonly routeThreadId: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [revealedThreadId, setRevealedThreadId] = useState<string | null>(null);
@@ -193,21 +194,19 @@ function BotGroup(props: {
     props.shells,
     props.now,
   );
+  // A cloud session opens on its cloud's route, not the bot's environment.
+  const isOpen = (row: BotSidebarSession) =>
+    row.session.threadId === props.routeThreadId &&
+    (row.session.cloud?.environmentId ?? props.environmentId) === props.routeEnvironmentId;
   // Opening a row that sits behind the disclosure expands it once, so the row keeps its highlight.
-  const selectedHidden = [...earlier, ...archived].some(
-    (row) => row.session.threadId === props.selectedThreadId,
-  );
-  if (selectedHidden && revealedThreadId !== props.selectedThreadId) {
-    setRevealedThreadId(props.selectedThreadId);
+  const selectedHidden = [...earlier, ...archived].some(isOpen);
+  if (selectedHidden && revealedThreadId !== props.routeThreadId) {
+    setRevealedThreadId(props.routeThreadId);
     setExpanded(true);
   }
   const selected = props.selectedBotId === props.bot.id;
   // Rows are bots; only the bot you're in lists its sessions under it.
-  const open =
-    selected ||
-    [...rows, ...earlier, ...archived].some(
-      (row) => row.session.threadId === props.selectedThreadId,
-    );
+  const open = selected || selectedHidden || rows.some(isOpen);
   return (
     <>
       <Link
@@ -247,7 +246,7 @@ function BotGroup(props: {
               key={row.session.threadId}
               environmentId={props.environmentId}
               row={row}
-              selectedThreadId={props.selectedThreadId}
+              selected={isOpen(row)}
             />
           ))}
       {!open || (earlier.length === 0 && archived.length === 0) ? null : (
@@ -259,7 +258,7 @@ function BotGroup(props: {
                   key={row.session.threadId}
                   environmentId={props.environmentId}
                   row={row}
-                  selectedThreadId={props.selectedThreadId}
+                  selected={isOpen(row)}
                 />
               ))}
               {earlier.length > 0 && archived.length > 0 ? (
@@ -272,7 +271,7 @@ function BotGroup(props: {
                   key={row.session.threadId}
                   environmentId={props.environmentId}
                   row={row}
-                  selectedThreadId={props.selectedThreadId}
+                  selected={isOpen(row)}
                   archived
                 />
               ))}
@@ -318,10 +317,6 @@ export function SidebarBots() {
   );
   const selectedBotId =
     params.environmentId === environmentId && params.botId !== undefined ? params.botId : null;
-  const selectedThreadId =
-    params.environmentId === environmentId && params.threadId !== undefined
-      ? params.threadId
-      : null;
 
   return (
     <div className="mb-2 flex flex-col gap-px" role="presentation">
@@ -349,7 +344,8 @@ export function SidebarBots() {
             shells={shellMap}
             now={now}
             selectedBotId={selectedBotId}
-            selectedThreadId={selectedThreadId}
+            routeEnvironmentId={params.environmentId ?? null}
+            routeThreadId={params.threadId ?? null}
           />
         ))
       )}
