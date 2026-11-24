@@ -99,6 +99,7 @@ it.effect.each([
           recoverDelegatedTask: () => Effect.void,
         }),
         Layer.mock(SandboxEffects.SandboxEffects)({}),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         ServerSettings.layerTest(),
         Layer.mock(ProviderTurnStart.ProviderTurnStartServiceV2)({
           start: () => Effect.sync(() => calls.push("start")).pipe(Effect.asVoid),

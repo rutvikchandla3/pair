@@ -60,6 +60,7 @@ import {
 } from "../../state/spaces";
 import { useTeamRoster } from "../../state/team";
 import { useQuietThreadStructure } from "../../state/use-thread-detail";
+import { environmentCatalog } from "../../connection/catalog";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { type SpacePost, SpaceComposer } from "./SpaceComposer";
@@ -78,6 +79,7 @@ type Params = { readonly environmentId: string; readonly spaceId: string };
 
 const roomVisitTracker = createThreadVisitTracker({
   threadShellAtom: environmentThreadShells.threadShellAtom,
+  sessionGenerationAtom: environmentCatalog.sessionGenerationAtom,
   visit: threadEnvironment.visit,
 });
 

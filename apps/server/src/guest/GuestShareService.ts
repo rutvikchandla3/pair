@@ -57,6 +57,7 @@ import {
   projectTurnItemForWire,
   threadStreamEventItem,
 } from "../orchestration-v2/WireProjection.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
@@ -233,6 +234,7 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const analytics = yield* AnalyticsService.AnalyticsService;
   const access = yield* ThreadAccess.optional;
+  const documents = yield* DocumentText.DocumentText;
   const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
   /** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
   const inviteSignature = (shareId: string) =>
@@ -408,7 +410,12 @@ const make = Effect.gen(function* () {
         const path = resolveAttachmentPath({ attachmentsDir, attachment });
         return path === null
           ? Effect.void
-          : fileSystem.remove(path, { force: true }).pipe(Effect.ignore);
+          : fileSystem
+              .remove(path, { force: true })
+              .pipe(
+                Effect.andThen(fileSystem.remove(`${path}.txt`, { force: true })),
+                Effect.ignore,
+              );
       },
       { discard: true },
     );
@@ -454,6 +461,7 @@ const make = Effect.gen(function* () {
           yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
           yield* fileSystem.copyFile(uploads[index]!.path, path);
           stored.push(attachment);
+          yield* documents.ensure(path);
         }).pipe(Effect.mapError(() => uploadFailed)),
       { discard: true },
     ).pipe(Effect.onError(() => removeStored(stored)));

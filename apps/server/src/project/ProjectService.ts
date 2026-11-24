@@ -39,8 +39,11 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
+import { deletedProjectOverridePatch } from "../provider/ProjectSettingsOverrideSweep.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
+import { makeIsWorktreeContainer } from "./worktreeContainer.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -234,6 +237,9 @@ export const make = Effect.gen(function* () {
   // Optional so offline CLI runtimes skip it; the mirror's startup sweep catches anything missed.
   const checkpointMirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const isWorktreeContainer = yield* makeIsWorktreeContainer.pipe(
+    Effect.provide(ProcessRunner.layer),
+  );
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
   const { cloudOnly, checkoutsDir, baseDir } = yield* ServerConfig.ServerConfig;
@@ -386,6 +392,17 @@ export const make = Effect.gen(function* () {
       if (claimed) return folder;
     }
     return yield* folderError(`Every folder name for "${folderName}" is taken.`);
+  });
+
+  const rejectWorktreeContainer = Effect.fn("ProjectService.rejectWorktreeContainer")(function* (
+    projectId: ProjectId,
+    workspaceRoot: string,
+  ) {
+    if (!(yield* isWorktreeContainer(workspaceRoot))) return;
+    return yield* new ProjectInvalidError({
+      projectId,
+      detail: `${workspaceRoot} holds a repository's worktrees but is not a checkout itself. Add one of its worktrees as the project instead.`,
+    });
   });
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
@@ -558,6 +575,7 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
+      yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
       yield* commit({
         type: "project.create",
         commandId: input.commandId,
@@ -620,6 +638,7 @@ export const make = Effect.gen(function* () {
             });
       if (workspaceRoot !== previousRoot) {
         yield* refuseOutsideCheckouts(input.projectId, workspaceRoot);
+        yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
       }
       if (input.roots !== undefined && existing.value.roots !== undefined) {
         yield* requireRepositoryRoots(input.projectId, input.roots);
@@ -644,7 +663,7 @@ export const make = Effect.gen(function* () {
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
       });
-      if (workspaceRoot !== previousRoot) {
+      if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
       return yield* readCommitted(input.projectId);
@@ -721,7 +740,10 @@ export const make = Effect.gen(function* () {
           (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
         ),
       );
-    const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads];
+    // Newest first: a source deleted while its fork lives keeps the pages that fork shows.
+    const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads].sort(
+      (a, b) => DateTime.toEpochMillis(b.createdAt) - DateTime.toEpochMillis(a.createdAt),
+    );
     if (projectThreads.length > 0 && input.force !== true) {
       return yield* new ProjectNotEmptyError({ projectId });
     }
@@ -743,7 +765,14 @@ export const make = Effect.gen(function* () {
 
   // Best-effort cleanup releases disabled instances kept alive by overrides; crashes have no replay to revisit deletion.
   const clearProjectSettingsOverrides = (projectId: ProjectId) =>
-    serverSettings.updateSettings({ projectSettingsOverrides: { [projectId]: null } }).pipe(
+    serverSettings.getSettings.pipe(
+      Effect.flatMap(({ projectSettingsOverrides }) =>
+        serverSettings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: deletedProjectOverridePatch(projectSettingsOverrides[projectId]),
+          },
+        }),
+      ),
       Effect.asVoid,
       Effect.catchCause((cause) =>
         Effect.logWarning(

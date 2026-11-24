@@ -16,6 +16,8 @@ export interface VcsCaptureCheckpointInput {
   readonly checkpointRef: CheckpointRef;
   /** Left at HEAD's version: an excluded change or untracked file is not captured. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** The checkpoint this one follows, so a turn that switched branches starts where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
 }
 
 export interface VcsRestoreCheckpointInput {

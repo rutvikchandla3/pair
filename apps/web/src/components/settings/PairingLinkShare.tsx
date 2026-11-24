@@ -44,6 +44,7 @@ export function usePairingLinkShare(
 ) {
   const [qrEndpointId, setQrEndpointId] = useState<string | null>(null);
   const [failedCopyValue, setFailedCopyValue] = useState<string | null>(null);
+  const [copiedKind, setCopiedKind] = useState<"code" | "link" | null>(null);
 
   const currentOriginPairingUrl = credential ? resolveCurrentOriginPairingUrl(credential) : null;
   const hostedPairingUrl =
@@ -99,24 +100,8 @@ export function usePairingLinkShare(
     window.isSecureContext &&
     navigator.clipboard?.writeText != null;
 
-  const { copyToClipboard } = useCopyToClipboard<{ value: string; kind: CopyKind }>({
-    onCopy: ({ kind }) => {
-      toastManager.add({
-        type: "success",
-        title:
-          kind === "hosted-link"
-            ? "Hosted app link copied"
-            : kind === "link"
-              ? "Sign-in link copied"
-              : "Sign-in code copied",
-        description:
-          kind === "hosted-link"
-            ? "Open it in the browser on the device you want to connect."
-            : kind === "link"
-              ? "Open it on the device you want to sign in."
-              : "Paste it into another client to finish signing in.",
-      });
-    },
+  const { copyToClipboard, isCopied } = useCopyToClipboard<{ value: string; kind: CopyKind }>({
+    onCopy: ({ kind }) => setCopiedKind(kind === "code" ? "code" : "link"),
     onError: (error, { value, kind }) => {
       // Captured per attempt so concurrent copies cannot make the dialog
       // reveal a different value than the one that failed.
@@ -156,6 +141,8 @@ export function usePairingLinkShare(
     isRevealValueHostedAppPairingUrl,
     isRevealValueQrShareable,
     clearFailedCopy: () => setFailedCopyValue(null),
+    /** Which value a copy button just put on the clipboard, so it can say "Copied". */
+    copied: isCopied ? copiedKind : null,
     copyCode: () => {
       if (credential) copyPairingValue(credential, "code");
     },
@@ -245,11 +232,11 @@ export function PairingLinkShare({
                 className="shrink-0"
                 onClick={() => share.copyLink(qrPairingUrl)}
               >
-                Copy link
+                {share.copied === "link" ? "Copied" : "Copy link"}
               </Button>
             </div>
             <Button size="xs" variant="ghost" onClick={share.copyCode}>
-              Copy code only
+              {share.copied === "code" ? "Copied" : "Copy code only"}
             </Button>
           </>
         ) : (

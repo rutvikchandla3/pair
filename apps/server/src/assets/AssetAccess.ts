@@ -61,6 +61,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { WorkspaceReadGuard } from "../workspace/WorkspaceReadGuard.ts";
 import { SANDBOX_ROOT, sandboxIdFromPath } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import { toWslDrivePath } from "../workspace/wslDrivePath.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
@@ -629,7 +630,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 
   switch (input.resource._tag) {
     case "media-file": {
-      let requestedPath = expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory);
+      let requestedPath = expandHomePath(
+        yield* toWslDrivePath(input.resource.path),
+        yield* HostProcess.HomeDirectory,
+      );
       // Normalizing a machine's root would stat this server's disk, where it does not exist.
       if (
         !path.isAbsolute(requestedPath) &&
@@ -708,9 +712,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     }
     case "draft-workspace-file": {
       const draftWorkspaceRoot = input.workspaceRoot ?? input.resource.cwd;
-      const hostPath = input.resource.path.startsWith("~/")
-        ? expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory)
-        : input.resource.path;
+      const hostPath =
+        input.resource.path.startsWith("~/") || input.resource.path.startsWith("~\\")
+          ? expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory)
+          : yield* toWslDrivePath(input.resource.path);
       if (path.isAbsolute(hostPath) && isSandboxImagePath(path, path.resolve(hostPath))) {
         const finalized = yield* finalizeSandboxImageAsset({
           filePath: path.resolve(hostPath),

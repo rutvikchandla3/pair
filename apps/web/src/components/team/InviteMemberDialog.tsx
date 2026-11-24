@@ -101,7 +101,7 @@ function LinkResult({ credential }: { readonly credential: AuthPairingCredential
       )}
       {share.qrPairingUrl === null && share.canCopyToClipboard ? (
         <Button size="xs" variant="outline" onClick={share.copyCode}>
-          Copy code
+          {share.copied === "code" ? "Copied" : "Copy code"}
         </Button>
       ) : null}
     </div>

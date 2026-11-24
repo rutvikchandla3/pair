@@ -13,6 +13,8 @@ import type { RpcServer } from "effect/rpc";
 import { withOutputWindow as withRpcOutputWindow } from "@t3tools/shared/rpcOutputWindow";
 
 const MAX_PENDING_BYTES = 64 * 1024;
+// Charge an envelope so tiny events cannot bypass the byte budget.
+const EVENT_OVERHEAD = 128;
 // Terminal output is small chunks, so its window also caps bytes. The other streams
 // window by count only: sizing a multi-MB thread snapshot would serialize it twice.
 const BYTE_WINDOWED_STREAMS: ReadonlySet<string> = new Set([
@@ -26,18 +28,46 @@ const COUNT_WINDOWED_STREAMS: ReadonlySet<string> = new Set([
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
 ]);
 
+const byteLengthOf = (value: unknown) => (typeof value === "string" ? Buffer.byteLength(value) : 0);
+
+// Charges every variable-size field a terminal event can carry, so the byte
+// budgets below cannot be bypassed by a large payload in an uncharged field.
+const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
+  EVENT_OVERHEAD +
+  ("threadId" in event ? byteLengthOf(event.threadId) + byteLengthOf(event.terminalId) : 0) +
+  (event.type === "output"
+    ? byteLengthOf(event.data)
+    : event.type === "error"
+      ? byteLengthOf(event.message)
+      : event.type === "activity"
+        ? byteLengthOf(event.label)
+        : "snapshot" in event
+          ? byteLengthOf(event.snapshot.threadId) +
+            byteLengthOf(event.snapshot.terminalId) +
+            byteLengthOf(event.snapshot.history) +
+            byteLengthOf(event.snapshot.cwd) +
+            byteLengthOf(event.snapshot.worktreePath) +
+            byteLengthOf(event.snapshot.label)
+          : 0);
+
+// Byte-windowed streams carry TerminalAttachStreamEvent, whose encoded form is the
+// event itself, so charge it like the output queue does instead of serializing twice.
+const chunkSize = (values: ReadonlyArray<unknown>) =>
+  values.reduce<number>(
+    (total, value) => total + queuedSize(value as TerminalAttachStreamEvent),
+    EVENT_OVERHEAD,
+  );
+
 export const withOutputWindow = (protocol: RpcServer.Protocol["Service"]) =>
   withRpcOutputWindow(protocol, {
     isWindowed: (tag) => BYTE_WINDOWED_STREAMS.has(tag) || COUNT_WINDOWED_STREAMS.has(tag),
     isCountOnly: (tag) => COUNT_WINDOWED_STREAMS.has(tag),
     maxChunks: 8,
     maxBytes: MAX_PENDING_BYTES,
-    sizeOf: (chunk) => Buffer.byteLength(JSON.stringify(chunk)),
+    sizeOf: (chunk) => chunkSize(chunk.values),
   });
 
 const MAX_QUEUED_OUTPUT = 8 * 1024 * 1024;
-// Charge an envelope so tiny events cannot bypass the byte budget.
-const EVENT_OVERHEAD = 128;
 
 type Listener<A> = (event: A) => Effect.Effect<void>;
 // Acquisition must register cleanup synchronously with installing the listener.
@@ -45,14 +75,6 @@ type Subscribe<A, E> = (
   listener: Listener<A>,
   registerCleanup: (stop: () => void) => void,
 ) => Effect.Effect<() => void, E>;
-
-const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
-  EVENT_OVERHEAD +
-  (event.type === "output"
-    ? Buffer.byteLength(event.data)
-    : "snapshot" in event
-      ? Buffer.byteLength(event.snapshot.history)
-      : 0);
 
 export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStreamEvent, E>(
   subscribe: Subscribe<A, E>,

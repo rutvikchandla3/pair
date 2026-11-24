@@ -100,6 +100,10 @@ export const captureTurn = Effect.fn("CheckpointCapture.captureTurn")(function* 
     cwd: input.cwd,
     roots: input.roots,
     checkpointRef: input.checkpointRef,
+    // The first checkpoint in a scope names itself as previous; it follows nothing.
+    ...(input.previousCheckpointRef === input.checkpointRef
+      ? {}
+      : { previousCheckpointRef: input.previousCheckpointRef }),
   }).pipe(
     Effect.map((result) => ({ status: "ready" as const, ...result })),
     Effect.catchTags({

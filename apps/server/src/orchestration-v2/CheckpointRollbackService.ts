@@ -10,6 +10,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -21,7 +22,11 @@ import * as WorkspaceCheckouts from "../project/WorkspaceCheckouts.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import {
+  reservationFileSystem,
+  withCheckpointRestoreReservation,
+  withWorkspaceLease,
+} from "../workspace/workspaceLease.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as MirrorSync from "../sandbox/mirror/MirrorSync.ts";
 import {
@@ -143,11 +148,42 @@ export const layer: Layer.Layer<
     const mirrorHooks = yield* MirrorSync.MirrorHooks;
     const workspaceCheckouts = yield* WorkspaceCheckouts.WorkspaceCheckouts;
 
-    // An unavailable host counts as existing: a sandbox checkout is never recreated on this disk.
-    const worktreeExists = (worktreePath: string) =>
-      hosts.forPath(worktreePath).pipe(
-        Effect.flatMap((host) => host.fileSystem.exists(worktreePath)),
-        Effect.catchTags({ WorkspaceHostUnavailableError: (_error) => Effect.succeed(true) }),
+    // Set aside, not removed: a checkout that fails puts the folder and its files back.
+    const replaceLeftoverFolder = <E, R>(
+      checkoutFileSystem: FileSystem.FileSystem,
+      worktreePath: string,
+      recreate: Effect.Effect<void, E, R>,
+    ) =>
+      Effect.acquireUseRelease(
+        Effect.gen(function* () {
+          const aside = yield* checkoutFileSystem.makeTempDirectory({
+            directory: path.dirname(worktreePath),
+            prefix: ".t3-replaced-",
+          });
+          yield* checkoutFileSystem.rename(worktreePath, path.join(aside, "folder"));
+          return aside;
+        }),
+        () => recreate,
+        (aside, exit) =>
+          (Exit.isSuccess(exit)
+            ? Effect.void
+            : checkoutFileSystem
+                .remove(worktreePath, { recursive: true, force: true })
+                .pipe(
+                  Effect.andThen(
+                    checkoutFileSystem.rename(path.join(aside, "folder"), worktreePath),
+                  ),
+                )
+          ).pipe(
+            Effect.andThen(checkoutFileSystem.remove(aside, { recursive: true, force: true })),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Edit from here left a worktree folder set aside", {
+                worktreePath,
+                setAside: path.join(aside, "folder"),
+                cause,
+              }),
+            ),
+          ),
       );
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
@@ -231,6 +267,21 @@ export const layer: Layer.Layer<
               };
             });
 
+      const restoreFiles = input.restoreFiles !== false;
+      const isolated = isCheckpointRestoreIsolated(context.thread, scope, {
+        hosts,
+        projections,
+        projects,
+        path,
+      });
+      const sharedWorkspace = () =>
+        new CheckpointRollbackExecutionError({
+          reason: "shared-workspace",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+
       const { worktreePath, branch, roots } = context.thread;
       // Recreated only where the server would have made it, as turn start does.
       if (worktreePath != null && branch != null && (yield* isManagedWorktreePath(worktreePath))) {
@@ -244,17 +295,36 @@ export const layer: Layer.Layer<
               }));
         let recreated = false;
         for (const checkout of checkouts) {
-          if (yield* worktreeExists(checkout.path)) continue;
+          // An unavailable host counts as existing: a sandbox checkout is never recreated on this disk.
+          const host = yield* hosts.forPath(checkout.path).pipe(Effect.option);
+          if (Option.isNone(host)) continue;
+          const checkoutFileSystem = host.value.fileSystem;
+          const exists = yield* checkoutFileSystem.exists(checkout.path);
+          // A failed removal can leave the folder without its checkout; only a file restore replaces it.
+          const leftover =
+            restoreFiles &&
+            exists &&
+            !(yield* checkoutFileSystem.exists(path.join(checkout.path, ".git")));
+          if (exists && !leftover) continue;
           const project = yield* projects.get(checkout.projectId, {
             includeDeleted: roots !== undefined,
           });
           if (Option.isNone(project)) continue;
-          yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
-          yield* gitWorkflow.createWorktree({
-            cwd: project.value.workspaceRoot,
-            refName: branch,
-            path: checkout.path,
-          });
+          const recreate = gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot }).pipe(
+            Effect.andThen(
+              gitWorkflow.createWorktree({
+                cwd: project.value.workspaceRoot,
+                refName: branch,
+                path: checkout.path,
+              }),
+            ),
+          );
+          if (leftover) {
+            if (!(yield* isolated)) return yield* sharedWorkspace();
+            yield* replaceLeftoverFolder(checkoutFileSystem, checkout.path, recreate);
+          } else {
+            yield* recreate;
+          }
           recreated = true;
         }
         if (recreated && roots !== undefined) {
@@ -270,22 +340,7 @@ export const layer: Layer.Layer<
         }
       }
 
-      if (
-        input.restoreFiles !== false &&
-        !(yield* isCheckpointRestoreIsolated(context.thread, scope, {
-          hosts,
-          projections,
-          projects,
-          path,
-        }))
-      ) {
-        return yield* new CheckpointRollbackExecutionError({
-          reason: "shared-workspace",
-          threadId: input.threadId,
-          providerThreadId: input.providerThreadId,
-          checkpointId: input.checkpointId,
-        });
-      }
+      if (restoreFiles && !(yield* isolated)) return yield* sharedWorkspace();
 
       const modelSelection = context.thread.modelSelection;
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
@@ -415,9 +470,20 @@ export const layer: Layer.Layer<
         function* (input) {
           // Storage cleanup removes worktrees under the same lease.
           const thread = yield* projections.getThread(input.threadId);
-          yield* thread.worktreePath === null
-            ? execute(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), execute(input));
+          if (thread.worktreePath === null) return yield* execute(input);
+          const worktreePath = path.resolve(thread.worktreePath);
+          const rollback = withWorkspaceLease(worktreePath, execute(input));
+          // Shared-workspace restores are rejected and conversation-only rewinds
+          // touch no files; reserving for them would stall turn starts on the
+          // slow provider rollback for nothing.
+          yield* input.restoreFiles === false
+            ? rollback
+            : withCheckpointRestoreReservation(
+                yield* reservationFileSystem(hosts, worktreePath),
+                path,
+                worktreePath,
+                rollback,
+              );
         },
         (effect, input) =>
           effect.pipe(

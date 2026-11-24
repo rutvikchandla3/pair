@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess } from "effect/process";
 
@@ -103,6 +104,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  routeModelCatalog: (
+    catalog: ClaudeModelCatalog,
+    cwd: string,
+  ) => Effect.Effect<ClaudeModelCatalog> = Effect.succeed,
 ) {
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const machineInvestigationFor = yield* makeMachineInvestigationFor;
@@ -152,9 +157,46 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
-    S["DecodingServices"]
+    S["DecodingServices"] | Scope.Scope
   > {
-    const catalog = yield* scopedModelCatalog;
+    // Text in, text out, so a cloud thread's request runs here too: in its machine it would carry
+    // the server's env. An investigation reads the checkout, so it runs where the checkout is.
+    const machine =
+      investigate === undefined
+        ? undefined
+        : yield* machineInvestigationFor({
+            operation,
+            cwd,
+            instanceId,
+            homeVariable: "CLAUDE_CONFIG_DIR",
+          });
+
+    const host = machine?.host ?? hosts.local;
+    const cwdOnServer =
+      machine === undefined &&
+      (yield* hosts.forPath(cwd).pipe(
+        Effect.map((cwdHost) => cwdHost.kind === "local"),
+        Effect.orElseSucceed(() => false),
+      ));
+    const workingDirectory =
+      machine !== undefined || (cwdOnServer && operation !== "generateThreadTitle")
+        ? cwd
+        : yield* host.fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3code-claude-" })
+            .pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError(
+                  "claude",
+                  operation,
+                  cause,
+                  "Failed to create a working directory",
+                ),
+              ),
+            );
+    // Model routes read Claude settings from the cwd on this server's disk.
+    const catalog = cwdOnServer
+      ? yield* routeModelCatalog(yield* scopedModelCatalog, workingDirectory)
+      : yield* scopedModelCatalog;
     const resolvedModelSelection = {
       ...modelSelection,
       model: resolveClaudeModelSlug(catalog, modelSelection.model),
@@ -203,43 +245,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       "Failed to encode Claude CLI settings.",
     );
 
-    // Text in, text out, so a cloud thread's request runs here too: in its machine it would carry
-    // the server's env. An investigation reads the checkout, so it runs where the checkout is.
-    const machine =
-      investigate === undefined
-        ? undefined
-        : yield* machineInvestigationFor({
-            operation,
-            cwd,
-            instanceId,
-            homeVariable: "CLAUDE_CONFIG_DIR",
-          });
-
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
     ) {
-      const host = machine?.host ?? hosts.local;
-      const cwdOnServer =
-        machine === undefined &&
-        (yield* hosts.forPath(cwd).pipe(
-          Effect.map((cwdHost) => cwdHost.kind === "local"),
-          Effect.orElseSucceed(() => false),
-        ));
-      const workingDirectory =
-        machine !== undefined || (cwdOnServer && operation !== "generateThreadTitle")
-          ? cwd
-          : yield* host.fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-" })
-              .pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError(
-                    "claude",
-                    operation,
-                    cause,
-                    "Failed to create a working directory",
-                  ),
-                ),
-              );
       // The image has no managed-mcp.json, so a machine run always isolates servers by flag.
       const managedMcpConfig = machine === undefined && (yield* hasClaudeManagedMcpConfig());
       const args = [
@@ -378,5 +386,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
   });
 
-  return TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson);
+  return TextGenerationOperations.fromRunner(
+    "ClaudeTextGeneration",
+    <S extends Schema.Top>(request: TextGenerationOperations.Request<S>) =>
+      Effect.scoped(runClaudeJson(request)),
+  );
 });

@@ -7,11 +7,13 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import {
@@ -73,6 +75,10 @@ export const layer = Layer.effect(
     const fileSystem = yield* FileSystem.FileSystem;
     const workspaceHosts = yield* WorkspaceHosts.WorkspaceHosts;
     const sandboxEnvironment = yield* sandboxEnvironmentFor;
+    // Optional so standalone provider layers in tests probe at once.
+    const lifecycleEvents = yield* Effect.serviceOption(
+      ServerLifecycleEvents.ServerLifecycleEvents,
+    );
     return ProviderHost.ProviderHost.of({
       paths: {
         cwd: config.cwd,
@@ -88,6 +94,10 @@ export const layer = Layer.effect(
         subscribe: serverSettings.subscribeChanges,
       },
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
+      ...Option.match(lifecycleEvents, {
+        onNone: () => ({}),
+        onSome: (events) => ({ awaitServerReady: events.awaitReady }),
+      }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
       // DocumentText owns the path-resolution span.

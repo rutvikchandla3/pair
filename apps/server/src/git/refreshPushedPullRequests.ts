@@ -21,18 +21,19 @@ export const refreshPushedPullRequests = Effect.fn("refreshPushedPullRequests")(
         const path = yield* Path.Path;
         yield* pullRequests.refreshAfterTurn(
           workspaceRootAt(thread, input.cwd, path)?.projectId ?? thread.projectId,
+          { pushed: true },
         );
         return;
       }
     }
     if (input.projectId !== undefined) {
-      yield* pullRequests.refreshAfterTurn(input.projectId);
+      yield* pullRequests.refreshAfterTurn(input.projectId, { pushed: true });
       return;
     }
     const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
     yield* Effect.forEach(
       projects.filter((project) => project.workspaceRoot === input.cwd),
-      (project) => pullRequests.refreshAfterTurn(project.id),
+      (project) => pullRequests.refreshAfterTurn(project.id, { pushed: true }),
       { discard: true },
     );
   },

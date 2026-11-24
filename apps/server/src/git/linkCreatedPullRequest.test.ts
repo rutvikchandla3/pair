@@ -204,7 +204,7 @@ it.effect(
   "refreshes PR readers after a push from a thread or project, but not a local commit",
   () =>
     Effect.gen(function* () {
-      const refreshed: string[] = [];
+      const refreshed: Array<[string, boolean | undefined]> = [];
       let current = thread;
       const layerDependencies = Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -215,9 +215,9 @@ it.effect(
           listShells: () => Effect.succeed([project]),
         }),
         Layer.mock(PullRequestService.PullRequestService)({
-          refreshAfterTurn: (id) =>
+          refreshAfterTurn: (id, options) =>
             Effect.sync(() => {
-              refreshed.push(id);
+              refreshed.push([id, options?.pushed]);
             }),
         }),
       );
@@ -246,6 +246,11 @@ it.effect(
         { cwd: "/worktrees/stack/feature/web", threadId: THREAD_ID },
         { push: { status: "pushed" } },
       ).pipe(Effect.provide(layerDependencies));
-      expect(refreshed).toEqual([PROJECT_ID, PROJECT_ID, PROJECT_ID, "project-web"]);
+      expect(refreshed).toEqual([
+        [PROJECT_ID, true],
+        [PROJECT_ID, true],
+        [PROJECT_ID, true],
+        ["project-web", true],
+      ]);
     }),
 );

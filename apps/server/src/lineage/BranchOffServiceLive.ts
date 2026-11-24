@@ -3,6 +3,9 @@ import {
   BranchLineageError,
   type BranchLineageErrorReason,
   CommandId,
+  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   type MemberId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -22,7 +25,6 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import { providerInstanceOwner } from "@t3tools/shared/providerInstanceOwnership";
 import { cloudMachineSizes } from "@t3tools/shared/sandbox";
-import { defaultTextGenerationModel } from "@t3tools/shared/serverSettings";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -995,7 +997,10 @@ const ownTextModel = (
     if (instance?.ownerMemberId !== memberId || instance.enabled === false) continue;
     return {
       instanceId: instanceId as ModelSelection["instanceId"],
-      model: defaultTextGenerationModel(instance.driver),
+      model:
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[instance.driver] ??
+        DEFAULT_MODEL_BY_PROVIDER[instance.driver] ??
+        DEFAULT_TEXT_GENERATION_MODEL,
     };
   }
   return settings.textGenerationModelSelection;

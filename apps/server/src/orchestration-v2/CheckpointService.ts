@@ -28,6 +28,9 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const TURN_BASE_REFS_PREFIX = "refs/t3/lineage/turn-base";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
+// The provider turn waits on the baseline, so a workspace too slow for this starts without one.
+// It bounds only the snapshot: waiting on the lock lets an in-flight capture finish the same ref.
+const BASELINE_CAPTURE_BUDGET = "5 seconds";
 
 export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
   "CheckpointRootScopePrepareError",
@@ -331,19 +334,21 @@ export const layer: Layer.Layer<
           });
           const coarse = yield* coarseFor(input.scope.cwd);
           if (coarse !== undefined) {
-            yield* coarse.checkpointCapture({
-              _tag: "baseline",
-              cwd: input.scope.cwd,
-              roots: input.scope.roots,
-              checkpointRef,
-            });
+            yield* coarse
+              .checkpointCapture({
+                _tag: "baseline",
+                cwd: input.scope.cwd,
+                roots: input.scope.roots,
+                checkpointRef,
+              })
+              .pipe(Effect.timeout(BASELINE_CAPTURE_BUDGET));
             return;
           }
           yield* CheckpointCapture.captureBaseline({
             cwd: input.scope.cwd,
             roots: input.scope.roots,
             checkpointRef,
-          });
+          }).pipe(Effect.timeout(BASELINE_CAPTURE_BUDGET));
         }).pipe(Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore)),
       ).pipe(
         Effect.mapError(

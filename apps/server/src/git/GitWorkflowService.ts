@@ -56,6 +56,14 @@ export class GitWorkflowService extends Context.Service<
     readonly currentBranch: (cwd: string) => Effect.Effect<string | null, GitManagerServiceError>;
     /** The primary remote's default branch as last fetched, or null when no remote names one. */
     readonly defaultBranch: (cwd: string) => Effect.Effect<string | null, GitCommandError>;
+    readonly upstreamDivergence: (cwd: string) => Effect.Effect<
+      {
+        readonly refName: string;
+        readonly aheadCount: number;
+        readonly behindCount: number;
+      } | null,
+      GitManagerServiceError
+    >;
     readonly remoteStatus: (
       input: VcsStatusInput,
       options?: GitManager.GitRemoteStatusOptions,
@@ -102,6 +110,7 @@ export class GitWorkflowService extends Context.Service<
       readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
     readonly remoteHasBranch: GitVcsDriver.GitVcsDriver["Service"]["remoteHasBranch"];
+    readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
     readonly resolveRemoteTrackingCommit: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -397,6 +406,16 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.orElseSucceed(() => "origin"));
       return yield* git.resolveDefaultBranchName(cwd, remoteName);
     }),
+    upstreamDivergence: Effect.fn("GitWorkflowService.upstreamDivergence")(function* (cwd) {
+      const details = yield* git.statusDetailsRemote(cwd, { refreshUpstream: false });
+      return details.hasUpstream && details.branch !== null
+        ? {
+            refName: details.branch,
+            aheadCount: details.aheadCount,
+            behindCount: details.behindCount,
+          }
+        : null;
+    }),
     remoteStatus: Effect.fn("GitWorkflowService.remoteStatus")(function (input, options) {
       return detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
@@ -502,6 +521,13 @@ export const make = Effect.gen(function* () {
         Effect.andThen(git.remoteHasBranch(input)),
       );
     }),
+    resolvePrimaryRemoteName: Effect.fn("GitWorkflowService.resolvePrimaryRemoteName")(
+      function (cwd) {
+        return ensureGitCommand("GitWorkflowService.resolvePrimaryRemoteName", cwd).pipe(
+          Effect.andThen(git.resolvePrimaryRemoteName(cwd)),
+        );
+      },
+    ),
     resolveRemoteTrackingCommit: Effect.fn("GitWorkflowService.resolveRemoteTrackingCommit")(
       function (input) {
         return ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(

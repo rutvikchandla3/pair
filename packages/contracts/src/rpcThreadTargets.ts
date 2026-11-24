@@ -81,7 +81,7 @@ export const RPC_THREAD_TARGETS: {
   [WS_METHODS.projectsMutate]: (input) =>
     paths("workspaceRoot" in input ? input.workspaceRoot : undefined),
   [WS_METHODS.projectsCreateFromThread]: thread,
-  [WS_METHODS.shellOpenInEditor]: cwd,
+  [WS_METHODS.shellOpenInEditor]: (input) => [...cwd(input), ...paths(input.projectRoot)],
   [WS_METHODS.filesystemBrowse]: (input) => paths(input.partialPath, input.cwd),
   [WS_METHODS.filesystemGetMetadata]: (input) => paths(...input.paths),
   [WS_METHODS.agentSessionsImport]: (input) => paths(input.expectedWorkspaceRoot),

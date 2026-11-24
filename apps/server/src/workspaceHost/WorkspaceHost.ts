@@ -71,6 +71,8 @@ export interface ProcessGroupHooks {
   readonly onExit?: (() => void) | undefined;
   readonly onStderr: (text: string) => void;
   readonly onStderrClose: () => void;
+  /** Records the process before it may run so a restarted server can reap it; returns its release. Local only. */
+  readonly register?: ((pid: number) => () => void) | undefined;
 }
 
 type ProcessExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;

@@ -330,7 +330,8 @@ export function layerWithRegistry<Error>(
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | CommandOutputRecorder.CommandOutputRecorder
-  | SandboxAdmission.SandboxAdmission,
+  | SandboxAdmission.SandboxAdmission
+  | ThreadCommandExecutor.ThreadCommandExecutor,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerServerConfig = Layer.effect(
@@ -478,6 +479,7 @@ export function layerWithRegistry<Error>(
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
+        ThreadCommandExecutor.layer,
       ),
     ),
   );
@@ -504,7 +506,12 @@ export function layerWithRegistry<Error>(
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerStores, layerProviderSessionManagerProvided, layerSandboxAttachments),
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        layerStores,
+        layerProviderSessionManagerProvided,
+        layerSandboxAttachments,
+      ),
     ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
@@ -605,6 +612,7 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
+        layerStores,
         // Replay scenarios never provision a sandbox.
         Layer.mock(SandboxEffects.SandboxEffects)({}),
       ),
@@ -622,6 +630,7 @@ export function layerWithRegistry<Error>(
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
     layerSandboxAdmission,
+    ThreadCommandExecutor.layer,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
     Layer.provide(WorkspaceHostTesting.layerFromContext),

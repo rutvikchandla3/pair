@@ -29,6 +29,8 @@ interface WorkspaceRoots {
 export interface CaptureCheckpointInput extends WorkspaceRoots {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** The checkpoint this one follows, so a turn that switched branches starts where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
   /** Left at HEAD's version: an excluded change or untracked file is not captured. */
   readonly excludePaths?: ReadonlyArray<string>;
   /** With roots: a repository that already holds the ref keeps it. Callers without roots check first. */
@@ -354,6 +356,10 @@ export const make = Effect.gen(function* () {
             .captureCheckpoint({
               cwd: root.cwd,
               checkpointRef: input.checkpointRef,
+              // A root added since the previous checkpoint lacks the ref; the driver then starts fresh.
+              ...(input.previousCheckpointRef === undefined
+                ? {}
+                : { previousCheckpointRef: input.previousCheckpointRef }),
               ...(input.excludePaths === undefined
                 ? {}
                 : { excludePaths: pathsUnderRoot(input.excludePaths, root.name) }),

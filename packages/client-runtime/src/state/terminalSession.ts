@@ -10,6 +10,7 @@ import type {
 import { DEFAULT_MAX_TERMINAL_BUFFER_BYTES } from "@t3tools/contracts";
 import {
   appendOutput,
+  clearOutput,
   EMPTY_TERMINAL_OUTPUT_STATE,
   resetOutput,
   type TerminalOutputState,
@@ -18,6 +19,7 @@ import {
 export {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
+  terminalOutputReplay,
   terminalOutputText,
   type TerminalOutputCursor,
   type TerminalOutputState,
@@ -201,7 +203,7 @@ export function applyTerminalAttachStreamEvent(
     case "cleared":
       return {
         ...current,
-        output: resetOutput(current.output, "", maxBufferBytes),
+        output: clearOutput(current.output, maxBufferBytes),
         error: null,
         version: current.version + 1,
       };

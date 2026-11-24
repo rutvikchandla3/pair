@@ -475,7 +475,7 @@ export const make = Effect.gen(function* () {
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
-      return yield* Effect.gen(function* () {
+      const result = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
       }).pipe(
@@ -485,6 +485,18 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      if (input.kind === "directory" || input.imageOnly) return result;
+      const worktreeFiles = yield* findNestedWorktreeFiles(
+        normalizedCwd,
+        input.query,
+        result.entries,
+      );
+      if (worktreeFiles.length === 0) return result;
+      const entries = [...worktreeFiles, ...result.entries];
+      return {
+        entries: entries.slice(0, input.limit),
+        truncated: result.truncated || entries.length > input.limit,
+      };
     },
     (effect, input) =>
       effect.pipe(
@@ -500,6 +512,80 @@ export const make = Effect.gen(function* () {
         }),
       ),
   );
+
+  // The index skips gitignored folders, where agents often put worktrees (`.worktrees/x`).
+  // A path relative to such a worktree is found only when it names an existing file exactly.
+  const findNestedWorktreeFiles = Effect.fn("WorkspaceEntries.findNestedWorktreeFiles")(function* (
+    cwd: string,
+    query: string,
+    indexed: ReadonlyArray<ProjectEntry>,
+  ) {
+    const relativePath = query.trim().replaceAll("\\", "/");
+    if (
+      !relativePath.includes("/") ||
+      relativePath.endsWith("/") ||
+      path.isAbsolute(relativePath) ||
+      isWindowsAbsolutePath(relativePath) ||
+      relativePath.split("/").some((segment) => segment === "..") ||
+      indexed.some(
+        (entry) =>
+          entry.kind === "file" &&
+          (entry.path === relativePath || entry.path.endsWith(`/${relativePath}`)),
+      )
+    ) {
+      return [];
+    }
+    const listWorktrees = (args: ReadonlyArray<string>) =>
+      vcsProcess
+        .run({
+          operation: "WorkspaceEntries.listWorktrees",
+          command: "git",
+          args: ["worktree", "list", "--porcelain", ...args],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout : undefined)),
+          Effect.orElseSucceed(() => undefined),
+        );
+    // Only NUL framing keeps a newline in a worktree path. Pre-2.36 Git rejects `-z`.
+    const listed =
+      (yield* listWorktrees(["-z"])) ?? (yield* listWorktrees([]))?.replaceAll("\n", "\0");
+    if (listed === undefined) return [];
+    const host = yield* hosts.forPath(cwd).pipe(Effect.option);
+    if (Option.isNone(host)) return [];
+    const { fileSystem } = host.value;
+    const realCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    const worktreeRoots = listed.split("\0\0").flatMap((record) => {
+      const fields = record.split("\0");
+      const worktree = fields.find((field) => field.startsWith("worktree "));
+      // A `prunable` record's directory is gone; another checkout may now sit there.
+      if (worktree === undefined || fields.some((field) => field.startsWith("prunable"))) return [];
+      const root = worktree.slice("worktree ".length);
+      const relativeRoot = path.relative(realCwd, root);
+      return relativeRoot === "" ||
+        relativeRoot === ".." ||
+        relativeRoot.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relativeRoot)
+        ? []
+        : [relativeRoot.split(path.sep).join("/")];
+    });
+    const matches = yield* Effect.forEach(
+      worktreeRoots,
+      (relativeRoot) => {
+        const candidate = `${relativeRoot}/${relativePath}`;
+        return fileSystem.stat(path.join(realCwd, candidate)).pipe(
+          Effect.map((stat) => (stat.type === "File" ? candidate : null)),
+          Effect.orElseSucceed(() => null),
+        );
+      },
+      { concurrency: "unbounded" },
+    );
+    return matches
+      .filter((candidate) => candidate !== null)
+      .map((candidate): ProjectEntry => ({ path: candidate, kind: "file" }));
+  });
 
   const searchContents: WorkspaceEntries["Service"]["searchContents"] = Effect.fn(
     "WorkspaceEntries.searchContents",
@@ -830,9 +916,11 @@ export const make = Effect.gen(function* () {
       );
       return nested.flat();
     });
-    const paths = (
-      (yield* listIgnored(normalizedCwd)) ?? (yield* listRepositoryChildren)
-    ).toSorted();
+    // Filter before the cap so files sorting past it stay reachable by search.
+    const query = input.query?.toLowerCase() ?? "";
+    const paths = ((yield* listIgnored(normalizedCwd)) ?? (yield* listRepositoryChildren))
+      .filter((entry) => entry.toLowerCase().includes(query))
+      .toSorted();
     const files = yield* Effect.forEach(
       paths.slice(0, IGNORED_FILES_LIMIT),
       (relativePath) =>

@@ -136,7 +136,10 @@ export function SpaceComposer(props: {
 
   const onPaste = useNativePaste((uris) => {
     void convertPastedImagesToAttachments({ uris, existingCount: attachments.length })
-      .then(addAttachments)
+      .then((result) => {
+        addAttachments(result.attachments);
+        if (result.error !== null) Dialog.alert("Could not paste", result.error);
+      })
       .catch(() => Dialog.alert("Could not paste", "The image could not be read."));
   });
 

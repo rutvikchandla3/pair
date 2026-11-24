@@ -60,7 +60,7 @@ export function ThreadHeader(props: {
   /** Who can open this cloud thread; null while it is private. */
   readonly accessChip?: SandboxAccessChip | null;
 }) {
-  const goBack = useWorkspaceBackNavigation("threads");
+  const goBack = useWorkspaceBackNavigation();
   const { layout, toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);

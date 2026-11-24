@@ -82,6 +82,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Draining holds every member's new cloud turns, as an update restarts the server.
   [WS_METHODS.serverDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCancelDrain]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverCheckSecretSource]: AuthSettingsWriteScope,
   // Listing models spends the stored API key, so only those who can choose a model may.
   [WS_METHODS.serverListTextGeneratorModels]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,

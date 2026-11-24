@@ -107,7 +107,6 @@ it.effect.each([false, true])(
           }),
         ),
       ),
-      Effect.scoped,
     );
   },
 );
