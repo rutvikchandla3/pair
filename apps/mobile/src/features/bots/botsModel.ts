@@ -117,9 +117,10 @@ interface BotSessionStateInput {
 export function botSessionState(input: BotSessionStateInput): BotSessionState {
   const { session, job, shell } = input;
   if (job?.status === "done" || job?.status === "stopped") {
-    if (shell !== null && shell.status !== null && !session.takenOver) {
-      const live = openSessionState(input);
-      if (live.kind === "working") return live;
+    const live = shell === null ? session.cloud !== undefined : shell.status !== null;
+    if (live && !session.takenOver) {
+      const running = openSessionState(input);
+      if (running.kind === "working") return running;
     }
     if (job.status === "done") {
       const at = shell?.updatedAt ?? session.cloud?.lastOutputAt ?? job.finishedAt;

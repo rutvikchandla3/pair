@@ -22,6 +22,7 @@ import {
   botFacePose,
   cloudSessionsStillRunning,
   sessionState,
+  jobSessionState,
   threadChipState,
 } from "./bots.logic";
 
@@ -387,6 +388,12 @@ describe("botSidebarSessions", () => {
     expect(glyphOf(running)).toEqual(["working"]);
     expect(glyphOf(finished)).toEqual(["done"]);
     expect(glyphOf(undefined)).toEqual(["done"]);
+    // A cloud session whose shell isn't held reads its follower's last-read state.
+    const finishedJob = job({ status: "done", finishedAt });
+    const cloudKind = (state: Parameters<typeof cloudSession>[0]) =>
+      jobSessionState(cloudSession(state), finishedJob, undefined, NOW).kind;
+    expect(cloudKind("working")).toBe("working");
+    expect(cloudKind("done")).toBe("done");
   });
 
   it("moves an archived job or thread behind the disclosure unless it has an open question", () => {

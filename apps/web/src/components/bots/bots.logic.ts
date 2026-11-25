@@ -125,7 +125,8 @@ export function sessionState(
 
 /**
  * A session's state, read from its job once the job is finished: an archived session thread has
- * no shell, and a missing shell otherwise reads as working. A session running again shows that.
+ * no shell, and a missing shell otherwise reads as working. A session working again shows that,
+ * from its shell or, on a cloud, the state its follower last read.
  */
 export function jobSessionState(
   session: BotSession,
@@ -135,7 +136,7 @@ export function jobSessionState(
 ): BotSessionState {
   if (job?.status === "done" || job?.status === "stopped") {
     // A session running again shows its run; a quiet or waiting one still defers to the job.
-    if (shell?.runtime && !session.takenOver) {
+    if ((shell?.runtime || (!shell && session.cloud !== undefined)) && !session.takenOver) {
       const live = sessionState(session, shell, now);
       if (live.kind === "working") return live;
     }

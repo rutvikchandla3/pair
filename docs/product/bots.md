@@ -45,8 +45,7 @@ Only the bot you're in (its page, or one of its sessions) lists its sessions und
 row each with a state glyph. The needs-you glyph
 appears only on a session the bot has asked you about (`bot_ask`); a session waiting on the bot
 shows as working. Once a job is done or stopped, its sessions show the job's state, even when
-their threads are archived, unless a run is active again. Work an agent waits on in the background
-shows as working here, while the thread list shows it as waiting. Sessions that need you, working or failed come first, then sessions
+their threads are archived, unless the session is working again. Sessions that need you, working or failed come first, then sessions
 finished in the last 24 hours, newest first. Older ones collapse into "N earlier", which expands in
 place. A session row opens the real thread. Bot sessions don't also appear under Threads.
 

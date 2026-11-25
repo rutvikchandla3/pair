@@ -157,6 +157,27 @@ describe("botSessionState", () => {
     expect(read("stopped", shell({ status: "running" }))).toBe("working");
     expect(read("done", shell({ status: "completed" }))).toBe("done");
     expect(read("stopped", shell({ status: "completed" }))).toBe("stopped");
+    const cloud = (state: NonNullable<BotSession["cloud"]>["state"]) =>
+      botSessionState({
+        session: session(BotJobIdSchema.make("job:1"), {
+          cloud: {
+            environmentId: "env:cloud" as EnvironmentId,
+            label: "Pair Cloud",
+            state,
+            pendingRequest: null,
+            lastOutputAt: "2026-11-18T11:59:00.000Z",
+            reportedRunId: null,
+            reportedRequestIds: [],
+            position: 0,
+          },
+        }),
+        job: job({ number: 1, status: "done", finishedAt: "2026-11-18T11:00:00.000Z" }),
+        shell: null,
+        botName: "Atlas",
+        nowMs,
+      }).kind;
+    expect(cloud("working")).toBe("working");
+    expect(cloud("done")).toBe("done");
   });
 
   it("reads a cloud session without its shell from its last-read state", () => {
