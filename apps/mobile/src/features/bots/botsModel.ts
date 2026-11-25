@@ -101,23 +101,31 @@ function recordedSessionState(
   }
 }
 
-/**
- * One session's state. A finished job's state wins, since an archived session thread has no shell;
- * otherwise it comes from the shell, and taken over wins over everything.
- */
-export function botSessionState(input: {
+interface BotSessionStateInput {
   readonly session: BotSession;
   readonly job: BotJob | undefined;
   readonly shell: BotSessionShell | null;
   readonly botName: string;
   readonly nowMs: number;
-}): BotSessionState {
-  const { session, job, shell, botName, nowMs } = input;
-  if (job?.status === "done") {
-    const at = shell?.updatedAt ?? session.cloud?.lastOutputAt ?? job.finishedAt;
-    return sessionState("done", "", false, at);
-  }
-  if (job?.status === "stopped") {
+}
+
+/**
+ * One session's state. A finished job's state wins, since an archived session thread has no shell,
+ * unless the session is running again; otherwise it comes from the shell, and taken over wins over
+ * everything.
+ */
+export function botSessionState(input: BotSessionStateInput): BotSessionState {
+  const { session, job, shell } = input;
+  if (job?.status === "done" || job?.status === "stopped") {
+    const live = shell === null ? session.cloud !== undefined : shell.status !== null;
+    if (live && !session.takenOver) {
+      const running = openSessionState(input);
+      if (running.kind === "working") return running;
+    }
+    if (job.status === "done") {
+      const at = shell?.updatedAt ?? session.cloud?.lastOutputAt ?? job.finishedAt;
+      return sessionState("done", "", false, at);
+    }
     return sessionState(
       "stopped",
       `${session.title} stopped`,
@@ -125,6 +133,11 @@ export function botSessionState(input: {
       shell?.updatedAt ?? job.finishedAt,
     );
   }
+  return openSessionState(input);
+}
+
+function openSessionState(input: BotSessionStateInput): BotSessionState {
+  const { session, shell, botName, nowMs } = input;
   if (session.takenOver) return sessionState("taken-over", "You took over", true, null);
   // A cloud session's shell is on the cloud, and no client holds an archived thread's; without
   // it, the state the bot's server recorded stands.

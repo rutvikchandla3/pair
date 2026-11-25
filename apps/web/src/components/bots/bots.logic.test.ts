@@ -22,6 +22,7 @@ import {
   botFacePose,
   cloudSessionsStillRunning,
   sessionState,
+  jobSessionState,
   threadChipState,
 } from "./bots.logic";
 
@@ -180,6 +181,14 @@ describe("sessionState", () => {
     expect(
       sessionState(session(), shell({ runtime: { status: "running" } as never }), NOW).kind,
     ).toBe("working");
+  });
+
+  it("reads a run held open by background work as working, not done", () => {
+    const parked = (latestRun: { status: string } | null) =>
+      shell({ runtime: { status: "idle" } as never, latestRun: latestRun as never });
+    expect(sessionState(session(), parked({ status: "running" }), NOW).kind).toBe("working");
+    expect(sessionState(session(), parked({ status: "completed" }), NOW).kind).toBe("done");
+    expect(sessionState(session(), parked(null), NOW).kind).toBe("done");
   });
 
   it("treats a missing shell as working", () => {
@@ -368,6 +377,23 @@ describe("botSidebarSessions", () => {
     ]);
     expect(botFacePose(data, bot(), new Map(), NOW)).toBe("idle");
     expect(botStatusLine(data, bot(), new Map(), NOW).label).toBe("Nothing running");
+
+    // A session that runs again shows its run; one that is done, or has no shell, keeps the job's.
+    const running = shell({ runtime: { status: "running" } as never });
+    const finished = shell({ runtime: { status: "completed" } as never });
+    const glyphOf = (shellOf: typeof running | undefined) =>
+      botSidebarSessions(data, BOT, new Map(shellOf ? [[ThreadId.make("done"), shellOf]] : []), NOW)
+        .rows.filter((row) => row.session.threadId === "done")
+        .map((row) => row.glyph);
+    expect(glyphOf(running)).toEqual(["working"]);
+    expect(glyphOf(finished)).toEqual(["done"]);
+    expect(glyphOf(undefined)).toEqual(["done"]);
+    // A cloud session whose shell isn't held reads its follower's last-read state.
+    const finishedJob = job({ status: "done", finishedAt });
+    const cloudKind = (state: Parameters<typeof cloudSession>[0]) =>
+      jobSessionState(cloudSession(state), finishedJob, undefined, NOW).kind;
+    expect(cloudKind("working")).toBe("working");
+    expect(cloudKind("done")).toBe("done");
   });
 
   it("moves an archived job or thread behind the disclosure unless it has an open question", () => {
@@ -493,5 +519,10 @@ describe("threadChipState", () => {
     expect(threadChipState(shell({ runtime: { status: "failed" } as never }))).toBe("failed");
     expect(threadChipState(shell({ runtime: { status: "running" } as never }))).toBe("working");
     expect(threadChipState(shell({ runtime: { status: "completed" } as never }))).toBe("done");
+    expect(
+      threadChipState(
+        shell({ runtime: { status: "idle" } as never, latestRun: { status: "running" } as never }),
+      ),
+    ).toBe("working");
   });
 });

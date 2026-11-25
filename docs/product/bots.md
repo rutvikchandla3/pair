@@ -45,7 +45,7 @@ Only the bot you're in (its page, or one of its sessions) lists its sessions und
 row each with a state glyph. The needs-you glyph
 appears only on a session the bot has asked you about (`bot_ask`); a session waiting on the bot
 shows as working. Once a job is done or stopped, its sessions show the job's state, even when
-their threads are archived. Sessions that need you, working or failed come first, then sessions
+their threads are archived, unless the session is working again. Sessions that need you, working or failed come first, then sessions
 finished in the last 24 hours, newest first. Older ones collapse into "N earlier", which expands in
 place. A session row opens the real thread. Bot sessions don't also appear under Threads.
 
@@ -54,8 +54,9 @@ job: all of its sessions move behind the same disclosure, under "Archived" ("Arc
 nothing is earlier), with **Unarchive job** in the same place. A toast offers Undo. Archiving
 doesn't touch the threads or wake the bot; the bot can do the same with `bot_job_update`
 (`archived`) when you ask it to clear finished work. Reopening a job, or a question from the bot
-on it, brings it back to the list. A session whose thread is archived, here or on its cloud,
-moves under "Archived" too, keeping the state its last run left, even while its job is open.
+on it, brings it back to the list; so does a follow-up from the bot to one of the job's sessions
+(`bot_session_message` reopens a done job, as `bot_job_update` with `status: working` does). A
+session whose thread is archived, here or on its cloud, moves under "Archived" too, keeping the state its last run left, even while its job is open.
 
 ### Bot page
 
@@ -220,7 +221,7 @@ Unchanged from v3 except where noted.
   escalates stale requests).
 - **MCP tools** for the home thread only: `bot_brief`, **`bot_job_create` (new)**,
   `bot_job_update`, `bot_start_session` (now also returns the session's `t3-thread://` link),
-  `bot_session_message`, `bot_session_respond`, `bot_ask`, `bot_ask_resolve`, `bot_learn`,
+  `bot_session_message`, `bot_session_reclaim`, `bot_session_respond`, `bot_ask`, `bot_ask_resolve`, `bot_learn`,
   **`bot_forget` (new)**, and `bot_recall`, which searches what the brief no longer shows: the
   chat's earlier messages, every job's request and report, answered Asks and all notes.
 - **Persona** rewritten for chat-first: the chat is the only screen; never do the work yourself

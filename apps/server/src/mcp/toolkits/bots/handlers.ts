@@ -163,6 +163,15 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
     }),
   ),
 
+  bot_session_reclaim: McpToolAccess.writes((params) =>
+    Effect.gen(function* () {
+      const botId = yield* resolveBotId();
+      const sessions = yield* BotSessions.BotSessions;
+      yield* mapError(sessions.reclaim(botId, params.threadId));
+      return { ok: true as const };
+    }),
+  ),
+
   bot_session_respond: McpToolAccess.writes((params) =>
     Effect.gen(function* () {
       const botId = yield* resolveBotId();

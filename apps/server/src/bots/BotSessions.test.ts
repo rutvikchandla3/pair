@@ -108,6 +108,27 @@ const cloudId = EnvironmentId.make("env:cloud");
 const cloudThreadId = ThreadId.make("thread:cloud-session");
 const projectThere = ProjectId.make("project:there");
 
+const cloudSession: BotSession = {
+  threadId: cloudThreadId,
+  botId: bot.id,
+  jobId: BotJobId.make("job:1"),
+  role: "worker",
+  title: "Rate limit",
+  projectId: projectThere,
+  takenOver: false,
+  createdAt: at,
+  cloud: {
+    environmentId: cloudId,
+    label: "Pair Cloud",
+    state: "waiting",
+    pendingRequest: null,
+    lastOutputAt: at,
+    reportedRunId: null,
+    reportedRequestIds: [],
+    position: 0,
+  },
+};
+
 interface Forwarded {
   readonly tool: string;
   readonly environmentId: EnvironmentId;
@@ -161,7 +182,11 @@ const sessionsHarness = (input: {
   readonly chat?: ReadonlyArray<ChatAttachment>;
   /** The request `sessionThreadId` waits on, if any. */
   readonly sessionPending?: { readonly id: string; readonly kind: string } | null;
+  /** The session's job status; default: working. */
+  readonly jobStatus?: BotJob["status"];
 }) => {
+  const updates: Array<BotJob["status"] | undefined> = [];
+  const handedBack: Array<ThreadId> = [];
   const launches: Array<ThreadLaunch.ThreadLaunchRequest> = [];
   const forwarded: Array<Forwarded> = [];
   const staged: Array<Staged> = [];
@@ -183,6 +208,19 @@ const sessionsHarness = (input: {
               revision: 0,
             }),
           addSession: (session: BotSession) => Effect.succeed(session),
+          getJob: () =>
+            Effect.succeedSome({
+              ...job(input.jobProjectId),
+              status: input.jobStatus ?? "working",
+            }),
+          setSessionTakenOver: (threadId) => {
+            handedBack.push(threadId);
+            return Effect.succeed(cloudSession);
+          },
+          updateJob: (_botId, _jobId, patch) => {
+            updates.push(patch.status);
+            return Effect.succeed(job(input.jobProjectId));
+          },
           sessionForThread: (threadId) =>
             Effect.succeed(
               Option.fromNullishOr(
@@ -301,7 +339,7 @@ const sessionsHarness = (input: {
       ),
     ),
   );
-  return { launches, forwarded, staged, layer };
+  return { launches, forwarded, staged, updates, handedBack, layer };
 };
 
 const startInput = (input: {
@@ -703,27 +741,6 @@ describe("BotSessions cloud sessions", () => {
     }),
   );
 
-  const cloudSession: BotSession = {
-    threadId: cloudThreadId,
-    botId: bot.id,
-    jobId: BotJobId.make("job:1"),
-    role: "worker",
-    title: "Rate limit",
-    projectId: projectThere,
-    takenOver: false,
-    createdAt: at,
-    cloud: {
-      environmentId: cloudId,
-      label: "Pair Cloud",
-      state: "waiting",
-      pendingRequest: null,
-      lastOutputAt: at,
-      reportedRunId: null,
-      reportedRequestIds: [],
-      position: 0,
-    },
-  };
-
   it.effect("uploads the chat's attachments to the cloud for its session's messages", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -791,6 +808,53 @@ describe("BotSessions cloud sessions", () => {
       );
       assert.strictEqual(harness.forwarded[1]?.params.action, "respond");
       assert.include(refusal.message, "can't be approved from here");
+      assert.deepStrictEqual(harness.updates, []);
+    }),
+  );
+
+  it.effect("reopens a done job before a follow-up goes out, and only a done one", () =>
+    Effect.gen(function* () {
+      const reopened = (jobStatus: BotJob["status"]) =>
+        Effect.gen(function* () {
+          const harness = sessionsHarness({
+            jobProjectId: repoId,
+            clouds: [cloudId],
+            sessions: [cloudSession],
+            jobStatus,
+          });
+          yield* Effect.gen(function* () {
+            const sessions = yield* BotSessions.BotSessions;
+            yield* sessions.message(bot.id, cloudThreadId, "Also check the other repo.");
+          }).pipe(Effect.provide(harness.layer));
+          assert.strictEqual(harness.forwarded.length, 1);
+          return harness.updates;
+        });
+      assert.deepStrictEqual(yield* reopened("done"), ["working"]);
+      assert.deepStrictEqual(yield* reopened("working"), []);
+      assert.deepStrictEqual(yield* reopened("stopped"), []);
+    }),
+  );
+});
+
+describe("BotSessions.reclaim", () => {
+  it.effect("takes back a taken-over session, and only the bot's own", () =>
+    Effect.gen(function* () {
+      const reclaim = (session: BotSession, botId = bot.id) => {
+        const harness = sessionsHarness({ jobProjectId: repoId, sessions: [session] });
+        return Effect.gen(function* () {
+          const sessions = yield* BotSessions.BotSessions;
+          return yield* sessions.reclaim(botId, session.threadId).pipe(Effect.flip, Effect.option);
+        }).pipe(
+          Effect.provide(harness.layer),
+          Effect.map((failure) => ({ failure, handedBack: harness.handedBack })),
+        );
+      };
+      const taken = { ...cloudSession, takenOver: true };
+      assert.deepStrictEqual((yield* reclaim(taken)).handedBack, [cloudThreadId]);
+      assert.deepStrictEqual((yield* reclaim(cloudSession)).handedBack, []);
+      const other = yield* reclaim(taken, BotId.make("bot:other"));
+      assert.deepStrictEqual(other.handedBack, []);
+      assert.strictEqual(Option.getOrThrow(other.failure).reason, "not-found");
     }),
   );
 });

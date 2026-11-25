@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { BotFacePose } from "@t3tools/client-runtime/bot-identity";
+import { shellRunStatus } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 /** Live state of one bot session, derived from its thread shell. */
@@ -100,20 +101,21 @@ export function sessionState(
   }
   const runtime = shell.runtime;
   if (runtime !== null && runtime !== undefined) {
-    if (runtime.status === "failed") {
+    const runStatus = shellRunStatus(shell) ?? runtime.status;
+    if (runStatus === "failed") {
       if (runtime.lastErrorClass === "usage_limit" && runtime.usageLimitResetAt) {
         return { kind: "paused-until", until: runtime.usageLimitResetAt };
       }
       return { kind: "failed" };
     }
-    if (WORKING_STATUSES.has(runtime.status)) {
+    if (WORKING_STATUSES.has(runStatus)) {
       const updatedAt = Date.parse(shell.updatedAt);
       const quietMs = Number.isFinite(updatedAt) ? now - updatedAt : 0;
       if (quietMs >= BOT_QUIET_AFTER_MS) return { kind: "quiet", quietMs };
       return { kind: "working" };
     }
-    if (runtime.status === "idle" || runtime.status === "completed") return { kind: "done" };
-    if (STOPPED_STATUSES.has(runtime.status)) return { kind: "stopped" };
+    if (runStatus === "idle" || runStatus === "completed") return { kind: "done" };
+    if (STOPPED_STATUSES.has(runStatus)) return { kind: "stopped" };
   }
   const latestRun = shell.latestRun;
   if (latestRun !== null && latestRun.status === "completed") return { kind: "done" };
@@ -123,7 +125,8 @@ export function sessionState(
 
 /**
  * A session's state, read from its job once the job is finished: an archived session thread has
- * no shell, and a missing shell otherwise reads as working.
+ * no shell, and a missing shell otherwise reads as working. A session working again shows that,
+ * from its shell or, on a cloud, the state its follower last read.
  */
 export function jobSessionState(
   session: BotSession,
@@ -131,8 +134,14 @@ export function jobSessionState(
   shell: EnvironmentThreadShell | null | undefined,
   now: number = Date.now(),
 ): BotSessionState {
-  if (job?.status === "done") return { kind: "done" };
-  if (job?.status === "stopped") return { kind: "stopped" };
+  if (job?.status === "done" || job?.status === "stopped") {
+    // A session running again shows its run; a quiet or waiting one still defers to the job.
+    if ((shell?.runtime || (!shell && session.cloud !== undefined)) && !session.takenOver) {
+      const live = sessionState(session, shell, now);
+      if (live.kind === "working") return live;
+    }
+    return job.status === "done" ? { kind: "done" } : { kind: "stopped" };
+  }
   return sessionState(session, shell, now);
 }
 
@@ -216,8 +225,8 @@ function homeThreadWorking(bot: Bot, shells: ShellLookup): boolean {
   if (bot.homeThreadId === null) return false;
   const shell = shells?.get(bot.homeThreadId);
   if (shell === null || shell === undefined) return false;
-  const runtime = shell.runtime;
-  return runtime !== null && runtime !== undefined && WORKING_STATUSES.has(runtime.status);
+  const status = shellRunStatus(shell);
+  return status !== null && WORKING_STATUSES.has(status);
 }
 
 /**
@@ -419,12 +428,12 @@ export function threadChipState(
   ) {
     return "input";
   }
-  const runtime = shell.runtime;
-  if (runtime !== null && runtime !== undefined) {
-    if (runtime.status === "failed") return "failed";
-    if (WORKING_STATUSES.has(runtime.status)) return "working";
-    if (runtime.status === "idle" || runtime.status === "completed") return "done";
-    if (STOPPED_STATUSES.has(runtime.status)) return "failed";
+  const runStatus = shellRunStatus(shell);
+  if (runStatus !== null) {
+    if (runStatus === "failed") return "failed";
+    if (WORKING_STATUSES.has(runStatus)) return "working";
+    if (runStatus === "idle" || runStatus === "completed") return "done";
+    if (STOPPED_STATUSES.has(runStatus)) return "failed";
   }
   const latestRun = shell.latestRun;
   if (latestRun !== null && latestRun !== undefined) {

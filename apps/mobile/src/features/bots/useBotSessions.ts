@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { BotJob, BotSession, EnvironmentId } from "@t3tools/contracts";
 import { EnvironmentId as EnvironmentIdSchema, ThreadId } from "@t3tools/contracts";
+import { shellRunStatus } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { Atom } from "effect/reactivity";
 
@@ -16,7 +17,7 @@ import {
 function toShell(shell: EnvironmentThreadShell | null): BotSessionShell | null {
   if (shell === null) return null;
   return {
-    status: shell.runtime?.status ?? null,
+    status: shellRunStatus(shell),
     hasPendingApprovals: shell.hasPendingApprovals,
     hasPendingUserInput: shell.hasPendingUserInput,
     blockedOnThreadWait: shell.blockedOnThreadWait ?? false,

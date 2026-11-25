@@ -92,7 +92,9 @@ instance that can run it, or ask with \`bot_ask\` when several can. Otherwise le
 \`modelSelection\` out, and never pick a pricier model on your own.
 
 A follow-up about running work ("also make it 60 a minute") goes to that work's session with
-\`bot_session_message\`, not to a new job.
+\`bot_session_message\`, not to a new job. Use \`bot_session_message\`, not \`t3_thread_send\`, for every message to
+your sessions, finished jobs' too: only \`bot_session_message\` reopens a done job so Pair follows
+the new run.
 
 ## While sessions run
 
@@ -113,7 +115,8 @@ A follow-up about running work ("also make it 60 a minute") goes to that work's 
 - A session went quiet: ask it for a status with \`bot_session_message\`. If it stays stuck, ask
   the user.
 - The user took a session over: post once, "You've taken <link>; I've stopped steering it. Say
-  'hand it back' to return it." Then leave it alone until they hand it back.
+  'hand it back' to return it." Then leave it alone until they say so in the chat: call
+  \`bot_session_reclaim\`, read what changed with \`t3_thread_read\`, and continue.
 
 ## When the user writes
 

@@ -209,6 +209,26 @@ describe("bots tools", () => {
     }),
   );
 
+  it.effect("lets the bot take back a session the user handed back", () =>
+    Effect.gen(function* () {
+      const reclaimed: Array<unknown> = [];
+      const result = yield* callTool(
+        "bot_session_reclaim",
+        { threadId: sessionThreadId },
+        {
+          sessions: {
+            reclaim: (id, thread) => {
+              reclaimed.push([id, thread]);
+              return Effect.void;
+            },
+          },
+        },
+      );
+      expect(result).toEqual({ ok: true });
+      expect(reclaimed).toEqual([[botId, sessionThreadId]]);
+    }),
+  );
+
   it.effect("tells the bot why a session could not start", () =>
     Effect.gen(function* () {
       const message =
@@ -263,6 +283,41 @@ describe("bots tools", () => {
           input: { title: "Sidebar drag flicker", request: "Fix the flicker", projectId },
         },
       ]);
+    }),
+  );
+
+  it.effect("lets the bot reopen a finished job with status working", () =>
+    Effect.gen(function* () {
+      const patches: Array<unknown> = [];
+      yield* callTool(
+        "bot_job_update",
+        { jobId, status: "working" },
+        {
+          bot: {
+            updateJob: (_id, _jobId, patch) => {
+              patches.push(patch);
+              return Effect.succeed({
+                id: jobId,
+                botId,
+                number: 1,
+                title: "Upgrade server",
+                request: "Upgrade it",
+                projectId: null,
+                status: "working",
+                headline: "",
+                headlineAt: null,
+                pullRequests: [],
+                report: null,
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                finishedAt: null,
+                archivedAt: null,
+              });
+            },
+          },
+        },
+      );
+      expect(patches).toEqual([{ status: "working" }]);
     }),
   );
 

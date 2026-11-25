@@ -239,7 +239,7 @@ outage, not once per session.
   and the follower no longer reads it. The cloud answered, so this is not an outage.
 - **User takes over a cloud session:** detected from the user's own message in the timeline, the
   same rule as locally. The bot is told to step back. `bot_session_message`/`respond` refuse until
-  **Hand back**, which is generic.
+  the user hands it back in the bot's chat and the bot calls `bot_session_reclaim`.
 - **User stops the job:** `stopJob` already tries a local stop, which does nothing for a cloud
   thread. The follower sees the job stopped while the session is still working there and sends
   `t3_thread_interrupt { stop: true }` through the link (idempotent by key). It records

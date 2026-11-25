@@ -377,6 +377,18 @@ it.effect("archives only a finished job, and reopening brings it back", () =>
     yield* bots.archiveJob(caller, { jobId: job.id, archived: true });
     const reopened = yield* bots.reopenJob(caller, { jobId: job.id });
     assert.isNull(reopened.archivedAt);
+
+    yield* bots.updateJob(bot.id, job.id, { status: "done", report, archived: true });
+    const reopenedByBot = yield* bots.updateJob(bot.id, job.id, { status: "working" });
+    assert.strictEqual(reopenedByBot.status, "working");
+    assert.isNull(reopenedByBot.finishedAt);
+    assert.isNull(reopenedByBot.archivedAt);
+    assert.deepStrictEqual(reopenedByBot.report, report);
+    const noop = yield* bots.updateJob(bot.id, job.id, { status: "working" });
+    assert.strictEqual(noop.status, "working");
+    yield* bots.stopJob(caller, { jobId: job.id });
+    const stopped = yield* bots.updateJob(bot.id, job.id, { status: "working" }).pipe(Effect.flip);
+    assert.strictEqual(stopped.reason, "invalid-request");
     const hidden = yield* bots
       .archiveJob(otherCaller, { jobId: job.id, archived: true })
       .pipe(Effect.flip);
@@ -417,6 +429,11 @@ it.effect("tracks home and session threads and finishes a job", () =>
     yield* bots.setSessionTakenOver(threadId, true);
     const taken = yield* bots.sessionForThread(threadId);
     assert.strictEqual(Option.getOrThrow(taken).takenOver, true);
+    yield* bots.setSessionTakenOver(threadId, false);
+    yield* bots.setSessionTakenOver(threadId, false);
+    const handedBack = yield* bots.sessionForThread(threadId);
+    assert.strictEqual(Option.getOrThrow(handedBack).takenOver, false);
+    yield* bots.setSessionTakenOver(threadId, true);
 
     yield* bots.addEvent({ botId: bot.id, kind: "info", text: "A quiet note" });
     const done = yield* bots.updateJob(bot.id, job.id, {
@@ -428,6 +445,10 @@ it.effect("tracks home and session threads and finishes a job", () =>
     assert.isNotNull(done.headlineAt);
     const snapshot = yield* bots.snapshotForBot(bot.id);
     assert.isTrue(snapshot.events.some((event) => event.kind === "job-done"));
+    assert.strictEqual(
+      snapshot.events.filter((event) => event.kind === "session-handed-back").length,
+      1,
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
