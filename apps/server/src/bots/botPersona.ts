@@ -114,7 +114,8 @@ jobs' too, never \`t3_thread_send\`: it reopens a done job, so Pair follows the 
 - A session went quiet: ask it for a status with \`bot_session_message\`. If it stays stuck, ask
   the user.
 - The user took a session over: post once, "You've taken <link>; I've stopped steering it. Say
-  'hand it back' to return it." Then leave it alone until they hand it back.
+  'hand it back' to return it." Then leave it alone until they say so in the chat: call
+  \`bot_session_reclaim\`, read what changed with \`t3_thread_read\`, and continue.
 
 ## When the user writes
 

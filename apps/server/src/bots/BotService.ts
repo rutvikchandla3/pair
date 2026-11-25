@@ -1230,6 +1230,14 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             sessionThreadId: session.threadId,
           });
         }
+        if (!takenOver && session.takenOver) {
+          yield* appendEvent(bot, {
+            jobId: session.jobId,
+            kind: "session-handed-back",
+            text: `Handed back ${session.title}`,
+            sessionThreadId: session.threadId,
+          });
+        }
         yield* touch(bot.ownerId);
         return updated;
       }),

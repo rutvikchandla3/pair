@@ -429,6 +429,11 @@ it.effect("tracks home and session threads and finishes a job", () =>
     yield* bots.setSessionTakenOver(threadId, true);
     const taken = yield* bots.sessionForThread(threadId);
     assert.strictEqual(Option.getOrThrow(taken).takenOver, true);
+    yield* bots.setSessionTakenOver(threadId, false);
+    yield* bots.setSessionTakenOver(threadId, false);
+    const handedBack = yield* bots.sessionForThread(threadId);
+    assert.strictEqual(Option.getOrThrow(handedBack).takenOver, false);
+    yield* bots.setSessionTakenOver(threadId, true);
 
     yield* bots.addEvent({ botId: bot.id, kind: "info", text: "A quiet note" });
     const done = yield* bots.updateJob(bot.id, job.id, {
@@ -440,6 +445,10 @@ it.effect("tracks home and session threads and finishes a job", () =>
     assert.isNotNull(done.headlineAt);
     const snapshot = yield* bots.snapshotForBot(bot.id);
     assert.isTrue(snapshot.events.some((event) => event.kind === "job-done"));
+    assert.strictEqual(
+      snapshot.events.filter((event) => event.kind === "session-handed-back").length,
+      1,
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 

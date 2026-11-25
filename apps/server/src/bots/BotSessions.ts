@@ -190,6 +190,8 @@ export class BotSessions extends Context.Service<
       attachments?: ReadonlyArray<string>,
     ) => Effect.Effect<void, BotsError>;
     readonly respond: (botId: BotId, input: BotRespondInput) => Effect.Effect<void, BotsError>;
+    /** Takes back a session the user took over, when they hand it back in the bot's chat. */
+    readonly reclaim: (botId: BotId, threadId: ThreadId) => Effect.Effect<void, BotsError>;
     readonly liveState: (threadId: ThreadId) => Effect.Effect<BotSessionLiveState, BotsError>;
     /**
      * Where `cloud` sessions would run now, from the stored links, or why they can't. Null on a
@@ -457,7 +459,7 @@ const make = Effect.gen(function* () {
     }
     if (session.takenOver) {
       return yield* invalidRequest(
-        "The user took over this session; leave it until they hand it back.",
+        "The user took over this session; leave it until they hand it back to you (bot_session_reclaim).",
       );
     }
     return session;
@@ -589,6 +591,16 @@ const make = Effect.gen(function* () {
         modelSelection,
       };
       return yield* botService.addSession(session);
+    },
+  );
+
+  const reclaim: BotSessions["Service"]["reclaim"] = Effect.fn("BotSessions.reclaim")(
+    function* (botId, threadId) {
+      const session = Option.getOrNull(yield* botService.sessionForThread(threadId));
+      if (session === null || session.botId !== botId) {
+        return yield* notFound("That session does not belong to this bot.");
+      }
+      if (session.takenOver) yield* botService.setSessionTakenOver(threadId, false);
     },
   );
 
@@ -730,7 +742,14 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return { start, message, respond, liveState, cloudTarget } satisfies BotSessions["Service"];
+  return {
+    start,
+    message,
+    reclaim,
+    respond,
+    liveState,
+    cloudTarget,
+  } satisfies BotSessions["Service"];
 });
 
 /** What the bot should read about a pending request: the question, or the command it waits on. */

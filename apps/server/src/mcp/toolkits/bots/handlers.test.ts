@@ -209,6 +209,26 @@ describe("bots tools", () => {
     }),
   );
 
+  it.effect("lets the bot take back a session the user handed back", () =>
+    Effect.gen(function* () {
+      const reclaimed: Array<unknown> = [];
+      const result = yield* callTool(
+        "bot_session_reclaim",
+        { threadId: sessionThreadId },
+        {
+          sessions: {
+            reclaim: (id, thread) => {
+              reclaimed.push([id, thread]);
+              return Effect.void;
+            },
+          },
+        },
+      );
+      expect(result).toEqual({ ok: true });
+      expect(reclaimed).toEqual([[botId, sessionThreadId]]);
+    }),
+  );
+
   it.effect("tells the bot why a session could not start", () =>
     Effect.gen(function* () {
       const message =

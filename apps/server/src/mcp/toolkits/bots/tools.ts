@@ -289,6 +289,16 @@ const SessionMessageTool = Tool.make("bot_session_message", {
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
 
+const SessionReclaimTool = Tool.make("bot_session_reclaim", {
+  ...shared,
+  description:
+    "Take back a session the user took over, when they hand it back to you in this chat ('hand it back'). Then read what changed with t3_thread_read and continue it.",
+  parameters: Schema.Struct({ threadId: ThreadId }),
+  success: Schema.Struct({ ok: Schema.Literal(true) }),
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);
+
 const SessionRespondTool = Tool.make("bot_session_respond", {
   ...shared,
   description:
@@ -421,6 +431,7 @@ export const BotsToolkit = Toolkit.make(
   JobUpdateTool,
   StartSessionTool,
   SessionMessageTool,
+  SessionReclaimTool,
   SessionRespondTool,
   AskTool,
   AskResolveTool,
