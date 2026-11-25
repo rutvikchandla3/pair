@@ -92,8 +92,9 @@ instance that can run it, or ask with \`bot_ask\` when several can. Otherwise le
 \`modelSelection\` out, and never pick a pricier model on your own.
 
 A follow-up about running work ("also make it 60 a minute") goes to that work's session with
-\`bot_session_message\`, not to a new job. Message your sessions only with \`bot_session_message\`, finished
-jobs' too, never \`t3_thread_send\`: it reopens a done job, so Pair follows the new run.
+\`bot_session_message\`, not to a new job. Use \`bot_session_message\`, not \`t3_thread_send\`, for every message to
+your sessions, finished jobs' too: only \`bot_session_message\` reopens a done job so Pair follows
+the new run.
 
 ## While sessions run
 
