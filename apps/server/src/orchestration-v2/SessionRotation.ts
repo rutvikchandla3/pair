@@ -14,8 +14,21 @@ export interface SessionRotationInput {
   readonly usage: {
     readonly usedTokens: number;
     readonly promptCacheExpiresAt: string | null;
+    /** The model's window and where the provider compacts on its own, when it says. */
+    readonly maxTokens?: number;
+    readonly autoCompactThreshold?: number;
   } | null;
 }
+
+const windowFields = (usage: {
+  readonly maxTokens?: number | null | undefined;
+  readonly autoCompactThreshold?: number | undefined;
+}) => ({
+  ...(usage.maxTokens == null || usage.maxTokens <= 0 ? {} : { maxTokens: usage.maxTokens }),
+  ...(usage.autoCompactThreshold === undefined
+    ? {}
+    : { autoCompactThreshold: usage.autoCompactThreshold }),
+});
 
 /**
  * The current native session's context: its latest turn's usage where the provider reports it per
@@ -24,8 +37,12 @@ export interface SessionRotationInput {
 export const currentSessionUsage = (
   latestTurn:
     | {
-        readonly usage: { readonly usedTokens: number };
+        readonly usage: {
+          readonly usedTokens: number;
+          readonly maxTokens?: number | null | undefined;
+        };
         readonly promptCacheExpiresAt?: string | undefined;
+        readonly autoCompactThreshold?: number | undefined;
       }
     | undefined,
   providerThread: Pick<OrchestrationV2ProviderThread, "contextUsage">,
@@ -34,10 +51,16 @@ export const currentSessionUsage = (
     return {
       usedTokens: latestTurn.usage.usedTokens,
       promptCacheExpiresAt: latestTurn.promptCacheExpiresAt ?? null,
+      ...windowFields({
+        maxTokens: latestTurn.usage.maxTokens,
+        autoCompactThreshold: latestTurn.autoCompactThreshold,
+      }),
     };
   }
   const thread = providerThread.contextUsage;
-  return thread == null ? null : { usedTokens: thread.usedTokens, promptCacheExpiresAt: null };
+  return thread == null
+    ? null
+    : { usedTokens: thread.usedTokens, promptCacheExpiresAt: null, ...windowFields(thread) };
 };
 
 export interface SessionRotationShape {

@@ -3,7 +3,7 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2ConversationMessage,
-  type RunId,
+  type OrchestrationV2Run,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
@@ -31,8 +31,8 @@ import { BotThreads } from "./botThreads.ts";
 /**
  * A bot's home thread is one long conversation, so its provider session would grow until the
  * provider compacts it, and each compaction summarizes the last summary. Past this many tokens of
- * context, the bot saves what it needs (the flush turn) and its next turn starts a fresh session
- * seeded from stored state. 0 starts every turn fresh.
+ * context (less on a smaller window, see `effectiveBudget`), the bot saves what it needs (the flush
+ * turn) and its next turn starts a fresh session seeded from stored state. 0 starts every turn fresh.
  */
 const sessionTokenBudget = Config.Int("T3CODE_BOT_SESSION_TOKEN_BUDGET").pipe(
   Config.withDefault(150_000),
@@ -42,6 +42,12 @@ const sessionTokenBudget = Config.Int("T3CODE_BOT_SESSION_TOKEN_BUDGET").pipe(
 const IDLE_ROTATION_MIN_TOKENS = 50_000;
 /** The idle flush runs this long before the prompt cache expires, while the session reads cheap. */
 const FLUSH_LEAD_MS = 2 * 60_000;
+/** The share of the provider's compaction point (else its window) a session may fill. */
+const WINDOW_SHARE = 0.7;
+/** A window whose share is smaller can't hold a seed and a few turns; its provider compacts instead. */
+const MIN_WINDOW_BUDGET = 60_000;
+/** Runs read to find the one before a turn; a deeper queue rotates as if none were found. */
+const RECENT_RUNS = 8;
 const SEED_MESSAGES = 30;
 const SEED_MESSAGE_CHARS = 2_000;
 const SEED_MESSAGES_CHARS = 40_000;
@@ -54,7 +60,39 @@ const FLUSH_TEXT =
 export interface SessionUsage {
   readonly usedTokens: number;
   readonly promptCacheExpiresAt: string | null;
+  readonly maxTokens?: number;
+  readonly autoCompactThreshold?: number;
 }
+
+type RunState = Pick<OrchestrationV2Run, "ordinal" | "status" | "startedAt" | "userMessageId">;
+
+const UNSTARTED_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+]);
+const ACTIVE_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
+  ...UNSTARTED_STATUSES,
+  "running",
+  "waiting",
+]);
+
+const isFlushRun = (run: Pick<OrchestrationV2Run, "userMessageId">) =>
+  run.userMessageId.startsWith(FLUSH_MESSAGE_PREFIX);
+
+/** A removed queued message, or a stop, cancels runs that never started: they did not happen. */
+const happened = (run: RunState) => run.status !== "cancelled" || run.startedAt !== null;
+
+/**
+ * The budget a session rotates at: `cap`, lowered to a share of where the provider would compact
+ * it on its own, so the flush always comes first. Only ever lower than `cap`.
+ */
+export const effectiveBudget = (cap: number, usage: SessionUsage | null): number => {
+  const limit = usage?.autoCompactThreshold ?? usage?.maxTokens;
+  if (cap === 0 || limit === undefined) return cap;
+  const share = Math.floor(limit * WINDOW_SHARE);
+  return share < MIN_WINDOW_BUDGET ? cap : Math.min(cap, share);
+};
 
 const cacheExpiresAtMs = (usage: SessionUsage): number | null => {
   const at =
@@ -76,7 +114,7 @@ export const rotationDue = (input: {
   if (input.flush) return false;
   if (input.budget === 0) return true;
   if (input.usage === null) return false;
-  if (input.usage.usedTokens >= input.budget) return true;
+  if (input.usage.usedTokens >= effectiveBudget(input.budget, input.usage)) return true;
   const expiresAt = cacheExpiresAtMs(input.usage);
   return (
     expiresAt !== null &&
@@ -96,10 +134,47 @@ export const flushPlan = (input: {
   readonly afterFlush: boolean;
 }): { readonly atMs: number | "now" } | null => {
   if (input.budget === 0 || input.afterFlush || input.usage === null) return null;
-  if (input.usage.usedTokens >= input.budget) return { atMs: "now" };
+  if (input.usage.usedTokens >= effectiveBudget(input.budget, input.usage)) return { atMs: "now" };
   if (input.usage.usedTokens < IDLE_ROTATION_MIN_TOKENS) return null;
   const expiresAt = cacheExpiresAtMs(input.usage);
   return expiresAt === null ? null : { atMs: expiresAt - FLUSH_LEAD_MS };
+};
+
+/**
+ * Whether a due rotation waits a turn for the flush: the run before this one completed and was not a
+ * flush, so `flushAfterRun` sent or will send one. A flush that ran (any status), a run that failed,
+ * or none found rotates now, so a broken flush can never keep a session alive.
+ */
+export const rotationWaitsForFlush = (
+  runs: ReadonlyArray<RunState>,
+  runOrdinal: number,
+): boolean => {
+  const previous = runs
+    .filter(
+      (run) => run.ordinal < runOrdinal && happened(run) && !UNSTARTED_STATUSES.has(run.status),
+    )
+    .reduce<RunState | undefined>(
+      (found, run) => (found === undefined || run.ordinal > found.ordinal ? run : found),
+      undefined,
+    );
+  return previous !== undefined && previous.status === "completed" && !isFlushRun(previous);
+};
+
+/**
+ * Whether the runs around a completed one stop its flush: a flush already waits or runs; a newer run
+ * started, so its own completion decides; or, for an idle flush, a turn is waiting and will warm the
+ * cache again. A waiting turn doesn't stop a budget flush: the flush queues behind it and it waits.
+ */
+export const flushBlocked = (
+  runs: ReadonlyArray<RunState>,
+  run: Pick<RunState, "ordinal">,
+  plan: { readonly atMs: number | "now" },
+): boolean => {
+  const live = runs.filter(happened);
+  if (live.some((other) => isFlushRun(other) && ACTIVE_STATUSES.has(other.status))) return true;
+  const newer = live.filter((other) => other.ordinal > run.ordinal);
+  if (newer.some((other) => !UNSTARTED_STATUSES.has(other.status))) return true;
+  return plan.atMs !== "now" && newer.length > 0;
 };
 
 const clip = (text: string, limit: number) =>
@@ -173,6 +248,18 @@ const make = Effect.gen(function* () {
         flush: input.messageId.startsWith(FLUSH_MESSAGE_PREFIX),
       });
       if (!due) return null;
+      if (budget > 0) {
+        const { runs: earlier } = yield* projections.getThreadRecords(input.threadId, ["runs"], {
+          recentRuns: { limit: RECENT_RUNS, runIds: [] },
+        });
+        if (rotationWaitsForFlush(earlier, input.runOrdinal)) {
+          yield* Effect.logInfo("bot rotation waits for flush", {
+            threadId: input.threadId,
+            usedTokens: input.usage?.usedTokens ?? null,
+          });
+          return null;
+        }
+      }
       // Rotate without the brief rather than resume: the old session would flush again.
       const brief = yield* loadBrief(BotId.make(botId), { since: null }).pipe(
         Effect.provide(briefContext),
@@ -211,7 +298,7 @@ const make = Effect.gen(function* () {
 
   /** Sends the flush once the run's session passed the budget, or just before it goes cold. */
   const flushAfterRun = Effect.fn("BotRotation.flushAfterRun")(
-    function* (threadId: ThreadId, runId: RunId) {
+    function* (threadId: ThreadId, run: OrchestrationV2Run) {
       while (true) {
         const thread = yield* projections.getThread(threadId);
         const providerThreadId = thread.activeProviderThreadId;
@@ -221,7 +308,7 @@ const make = Effect.gen(function* () {
           threadId,
           ["runs", "providerThreads", "providerTurns"],
           {
-            runStatuses: ["queued", "preparing", "starting", "running", "waiting"],
+            runStatuses: [...ACTIVE_STATUSES],
             includeLatestRun: true,
             providerThreadIds: active,
             providerTurnThreadIds: active,
@@ -242,15 +329,6 @@ const make = Effect.gen(function* () {
           );
           yield* Ref.update(usageMemos, (memos) => new Map(memos).set(threadId, next));
         }
-        // A newer run is going or done; its own completion decides.
-        // A removed queued message leaves a cancelled run that never started.
-        const latest = records.runs
-          .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
-          .reduce<(typeof records.runs)[number] | undefined>(
-            (found, run) => (found === undefined || run.ordinal > found.ordinal ? run : found),
-            undefined,
-          );
-        if (latest?.id !== runId || latest.status !== "completed") return;
         // The latest turn is on the current native session: sessions only move forward.
         const turnUsage = records.providerTurns.find(
           (turn) => turn.tokenUsage !== undefined,
@@ -265,12 +343,15 @@ const make = Effect.gen(function* () {
                   ...(turnUsage.promptCacheExpiresAt === undefined
                     ? {}
                     : { promptCacheExpiresAt: turnUsage.promptCacheExpiresAt }),
+                  ...(turnUsage.autoCompactThreshold === undefined
+                    ? {}
+                    : { autoCompactThreshold: turnUsage.autoCompactThreshold }),
                 },
             records.providerThreads[0] ?? { contextUsage: null },
           ),
-          afterFlush: latest.userMessageId.startsWith(FLUSH_MESSAGE_PREFIX),
+          afterFlush: isFlushRun(run),
         });
-        if (plan === null) return;
+        if (plan === null || flushBlocked(records.runs, run, plan)) return;
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         if (plan.atMs !== "now" && nowMs < plan.atMs) {
           yield* Effect.sleep(Duration.millis(plan.atMs - nowMs));
@@ -278,15 +359,15 @@ const make = Effect.gen(function* () {
         }
         const botId = BotThreads.homeBotId(threadId);
         if (botId === undefined) return;
+        // A paused bot still answers its user, so the flush follows those turns too.
         const bot = Option.getOrNull(yield* bots.getBot(BotId.make(botId)));
-        // A paused bot takes no turns of its own; its next turn rotates without a flush.
-        if (bot === null || bot.paused) return;
+        if (bot === null) return;
         yield* engine.dispatch({
           type: "message.dispatch",
           // One flush per completed run, even across duplicate events.
-          commandId: CommandId.make(`server:bot-flush:${threadId}:${runId}`),
+          commandId: CommandId.make(`server:bot-flush:${threadId}:${run.id}`),
           threadId,
-          messageId: MessageId.make(`${FLUSH_MESSAGE_PREFIX}${runId}`),
+          messageId: MessageId.make(`${FLUSH_MESSAGE_PREFIX}${run.id}`),
           text: FLUSH_TEXT,
           notification: {
             source: { kind: "system" },
@@ -317,7 +398,7 @@ const make = Effect.gen(function* () {
         event.type === "run.updated" &&
         event.payload.status === "completed" &&
         BotThreads.homeBotId(event.threadId) !== undefined
-          ? FiberMap.run(timers, event.threadId, flushAfterRun(event.threadId, event.payload.id))
+          ? FiberMap.run(timers, event.threadId, flushAfterRun(event.threadId, event.payload))
           : Effect.void,
       ),
     );

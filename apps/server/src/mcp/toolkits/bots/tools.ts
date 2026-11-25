@@ -90,19 +90,22 @@ const BriefResult = Schema.Struct({
   asOf: Schema.String,
   /** The `since` this brief answers; null for the whole brief. */
   since: Schema.NullOr(Schema.String),
-  bot: Schema.Struct({
-    name: Schema.String,
-    charter: Schema.String,
-    /** How to sound in this chat, e.g. "Crisp: results first, in the fewest words." */
-    voice: Schema.String,
-    paused: Schema.Boolean,
-    /** Each role's default; this machine's instance ids. */
-    models: Schema.Struct({ worker: ModelSelection, reviewer: ModelSelection }),
-  }),
+  /** Null when `since` is given: it changes only with a whole brief. */
+  bot: Schema.NullOr(
+    Schema.Struct({
+      name: Schema.String,
+      charter: Schema.String,
+      /** How to sound in this chat, e.g. "Crisp: results first, in the fewest words." */
+      voice: Schema.String,
+      paused: Schema.Boolean,
+      /** Each role's default; this machine's instance ids. */
+      models: Schema.Struct({ worker: ModelSelection, reviewer: ModelSelection }),
+    }),
+  ),
   playbook: Schema.Struct({
-    /** Null when unchanged since `since`. */
+    /** Null when `since` is given, like `checkWithMeBefore`. */
     instructions: Schema.NullOr(Schema.String),
-    checkWithMeBefore: Schema.Array(Schema.String),
+    checkWithMeBefore: Schema.NullOr(Schema.Array(Schema.String)),
     notes: Schema.Array(
       Schema.Struct({
         noteId: BotNoteId,
@@ -352,14 +355,17 @@ const AskResolveTool = Tool.make("bot_ask_resolve", {
 
 const LearnTool = Tool.make("bot_learn", {
   ...shared,
-  description:
-    "Save one short, general rule to your playbook. Pass the askId when it came from an Ask, or omit it when the user said it in Chat.",
+  description: `Save one short, general rule to your playbook, at most ${BotService.NOTE_MAX_CHARS} characters; save each rule on its own. Saving a rule you already have returns its noteId. To correct a note, bot_forget it and save the new rule. Pass the askId when it came from an Ask, or omit it when the user said it in Chat.`,
   parameters: Schema.Struct({
-    text: Schema.String,
+    text: Schema.String.check(Schema.isMaxLength(BotService.NOTE_MAX_CHARS)),
     askId: Schema.optional(BotAskId),
     source: Schema.optional(Schema.String),
   }),
-  success: Schema.Struct({ noteId: BotNoteId }),
+  success: Schema.Struct({
+    noteId: BotNoteId,
+    /** Set when you hold more notes than the playbook should: merge or forget some. */
+    overLimit: Schema.optional(Schema.Literal(true)),
+  }),
 })
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForBots);

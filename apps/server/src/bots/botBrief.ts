@@ -1,4 +1,5 @@
 import {
+  BOT_INSTRUCTIONS_MAX_CHARS,
   BOT_LIMIT_LABELS,
   type Bot,
   type BotAsk,
@@ -38,8 +39,8 @@ const BRIEF_LIMITS = {
   lastAssistantChars: 300,
   /** Notes are ranked by citations, then recency. */
   notesChars: 10_000,
-  noteChars: 300,
-  instructionsChars: 5_000,
+  noteChars: BotService.NOTE_MAX_CHARS,
+  instructionsChars: BOT_INSTRUCTIONS_MAX_CHARS,
   charterChars: 1_500,
   projectsChars: 3_500,
   asksChars: 4_000,
@@ -49,7 +50,7 @@ const BRIEF_LIMITS = {
 } as const;
 
 /** The most a heavy bot's brief comes to, as `estimateTokens` counts: its budgets and their keys. */
-export const BRIEF_TOKEN_CAP = 13_500;
+export const BRIEF_TOKEN_CAP = 16_000;
 
 /** Items in order until their JSON reaches `budget` characters; the rest are left out. */
 const withinBudget = <A>(items: ReadonlyArray<A>, budget: number): Array<A> => {
@@ -70,6 +71,14 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 const clip = (text: string, limit: number): string => {
   const chars = Array.from(text);
   return chars.length > limit ? `${chars.slice(0, limit - 1).join("")}…` : text;
+};
+
+/** Saves cap instructions at the brief's limit; one stored before that cap says it was cut. */
+const clipInstructions = (text: string): string => {
+  const chars = Array.from(text);
+  return chars.length > BRIEF_LIMITS.instructionsChars
+    ? `${chars.slice(0, BRIEF_LIMITS.instructionsChars).join("")}\n[The instructions continue past this point; ask the user for the rest.]`
+    : text;
 };
 
 const HERE = "this machine";
@@ -148,8 +157,8 @@ const briefSession = (input: BriefSessionInput, since: string | null) => {
  */
 export const composeBrief = (input: BriefInput) => {
   const { bot } = input;
-  // A diff can't show what was removed, so any change to the bot (a note the user deleted, its
-  // settings, a new job) gets the whole brief.
+  // A diff can't show what was removed, so a change to the bot itself (its settings, pause, a note
+  // the user deleted) gets the whole brief. New jobs, notes and asks show through their own stamps.
   const since = after(bot.updatedAt, input.since) ? null : input.since;
   const sessionsByJob = new Map<string, Array<BriefSessionInput>>();
   for (const entry of input.sessions) {
@@ -228,18 +237,20 @@ export const composeBrief = (input: BriefInput) => {
   return {
     asOf: input.now,
     since,
-    bot: {
-      name: bot.name,
-      charter: clip(bot.charter, BRIEF_LIMITS.charterChars),
-      voice: voiceGuide(bot.voice),
-      paused: bot.paused,
-      models: { worker: bot.models.worker, reviewer: bot.models.reviewer },
-    },
-    playbook: {
-      instructions: after(bot.updatedAt, since)
-        ? clip(bot.instructions, BRIEF_LIMITS.instructionsChars)
+    // These change only with `bot.updatedAt`, which sends the whole brief, so a diff leaves them out.
+    bot:
+      since === null
+        ? {
+            name: bot.name,
+            charter: clip(bot.charter, BRIEF_LIMITS.charterChars),
+            voice: voiceGuide(bot.voice),
+            paused: bot.paused,
+            models: { worker: bot.models.worker, reviewer: bot.models.reviewer },
+          }
         : null,
-      checkWithMeBefore: bot.limits.map((limit) => BOT_LIMIT_LABELS[limit]),
+    playbook: {
+      instructions: since === null ? clipInstructions(bot.instructions) : null,
+      checkWithMeBefore: since === null ? bot.limits.map((limit) => BOT_LIMIT_LABELS[limit]) : null,
       notes,
       moreNotes: input.notes.length - notes.length,
     },

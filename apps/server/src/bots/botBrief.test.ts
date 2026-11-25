@@ -17,6 +17,9 @@ describe("composeBrief", () => {
     const brief = composeBrief(input);
 
     expect(estimateTokens(JSON.stringify(brief))).toBeLessThanOrEqual(BRIEF_TOKEN_CAP);
+    // Instructions saved under the editor's limit arrive whole; older, longer ones say they were cut.
+    expect(brief.playbook.instructions).toContain(input.bot.instructions.slice(0, 16_000));
+    expect(brief.playbook.instructions).toMatch(/ask the user for the rest\.\]$/);
     expect(brief.jobs.length).toBeGreaterThan(0);
     expect(brief.jobs.length + brief.otherOpenJobs.length + brief.moreJobs).toBe(50);
     expect(brief.playbook.notes.length + brief.playbook.moreNotes).toBe(200);
@@ -49,6 +52,9 @@ describe("composeBrief", () => {
     const brief = composeBrief({ ...input, sessions, notes, since: at(1_500) });
 
     expect(brief.since).toBe(at(1_500));
+    // The bot's own fields change only with a whole brief.
+    expect(brief.bot).toBeNull();
+    expect(brief.playbook.checkWithMeBefore).toBeNull();
     expect(brief.playbook.instructions).toBeNull();
     expect(brief.projects).toBeNull();
     expect(brief.finishedJobs).toEqual([]);
@@ -69,6 +75,8 @@ describe("composeBrief", () => {
     const changedBot = { ...input.bot, updatedAt: at(2_000) };
     const whole = composeBrief({ ...input, bot: changedBot, since: at(1_500) });
     expect(whole.since).toBeNull();
+    expect(whole.bot?.name).toBe("Chief of staff");
+    expect(whole.playbook.checkWithMeBefore?.length).toBe(2);
     expect(whole).toEqual(composeBrief({ ...input, bot: changedBot, since: null }));
   });
 });

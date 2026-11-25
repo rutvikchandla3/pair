@@ -412,6 +412,9 @@ export const BotsCreateInput = Schema.Struct({
 });
 export type BotsCreateInput = typeof BotsCreateInput.Type;
 
+/** Instructions a user can save; the bot's brief carries them whole up to this. */
+export const BOT_INSTRUCTIONS_MAX_CHARS = 16_000;
+
 export const BotsUpdateInput = Schema.Struct({
   botId: BotId,
   name: Schema.optionalKey(TrimmedNonEmptyString),
@@ -425,7 +428,9 @@ export const BotsUpdateInput = Schema.Struct({
     ),
   ),
   charter: Schema.optionalKey(Schema.String),
-  instructions: Schema.optionalKey(Schema.String),
+  instructions: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(BOT_INSTRUCTIONS_MAX_CHARS)),
+  ),
   limits: Schema.optionalKey(Schema.Array(BotLimit)),
   models: Schema.optionalKey(BotModels),
 });

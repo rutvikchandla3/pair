@@ -161,9 +161,9 @@ session's pending approval or question inside the thread does not take it over.
 
 ### Pause and delete
 
-**Pause**: the bot takes no turns; its sessions keep running and their questions come to your
-Inbox. The composer stays usable; messages wait for **Resume**, which wakes the bot once with what
-happened meanwhile. **Delete bot…** confirms, stops the home thread, and moves its sessions into
+**Pause**: the bot takes no turns of its own; its sessions keep running and their questions come to
+your Inbox. You can still message it and it answers; session updates wait for **Resume**, which
+wakes the bot once with what happened meanwhile. **Delete bot…** confirms, stops the home thread, and moves its sessions into
 Threads.
 
 ### Mobile
@@ -188,9 +188,10 @@ question, and that question is the visible message.
 2. **The bot plans** with `bot_brief` (memory, voice, limits, projects, open jobs and their
    sessions' live state, open questions). It calls `bot_brief` every turn, so its state comes from
    the server, not from chat history. The home thread never compacts: once its provider session
-   passes 150k tokens of context (`T3CODE_BOT_SESSION_TOKEN_BUDGET`; 0 starts every turn fresh),
-   or is about to go cold with more than 50k, the bot gets one turn to save notes, and its next
-   turn starts a fresh session seeded with its brief and the chat's last 30 messages. For new work it calls
+   passes 150k tokens of context, or 70% of where its provider would compact when that is lower
+   (`T3CODE_BOT_SESSION_TOKEN_BUDGET` sets the 150k; 0 starts every turn fresh), or is about to go
+   cold with more than 50k, the bot gets one turn to save notes, and a fresh session seeded with its
+   brief and the chat's last 30 messages starts only after that turn, even after a restart. For new work it calls
    `bot_job_create` (title, request, and a project unless the work is outside one) and
    `bot_start_session` for each independent piece, replies with the session links, and ends the
    turn. It never waits on a session in its turn.

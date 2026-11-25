@@ -13,6 +13,7 @@ import {
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -345,6 +346,39 @@ describe("bots tools", () => {
         },
       );
       expect(result).toMatchObject({ forgotten: true, text: "Rate limits are per member" });
+    }),
+  );
+
+  it.effect("says when the playbook holds more notes than it should, counting a repeat once", () =>
+    Effect.gen(function* () {
+      const notes = (count: number) =>
+        Array.from({ length: count }, (_, index) => ({ id: BotNoteId.make(`note:${index}`) }));
+      const learn = (held: number, saved: string) =>
+        callTool(
+          "bot_learn",
+          { text: "Ship small changes" },
+          {
+            bot: {
+              snapshotForBot: () =>
+                Effect.succeed({ asks: [], jobs: [], notes: notes(held) } as never),
+              addNote: () => Effect.succeed({ id: BotNoteId.make(saved) } as never),
+            },
+          },
+        );
+      expect([
+        yield* learn(199, "note:new"),
+        yield* learn(200, "note:new"),
+        // A repeat returns the note it already had, so the count doesn't grow.
+        yield* learn(200, "note:3"),
+      ]).toEqual([
+        { noteId: "note:new" },
+        { noteId: "note:new", overLimit: true },
+        { noteId: "note:3" },
+      ]);
+      const long = yield* callTool("bot_learn", { text: "x".repeat(301) }).pipe(
+        Effect.catchCause((cause) => Effect.succeed(Cause.squash(cause))),
+      );
+      expect(String(long)).toContain("at most 300");
     }),
   );
 
