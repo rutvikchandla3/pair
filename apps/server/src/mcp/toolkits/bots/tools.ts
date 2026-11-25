@@ -189,12 +189,12 @@ const BotBriefTool = Tool.make("bot_brief", {
 const JobUpdateTool = Tool.make("bot_job_update", {
   ...shared,
   description:
-    "Keep a job's one-line headline current, or finish it with status done and a report. A report is required when you finish a job. Set archived to true to clear a finished job from the user's sidebar, only when they ask; false brings it back.",
+    "Keep a job's one-line headline current, or finish it with status done and a report. A report is required when you finish a job. Set archived to true to clear a finished job from the user's sidebar, only when they ask; false brings it back. Status working reopens a job you finished; a job the user stopped stays stopped.",
   parameters: Schema.Struct({
     jobId: BotJob.fields.id,
     headline: Schema.optional(Schema.String),
     title: Schema.optional(TrimmedNonEmptyString),
-    status: Schema.optional(Schema.Literal("done")),
+    status: Schema.optional(Schema.Literals(["done", "working"])),
     archived: Schema.optional(Schema.Boolean),
     report: Schema.optional(
       Schema.Struct({

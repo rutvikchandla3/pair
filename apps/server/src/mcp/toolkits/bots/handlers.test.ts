@@ -266,6 +266,41 @@ describe("bots tools", () => {
     }),
   );
 
+  it.effect("lets the bot reopen a finished job with status working", () =>
+    Effect.gen(function* () {
+      const patches: Array<unknown> = [];
+      yield* callTool(
+        "bot_job_update",
+        { jobId, status: "working" },
+        {
+          bot: {
+            updateJob: (_id, _jobId, patch) => {
+              patches.push(patch);
+              return Effect.succeed({
+                id: jobId,
+                botId,
+                number: 1,
+                title: "Upgrade server",
+                request: "Upgrade it",
+                projectId: null,
+                status: "working",
+                headline: "",
+                headlineAt: null,
+                pullRequests: [],
+                report: null,
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                finishedAt: null,
+                archivedAt: null,
+              });
+            },
+          },
+        },
+      );
+      expect(patches).toEqual([{ status: "working" }]);
+    }),
+  );
+
   it.effect("refuses a project that does not exist", () =>
     Effect.gen(function* () {
       const result = yield* callTool(

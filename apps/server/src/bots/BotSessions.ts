@@ -601,6 +601,12 @@ const make = Effect.gen(function* () {
     const session = yield* requireSession(botId, threadId);
     const bot = yield* loadBot(botId);
     const attachments = yield* chatAttachments(bot, references);
+    // A follow-up starts a new run, so a finished job goes back to working before the send: the
+    // run is then followed and the bot gets its usual wake-up when it ends.
+    const job = Option.getOrNull(yield* botService.getJob(session.jobId));
+    if (job?.status === "done") {
+      yield* botService.updateJob(botId, job.id, { status: "working" });
+    }
     if (session.cloud !== undefined) {
       const target = session.cloud;
       const { scope } = yield* linkScope(bot);

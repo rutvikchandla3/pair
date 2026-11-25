@@ -54,8 +54,9 @@ job: all of its sessions move behind the same disclosure, under "Archived" ("Arc
 nothing is earlier), with **Unarchive job** in the same place. A toast offers Undo. Archiving
 doesn't touch the threads or wake the bot; the bot can do the same with `bot_job_update`
 (`archived`) when you ask it to clear finished work. Reopening a job, or a question from the bot
-on it, brings it back to the list. A session whose thread is archived, here or on its cloud,
-moves under "Archived" too, keeping the state its last run left, even while its job is open.
+on it, brings it back to the list; so does a follow-up from the bot to one of the job's sessions
+(`bot_session_message` reopens a done job, as `bot_job_update` with `status: working` does). A
+session whose thread is archived, here or on its cloud, moves under "Archived" too, keeping the state its last run left, even while its job is open.
 
 ### Bot page
 

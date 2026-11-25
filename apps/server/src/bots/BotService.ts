@@ -1117,6 +1117,12 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           const bot = yield* loadBot(id);
           const job = Option.getOrNull(yield* db(store.getJob(jobIdValue)));
           if (job === null || job.botId !== bot.id) return yield* notFound("That job is gone.");
+          if (patch.status === "working" && job.status === "stopped") {
+            return yield* invalidRequest(
+              "The user stopped this job; ask them before restarting it.",
+            );
+          }
+          const reopening = patch.status === "working" && job.status === "done";
           const at = DateTime.formatIso(yield* DateTime.now);
           const patched: BotJob = {
             ...job,
@@ -1127,6 +1133,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             ...(patch.pullRequests === undefined ? {} : { pullRequests: patch.pullRequests }),
             ...(patch.headline === undefined ? {} : { headlineAt: at }),
             ...(patch.status === "done" ? { finishedAt: at } : {}),
+            ...(reopening ? { finishedAt: null, archivedAt: null } : {}),
             updatedAt: at,
           };
           const updated: BotJob = {
@@ -1136,6 +1143,13 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           yield* db(store.upsertJob(updated));
           if (patch.status === "done") {
             yield* appendEvent(bot, { jobId: job.id, kind: "job-done", text: "Done" });
+          }
+          if (reopening) {
+            yield* appendEvent(bot, {
+              jobId: job.id,
+              kind: "job-reopened",
+              text: `Reopened ${job.title}`,
+            });
           }
           yield* touch(bot.ownerId);
           return updated;

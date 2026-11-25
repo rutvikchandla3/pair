@@ -377,6 +377,18 @@ it.effect("archives only a finished job, and reopening brings it back", () =>
     yield* bots.archiveJob(caller, { jobId: job.id, archived: true });
     const reopened = yield* bots.reopenJob(caller, { jobId: job.id });
     assert.isNull(reopened.archivedAt);
+
+    yield* bots.updateJob(bot.id, job.id, { status: "done", report, archived: true });
+    const reopenedByBot = yield* bots.updateJob(bot.id, job.id, { status: "working" });
+    assert.strictEqual(reopenedByBot.status, "working");
+    assert.isNull(reopenedByBot.finishedAt);
+    assert.isNull(reopenedByBot.archivedAt);
+    assert.deepStrictEqual(reopenedByBot.report, report);
+    const noop = yield* bots.updateJob(bot.id, job.id, { status: "working" });
+    assert.strictEqual(noop.status, "working");
+    yield* bots.stopJob(caller, { jobId: job.id });
+    const stopped = yield* bots.updateJob(bot.id, job.id, { status: "working" }).pipe(Effect.flip);
+    assert.strictEqual(stopped.reason, "invalid-request");
     const hidden = yield* bots
       .archiveJob(otherCaller, { jobId: job.id, archived: true })
       .pipe(Effect.flip);
