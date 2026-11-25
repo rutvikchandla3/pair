@@ -255,6 +255,31 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
   };
 }
 
+const ACTIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+/**
+ * A thread's run status as the server reads it. `runtime` parks a thread at idle while background
+ * work holds completion, but the run behind it is still going: `latestRun` keeps its status.
+ */
+export function shellRunStatus(
+  shell: Pick<EnvironmentThreadShell, "runtime" | "latestRun">,
+): string | null {
+  const status = shell.runtime?.status ?? null;
+  if (
+    status === "idle" &&
+    shell.latestRun !== null &&
+    ACTIVE_RUN_STATUSES.has(shell.latestRun.status)
+  ) {
+    return shell.latestRun.status;
+  }
+  return status;
+}
+
 export function scopeProject(
   environmentId: EnvironmentId,
   project: OrchestrationProjectShell,
