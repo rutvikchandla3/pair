@@ -1,5 +1,6 @@
 import {
   BOT_DEFAULT_INSTRUCTIONS,
+  BOT_INSTRUCTIONS_MAX_CHARS,
   BOT_LIMIT_LABELS,
   type Bot,
   type BotLimit,
@@ -116,7 +117,12 @@ export function BotMemoryPanel(props: {
       return;
     }
     const timer = setTimeout(() => {
-      if (instructions === props.bot.instructions) return;
+      // An older, longer value can't save until it is cut down; the counter says so.
+      if (
+        instructions === props.bot.instructions ||
+        instructions.length > BOT_INSTRUCTIONS_MAX_CHARS
+      )
+        return;
       setBusy(true);
       void update({
         environmentId: props.environmentId,
@@ -169,9 +175,17 @@ export function BotMemoryPanel(props: {
           <Textarea
             value={instructions}
             placeholder={BOT_DEFAULT_INSTRUCTIONS}
+            maxLength={BOT_INSTRUCTIONS_MAX_CHARS}
             onChange={(event) => setInstructions(event.target.value)}
             className="min-h-32"
           />
+          {instructions.length > BOT_INSTRUCTIONS_MAX_CHARS * 0.8 ? (
+            <p className="text-muted-foreground text-xs tabular-nums">
+              {instructions.length.toLocaleString()} / {BOT_INSTRUCTIONS_MAX_CHARS.toLocaleString()}{" "}
+              characters
+              {instructions.length > BOT_INSTRUCTIONS_MAX_CHARS ? ". Shorten them to save." : ""}
+            </p>
+          ) : null}
         </Section>
 
         <Section

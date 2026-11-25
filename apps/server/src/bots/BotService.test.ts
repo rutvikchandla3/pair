@@ -121,12 +121,17 @@ it.effect("numbers and titles jobs, and wakes the home thread", () =>
     // Let the feeder subscribe before the first write can publish.
     yield* Effect.yieldNow;
     const bot = yield* createBot(bots);
+    yield* TestClock.adjust("1 minute");
 
     const first = yield* bots.createJob(caller, { botId: bot.id, request: "First job" });
     const second = yield* bots.createJob(caller, { botId: bot.id, request: "Second job" });
     assert.strictEqual(first.number, 1);
     assert.strictEqual(second.number, 2);
     assert.strictEqual(first.title, "First job");
+    // A new job reaches the bot's brief as a diff, so the bot itself is not marked changed.
+    const afterJobs = (yield* bots.snapshotForBot(bot.id)).bots[0]!;
+    assert.strictEqual(afterJobs.nextJobNumber, bot.nextJobNumber + 2);
+    assert.strictEqual(afterJobs.updatedAt, bot.updatedAt);
 
     assert.strictEqual((yield* Queue.take(wakes)).reason, "created");
     const started: BotService.BotWake = yield* Queue.take(wakes);
@@ -281,8 +286,40 @@ it.effect("saves a note from an ask and links it back", () =>
     const snapshot = yield* bots.snapshotForBot(bot.id);
     const stored = snapshot.asks.find((entry) => entry.id === ask.id);
     assert.strictEqual(stored?.noteId, note.id);
+    yield* TestClock.adjust("1 minute");
     const cited = yield* bots.citeNote(note.id);
     assert.strictEqual(cited.citedCount, 1);
+    // A citation is not an edit: the next diff must not resend the note.
+    assert.strictEqual(cited.updatedAt, note.updatedAt);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps one note per rule, linking a repeat's Ask to the note it already had", () =>
+  Effect.gen(function* () {
+    const bots = yield* BotService.BotService;
+    const bot = yield* createBot(bots);
+    const input = { source: "From Chat", sourceJobId: null };
+    const first = yield* bots.addNote(bot.id, { ...input, text: "Ship small changes" });
+    const ask = yield* bots.createAsk(bot.id, {
+      jobId: null,
+      question: "Big PRs?",
+      why: "",
+      options: [],
+      pick: null,
+    });
+    const repeat = yield* bots.addNote(bot.id, {
+      ...input,
+      text: "  ship SMALL\nchanges ",
+      askId: ask.id,
+    });
+    const other = yield* bots.addNote(bot.id, { ...input, text: "Ship big changes" });
+
+    assert.strictEqual(repeat.id, first.id);
+    assert.notStrictEqual(other.id, first.id);
+    const snapshot = yield* bots.snapshotForBot(bot.id);
+    assert.strictEqual(snapshot.notes.length, 2);
+    assert.strictEqual(snapshot.asks.find((entry) => entry.id === ask.id)?.noteId, first.id);
+    assert.strictEqual(snapshot.events.filter((event) => event.kind === "note-saved").length, 2);
   }).pipe(Effect.provide(layerTest)),
 );
 

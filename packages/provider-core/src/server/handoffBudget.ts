@@ -33,6 +33,8 @@ export function latestNativeContextUsage(
         modelSelection: ModelSelection;
         reportedAt: string;
         promptCacheExpiresAt?: string;
+        /** Kept out of `usage`: a handoff's budget must not inherit an old session's threshold. */
+        autoCompactThreshold?: number;
       }
     | undefined;
   for (const turn of projection.providerTurns) {
@@ -63,6 +65,9 @@ export function latestNativeContextUsage(
       ...(turn.tokenUsage.promptCacheExpiresAt === undefined
         ? {}
         : { promptCacheExpiresAt: turn.tokenUsage.promptCacheExpiresAt }),
+      ...(turn.tokenUsage.autoCompactThreshold === undefined
+        ? {}
+        : { autoCompactThreshold: turn.tokenUsage.autoCompactThreshold }),
     };
   }
   return latest;

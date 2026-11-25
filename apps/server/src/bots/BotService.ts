@@ -93,6 +93,14 @@ const WORKER_MODEL: ModelSelection = {
 
 const notFound = (message: string) => new BotsError({ reason: "not-found", message });
 const invalidRequest = (message: string) => new BotsError({ reason: "invalid-request", message });
+/** A note's longest text from the bot: one short rule, as long as the brief shows it whole. */
+export const NOTE_MAX_CHARS = 300;
+/** Past this many notes the bot is told to merge; a save is never refused for count. */
+export const NOTE_SOFT_LIMIT = 200;
+
+/** Two notes are the same rule when they differ only in case and spacing. */
+const noteKey = (text: string) => text.trim().replace(/\s+/g, " ").toLowerCase();
+
 /** The job's `archivedAt` after an archive request; only a finished job can be archived. */
 const archivedAtFor = (job: BotJob, archived: boolean | undefined, at: string) => {
   if (archived === undefined) return Effect.succeed(job.archivedAt);
@@ -428,6 +436,11 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
     return ask;
   });
 
+  const linkAsk = Effect.fnUntraced(function* (askId: BotAskId, noteId: BotNoteId) {
+    const ask = Option.getOrNull(yield* db(store.getAsk(askId)));
+    if (ask !== null) yield* db(store.upsertAsk({ ...ask, noteId }));
+  });
+
   const appendNote = Effect.fnUntraced(function* (
     bot: Bot,
     input: {
@@ -437,6 +450,12 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
       readonly askId?: BotAskId;
     },
   ) {
+    const key = noteKey(input.text);
+    const same = (yield* db(store.listNotes(bot.id))).find((note) => noteKey(note.text) === key);
+    if (same !== undefined) {
+      if (input.askId !== undefined) yield* linkAsk(input.askId, same.id);
+      return same;
+    }
     const at = DateTime.formatIso(yield* DateTime.now);
     const note: BotNote = {
       id: yield* newNoteId(random),
@@ -454,10 +473,7 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
       kind: "note-saved",
       text: `Saved a note: ${input.text}`,
     });
-    if (input.askId !== undefined) {
-      const ask = Option.getOrNull(yield* db(store.getAsk(input.askId)));
-      if (ask !== null) yield* db(store.upsertAsk({ ...ask, noteId: note.id }));
-    }
+    if (input.askId !== undefined) yield* linkAsk(input.askId, note.id);
     return note;
   });
 
@@ -681,7 +697,8 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
       archivedAt: null,
     };
     yield* db(store.upsertJob(job));
-    yield* db(store.upsertBot({ ...bot, nextJobNumber: number + 1, updatedAt: at }));
+    // No `updatedAt`: that sends the bot a whole brief, and the new job shows in a diff anyway.
+    yield* db(store.upsertBot({ ...bot, nextJobNumber: number + 1 }));
     yield* appendEvent(bot, {
       jobId: id,
       kind: "job-started",
@@ -1099,7 +1116,6 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
             ...bot,
             homeThreadId: input.homeThreadId,
             homeProjectId: input.homeProjectId,
-            updatedAt: DateTime.formatIso(yield* DateTime.now),
           };
           yield* db(store.upsertBot(updated));
           BotThreads.setHome(input.homeThreadId, bot.id);
@@ -1329,8 +1345,8 @@ const make = Effect.fn("BotService.make")(function* (options: { readonly cloudOn
           const bot = yield* loadBot(note.botId);
           const updated: BotNote = {
             ...note,
+            // Not `updatedAt`: a citation changes ranking, not the note, so diffs don't resend it.
             citedCount: note.citedCount + 1,
-            updatedAt: DateTime.formatIso(yield* DateTime.now),
           };
           yield* db(store.upsertNote(updated));
           yield* touch(bot.ownerId);

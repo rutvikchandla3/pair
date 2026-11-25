@@ -313,7 +313,11 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
           ...(params.askId === undefined ? {} : { askId: params.askId }),
         }),
       );
-      return { noteId: note.id };
+      const known = snapshot.notes.some((candidate) => candidate.id === note.id);
+      const count = snapshot.notes.length + (known ? 0 : 1);
+      return count > BotService.NOTE_SOFT_LIMIT
+        ? { noteId: note.id, overLimit: true as const }
+        : { noteId: note.id };
     }),
   ),
 
