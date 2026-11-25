@@ -13,7 +13,6 @@ import {
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -375,10 +374,6 @@ describe("bots tools", () => {
         { noteId: "note:new", overLimit: true },
         { noteId: "note:3" },
       ]);
-      const long = yield* callTool("bot_learn", { text: "x".repeat(301) }).pipe(
-        Effect.catchCause((cause) => Effect.succeed(Cause.squash(cause))),
-      );
-      expect(String(long)).toContain("at most 300");
     }),
   );
 

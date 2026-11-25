@@ -644,6 +644,91 @@ it.effect.each([
 );
 
 it.effect(
+  "after a restart lost the flush timer, a due turn waits on its session for the flush before starting fresh",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("bot-rotation-restart");
+        const captured = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const { harness, rotation } = rotationLayers({
+          cwd,
+          captured,
+          usedTokens: 160_000,
+          brief: "loads",
+        });
+        BotThreads.setHome(threadId, botId);
+        yield* Effect.addFinalizer(() => Effect.sync(() => BotThreads.clearHome(threadId)));
+
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const send = (id: string, text: string) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(id),
+              threadId,
+              messageId: MessageId.make(`message:${id}`),
+              text,
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create"),
+            threadId,
+            projectId: ProjectId.make("project:bot-rotation"),
+            title: "Atlas",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "system",
+            creationSource: "server",
+          });
+          // The first turn ends past the budget before BotRotation runs, as if the server
+          // restarted then: nothing scheduled its flush.
+          yield* send("first", "Fix the login bug");
+          yield* settled(1);
+          yield* (yield* BotRotation).start();
+
+          yield* send("second", "What's the status?");
+          yield* settled(3);
+          yield* send("fourth", "Also check the sidebar");
+          const final = yield* settled(5);
+          const turns = yield* Ref.get(captured);
+
+          assert.deepStrictEqual(
+            turns.map((turn) => [turn.runOrdinal, turn.nativeThreadId]),
+            [
+              [1, "native:1"],
+              // Due, but the session was never flushed: it waits, and the flush follows it.
+              [2, "native:1"],
+              [3, "native:1"],
+              [4, "native:2"],
+              [5, "native:2"],
+            ],
+          );
+          assert.isFalse(turns[1]!.text.startsWith("[Pair] This chat now runs on a fresh session"));
+          assert.isTrue(turns[2]!.text.startsWith("[Pair] After this turn"));
+          assert.isTrue(turns[3]!.text.startsWith("[Pair] This chat now runs on a fresh session"));
+          assert.deepStrictEqual(
+            final.runs
+              .toSorted((left, right) => left.ordinal - right.ordinal)
+              .map((run) => run.userMessageId.startsWith(FLUSH_MESSAGE_PREFIX)),
+            [false, false, true, false, true],
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(harness, rotation).pipe(Layer.provide(SessionRotation.layerSlot)),
+          ),
+        );
+      }),
+    ),
+);
+
+it.effect(
   "on a long home thread, flushes from usage reported many turns ago before its cache goes cold, as a full read decides",
   () =>
     Effect.scoped(

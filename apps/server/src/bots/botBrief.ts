@@ -237,7 +237,7 @@ export const composeBrief = (input: BriefInput) => {
   return {
     asOf: input.now,
     since,
-    // These change only with `bot.updatedAt`, which sends the whole brief, so a diff leaves them out.
+    // Changes only with `bot.updatedAt`, which sends the whole brief, so a diff leaves it out.
     bot:
       since === null
         ? {
@@ -250,7 +250,8 @@ export const composeBrief = (input: BriefInput) => {
         : null,
     playbook: {
       instructions: since === null ? clipInstructions(bot.instructions) : null,
-      checkWithMeBefore: since === null ? bot.limits.map((limit) => BOT_LIMIT_LABELS[limit]) : null,
+      // Always sent: a compacted session may have lost the last whole brief, and these guard it.
+      checkWithMeBefore: bot.limits.map((limit) => BOT_LIMIT_LABELS[limit]),
       notes,
       moreNotes: input.notes.length - notes.length,
     },

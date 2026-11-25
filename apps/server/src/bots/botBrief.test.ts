@@ -52,9 +52,9 @@ describe("composeBrief", () => {
     const brief = composeBrief({ ...input, sessions, notes, since: at(1_500) });
 
     expect(brief.since).toBe(at(1_500));
-    // The bot's own fields change only with a whole brief.
+    // The bot's own fields change only with a whole brief; its limits always come.
     expect(brief.bot).toBeNull();
-    expect(brief.playbook.checkWithMeBefore).toBeNull();
+    expect(brief.playbook.checkWithMeBefore.length).toBe(2);
     expect(brief.playbook.instructions).toBeNull();
     expect(brief.projects).toBeNull();
     expect(brief.finishedJobs).toEqual([]);
@@ -76,7 +76,6 @@ describe("composeBrief", () => {
     const whole = composeBrief({ ...input, bot: changedBot, since: at(1_500) });
     expect(whole.since).toBeNull();
     expect(whole.bot?.name).toBe("Chief of staff");
-    expect(whole.playbook.checkWithMeBefore?.length).toBe(2);
     expect(whole).toEqual(composeBrief({ ...input, bot: changedBot, since: null }));
   });
 });

@@ -103,9 +103,9 @@ const BriefResult = Schema.Struct({
     }),
   ),
   playbook: Schema.Struct({
-    /** Null when `since` is given, like `checkWithMeBefore`. */
+    /** Null when `since` is given. */
     instructions: Schema.NullOr(Schema.String),
-    checkWithMeBefore: Schema.NullOr(Schema.Array(Schema.String)),
+    checkWithMeBefore: Schema.Array(Schema.String),
     notes: Schema.Array(
       Schema.Struct({
         noteId: BotNoteId,

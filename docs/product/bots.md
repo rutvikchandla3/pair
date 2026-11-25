@@ -187,7 +187,8 @@ question, and that question is the visible message.
 1. **You write.** The message lands in the home thread like any message.
 2. **The bot plans** with `bot_brief` (memory, voice, limits, projects, open jobs and their
    sessions' live state, open questions). It calls `bot_brief` every turn, so its state comes from
-   the server, not from chat history. The home thread never compacts: once its provider session
+   the server, not from chat history. The home thread starts fresh sessions instead of compacting
+   (a window too small to hold a seed is left to its provider's compaction): once its provider session
    passes 150k tokens of context, or 70% of where its provider would compact when that is lower
    (`T3CODE_BOT_SESSION_TOKEN_BUDGET` sets the 150k; 0 starts every turn fresh), or is about to go
    cold with more than 50k, the bot gets one turn to save notes, and a fresh session seeded with its

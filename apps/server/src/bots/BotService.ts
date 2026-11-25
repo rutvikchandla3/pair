@@ -93,7 +93,6 @@ const WORKER_MODEL: ModelSelection = {
 
 const notFound = (message: string) => new BotsError({ reason: "not-found", message });
 const invalidRequest = (message: string) => new BotsError({ reason: "invalid-request", message });
-/** The job's `archivedAt` after an archive request; only a finished job can be archived. */
 /** A note's longest text from the bot: one short rule, as long as the brief shows it whole. */
 export const NOTE_MAX_CHARS = 300;
 /** Past this many notes the bot is told to merge; a save is never refused for count. */
@@ -102,6 +101,7 @@ export const NOTE_SOFT_LIMIT = 200;
 /** Two notes are the same rule when they differ only in case and spacing. */
 const noteKey = (text: string) => text.trim().replace(/\s+/g, " ").toLowerCase();
 
+/** The job's `archivedAt` after an archive request; only a finished job can be archived. */
 const archivedAtFor = (job: BotJob, archived: boolean | undefined, at: string) => {
   if (archived === undefined) return Effect.succeed(job.archivedAt);
   if (!archived) return Effect.succeed(null);

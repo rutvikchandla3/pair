@@ -46,7 +46,7 @@ const FLUSH_LEAD_MS = 2 * 60_000;
 const WINDOW_SHARE = 0.7;
 /** A window whose share is smaller can't hold a seed and a few turns; its provider compacts instead. */
 const MIN_WINDOW_BUDGET = 60_000;
-/** Runs read to find the one before a turn; a deeper queue rotates as if none were found. */
+/** Runs read to find the one before a turn; the store reads all of them when it can't bound that. */
 const RECENT_RUNS = 8;
 const SEED_MESSAGES = 30;
 const SEED_MESSAGE_CHARS = 2_000;
