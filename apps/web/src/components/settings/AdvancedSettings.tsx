@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -33,7 +34,7 @@ export function AdvancedSettings({
           aria-hidden
           className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
         />
-        Advanced
+        <T>Advanced</T>
         {summary ? (
           <span className="min-w-0 truncate font-normal group-data-panel-open:hidden">
             {summary}
@@ -41,7 +42,7 @@ export function AdvancedSettings({
         ) : null}
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
+        <div className="border-t border-border/50 *:not-first:border-t *:not-first:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
           {children}
         </div>
       </CollapsiblePanel>

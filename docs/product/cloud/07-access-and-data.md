@@ -184,7 +184,7 @@ then read its diff from the mirror. If the sync fails or times out, the checkpoi
 pending set at startup from threads on machines that aren't destroyed, and `sandbox.stop` flushes
 it first. The diff reader falls back to the machine for refs a pending sync hasn't delivered. The
 wait comes after the provider turn ends, so the recorded provider duration doesn't grow
-([overview](../../internals/overview.md#turn-completion-and-checkpoints)). It does delay
+([overview](../../internals/01_architecture.md#turn-completion-and-checkpoints)). It does delay
 `completed`, and the thread's next effect (such as the next turn's start), by the sync time. M2's
 capacity load test runs a concurrent bundle among 30 machines; if the sync's p95 goes over one
 second there, sync after the commit, in

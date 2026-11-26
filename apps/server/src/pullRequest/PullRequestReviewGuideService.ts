@@ -12,6 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import {
   type ModelSelection,
+  type ProjectId,
   PullRequestOperationError,
   type PullRequestDetail,
   type PullRequestRef,
@@ -19,7 +20,6 @@ import {
   type PullRequestReviewGuideResult,
   type PullRequestReviewGuideRun,
   type PullRequestStack,
-  ProjectId,
   type RepositoryIdentity,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -45,7 +45,7 @@ import { threadPullRequestKeysEqual } from "../sourceControl/threadPullRequests.
 import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as PullRequestService from "./PullRequestService.ts";
-import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
+import { ownPullRequestRepositories, pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
 import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
 
@@ -147,30 +147,18 @@ const make = Effect.gen(function* () {
 
   const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
     function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
-      const own =
-        identity == null
-          ? null
-          : pullRequestSyncKey(
-              {
-                projectId: ProjectId.make("own"),
-                number: key.number,
-                repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
-              },
-              identity,
-            );
-      if (
-        identity == null ||
-        own === null ||
-        own.host !== key.host ||
-        own.repository !== key.repository
-      ) {
+      const own = ownPullRequestRepositories(identity).find(
+        (candidate) =>
+          candidate.key.host === key.host && candidate.key.repository === key.repository,
+      );
+      if (own === undefined) {
         return yield* new PullRequestOperationError({
           operation: "generateReviewGuide",
           detail:
             "Guides are written from this project's checkout, and this pull request is in another repository. Write it from a project that is a checkout of that repository.",
         });
       }
-      return identity.locator;
+      return own.locator;
     },
   );
 
@@ -276,7 +264,7 @@ const make = Effect.gen(function* () {
     runId: string,
   ) {
     const workspaceRoot = checkout.root;
-    // Identity names can be stale; match effective fetch URLs, including insteadOf rewrites.
+    // Identity names can be stale; the identity keeps a remote's URL before or after insteadOf.
     const names = yield* git
       .execute({
         operation: "PullRequestReviewGuideService.listRemotes",
@@ -287,16 +275,24 @@ const make = Effect.gen(function* () {
     const remote = yield* Effect.findFirst(
       [locator.remoteName, ...names.filter((name) => name !== locator.remoteName)],
       (name) =>
-        git
-          .execute({
-            operation: "PullRequestReviewGuideService.remoteUrl",
-            cwd: workspaceRoot,
-            args: ["remote", "get-url", "--", name],
-          })
-          .pipe(
-            Effect.map((result) => result.stdout.trim() === locator.remoteUrl),
-            Effect.orElseSucceed(() => false),
-          ),
+        Effect.forEach(
+          [
+            ["remote", "get-url", "--", name],
+            ["config", "--get-all", `remote.${name}.url`],
+          ],
+          (args) =>
+            git
+              .execute({
+                operation: "PullRequestReviewGuideService.remoteUrl",
+                cwd: workspaceRoot,
+                args,
+              })
+              .pipe(
+                Effect.map((result) => result.stdout.split("\n")[0]?.trim() === locator.remoteUrl),
+                Effect.orElseSucceed(() => false),
+              ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map((matches) => matches.includes(true))),
     ).pipe(Effect.map(Option.getOrUndefined));
     if (remote === undefined) {
       return yield* new PullRequestOperationError({
@@ -513,6 +509,7 @@ const make = Effect.gen(function* () {
               ...reviewGuideInputFromPullRequest(detail, activity, scratch.baseCommit),
               cwd: scratch.path,
               modelSelection,
+              projectId: input.projectId,
               instructions,
               stack: scratch.stack,
             }),
@@ -560,7 +557,7 @@ const make = Effect.gen(function* () {
     if (!settings.reviewGuidesEnabled) {
       return yield* new PullRequestOperationError({
         operation: "generateReviewGuide",
-        detail: "Review guides are off. Turn them on in Settings → Source Control.",
+        detail: "Review guides are off. Turn them on in Settings → Source control & issues.",
       });
     }
     const { key, workspaceRoot, identity } = yield* keyFor(input);

@@ -6,6 +6,7 @@ import {
   type ProviderInstanceId,
   SandboxId,
   type ServerSettings as ServerSettingsSchema,
+  SettingsSecretUnresolvedError,
   ThreadId,
 } from "@t3tools/contracts";
 import type { RunnerInfo } from "@t3tools/contracts/runner";
@@ -24,7 +25,6 @@ import * as Schema from "effect/Schema";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import { ProviderCloudLocalOnlyError } from "../../provider/Errors.ts";
-import { SettingsSecretUnresolvedError } from "../../secrets/settingsSecretValue.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { WorkspaceHost } from "../../workspaceHost/WorkspaceHost.ts";
 

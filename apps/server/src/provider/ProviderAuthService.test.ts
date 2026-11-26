@@ -790,6 +790,32 @@ describe("ProviderAuthService", () => {
     }),
   );
 
+  it.effect("refuses a chat sign-out that no person sent", () =>
+    Effect.gen(function* () {
+      const { service, actions } = yield* makeHarness({});
+      const error = yield* Effect.flip(
+        service.tryHandlePromptCommand({
+          instanceId,
+          text: "/logout",
+          hasAttachments: false,
+          sentByPerson: false,
+        }),
+      );
+
+      assert.strictEqual(error.operation, "logout");
+      assert.deepStrictEqual(actions, []);
+      // Any other prompt still goes to the provider.
+      assert.isFalse(
+        yield* service.tryHandlePromptCommand({
+          instanceId,
+          text: "hello",
+          hasAttachments: false,
+          sentByPerson: false,
+        }),
+      );
+    }),
+  );
+
   it.effect("does not log out or consume the command when stopping a session fails", () =>
     Effect.gen(function* () {
       const { service, actions, released } = yield* makeHarness({
@@ -798,7 +824,12 @@ describe("ProviderAuthService", () => {
         stopError: true,
       });
       const error = yield* Effect.flip(
-        service.tryHandlePromptCommand({ instanceId, text: "/logout", hasAttachments: false }),
+        service.tryHandlePromptCommand({
+          instanceId,
+          text: "/logout",
+          hasAttachments: false,
+          sentByPerson: true,
+        }),
       );
 
       assert.instanceOf(error, ProviderSetupError);
@@ -833,7 +864,12 @@ it.effect("queued logout prompts resolve the current controller after provider r
     yield* Deferred.await(entered);
     observeLookup = true;
     const queued = yield* harness.service
-      .tryHandlePromptCommand({ instanceId, text: "/logout", hasAttachments: false })
+      .tryHandlePromptCommand({
+        instanceId,
+        text: "/logout",
+        hasAttachments: false,
+        sentByPerson: true,
+      })
       .pipe(Effect.forkChild);
     yield* Deferred.await(lookup);
     let replacementLoggedOut = false;
@@ -854,7 +890,7 @@ it.effect("queued logout prompts resolve the current controller after provider r
     assert.isTrue(yield* Fiber.join(queued));
     assert.isTrue(replacementLoggedOut);
     assert.strictEqual(harness.actions.filter((action) => action === "native-logout").length, 1);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect.each(["start", "logout", "prompt"] as const)(
@@ -898,6 +934,7 @@ it.effect.each(["start", "logout", "prompt"] as const)(
                 instanceId,
                 text: "/logout",
                 hasAttachments: false,
+                sentByPerson: true,
               });
       const running = yield* operation.pipe(Effect.forkChild);
       yield* Deferred.await(checked);
@@ -925,7 +962,7 @@ it.effect.each(["start", "logout", "prompt"] as const)(
       const blocked = yield* Effect.flip(harness.service.logout({ instanceId }));
       assert.include(blocked.detail, "shared sign-in");
       assert.equal(replacementMutations, 0);
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect.each(["selection", "drain"] as const)(
@@ -966,5 +1003,5 @@ it.effect.each(["selection", "drain"] as const)(
       assert.notInclude(harness.actions, "stop:peer-persisted");
       assert.isFalse(harness.sessions.has(ThreadId.make("target-draining")));
       assert.include(harness.actions, "native-logout");
-    }).pipe(Effect.scoped),
+    }),
 );

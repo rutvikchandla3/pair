@@ -34,6 +34,7 @@ export function MultipleAccountsNote({
       <InfoIcon aria-hidden />
       <AlertDescription>
         <p>
+          {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
           We do not recommend managing multiple {providerName} accounts in Pair.{" "}
           <a
             href={MULTIPLE_ACCOUNTS_FAQ_URL}
@@ -41,6 +42,7 @@ export function MultipleAccountsNote({
             rel="noreferrer"
             className="underline underline-offset-2 hover:text-foreground"
           >
+            {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
             More info
           </a>
         </p>

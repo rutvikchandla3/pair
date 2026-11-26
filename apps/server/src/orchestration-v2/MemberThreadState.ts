@@ -200,10 +200,19 @@ export function transferHolder<T extends PersonalStateCarrier>(
   };
 }
 
+// Thread-scoped events whose payload is not the thread row.
+const NON_THREAD_PAYLOAD_EVENTS: ReadonlySet<OrchestrationV2DomainEvent["type"]> = new Set([
+  "thread.pull-request-link-updated",
+  "thread.visit-recorded",
+  "thread.branch-lineage.updated",
+  "thread.offer.updated",
+  "thread.lineage-step.updated",
+]);
+
 export function isThreadPayloadEvent(
   event: OrchestrationV2DomainEvent,
 ): event is ThreadPayloadEvent {
-  return event.type.startsWith("thread.") && event.type !== "thread.pull-request-link-updated";
+  return event.type.startsWith("thread.") && !NON_THREAD_PAYLOAD_EVENTS.has(event.type);
 }
 
 export function isMemberThreadEvent(event: OrchestrationV2DomainEvent): event is MemberThreadEvent {

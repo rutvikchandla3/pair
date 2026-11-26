@@ -22,6 +22,8 @@ const state = vi.hoisted(() => ({
   },
   commits: 0,
   pushes: 0,
+  actionCwds: [] as (string | null)[],
+  repositoryActions: [] as { cwd: string }[],
   metadataRequests: [] as { environmentId: string; branch: string }[],
   results: [] as { type: string; description?: string }[],
   afterGitAction: undefined as (() => void) | undefined,
@@ -92,6 +94,7 @@ vi.mock("./use-remote-environment-registry", () => ({
 vi.mock("./use-vcs-action-state", () => ({
   showGitActionResult: (result: { type: string; description?: string }) =>
     state.results.push(result),
+  noteRepositoryGitAction: (action: { cwd: string }) => state.repositoryActions.push(action),
 }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "action" }));
 vi.mock("./threads", () => ({
@@ -118,6 +121,7 @@ vi.mock("./vcs", async () => {
     (target: { cwd: string | null }) =>
     async (input: { action: string; featureBranch?: boolean; threadId?: string }) => {
       state.stackedInputs.push({ cwd: target.cwd, action: input.action, threadId: input.threadId });
+      state.actionCwds.push(target.cwd);
       if (input.featureBranch) state.branch = "feature";
       if (input.action === "commit") state.commits += 1;
       if (input.action === "push") state.pushes += 1;
@@ -185,6 +189,8 @@ describe("thread Git mutation permissions", () => {
     state.thread.worktreePath = null;
     state.commits = 0;
     state.pushes = 0;
+    state.actionCwds = [];
+    state.repositoryActions = [];
     state.metadataRequests = [];
     state.results = [];
     state.afterGitAction = undefined;
@@ -248,6 +254,31 @@ describe("thread Git mutation permissions", () => {
       expect(state.results.map((result) => result.type)).toEqual(["error"]);
     },
   );
+
+  it("runs a tracked repository's actions in its folder without touching the thread", async () => {
+    const actions = useSelectedThreadGitActions({
+      key: "/repo/api",
+      cwd: "/repo/api",
+      name: "api",
+    });
+    expect(actions.canChangeThreadBranch).toBe(false);
+    expect(actions.canCreateFeatureBranch).toBe(true);
+    expect(
+      await actions.onRunSelectedThreadGitAction({ action: "commit", featureBranch: true }),
+    ).not.toBeNull();
+    expect(await actions.onCreateSelectedThreadBranch("feature/api")).toEqual({
+      refName: "feature/api",
+    });
+    expect(
+      await actions.onCreateSelectedThreadWorktree({ baseBranch: "main", newBranch: "feature" }),
+    ).toBeNull();
+    expect(state.actionCwds).toEqual(["/repo/api"]);
+    expect(state.repositoryActions.map((action) => action.cwd)).toEqual(["/repo/api", "/repo/api"]);
+    expect(state.worktrees).toEqual([]);
+    expect(state.thread.branch).toBe("main");
+    expect(state.metadataRequests).toEqual([]);
+    expect(state.results.map((result) => result.type)).toEqual(["success"]);
+  });
 
   it("refreshes the worktree status when the metadata update is denied after checkout", async () => {
     state.scopes.add(AuthOrchestrationOperateScope);
@@ -349,7 +380,12 @@ describe("automatic feature branch refs", () => {
     );
     expect(await useSelectedThreadGitActions().refreshSelectedThreadBranches()).toBeNull();
     expect(state.results).toEqual([
-      { type: "error", title: "Git action failed", description: "Cannot list refs" },
+      {
+        threadRef: { environmentId: "environment", threadId: "thread" },
+        type: "error",
+        title: "Git action failed",
+        description: "Cannot list refs",
+      },
     ]);
   });
 });

@@ -1,14 +1,18 @@
 import {
-  worktreeSetupStageLabel,
+  type OrchestrationV2Run,
   type WorktreeSetupMachine,
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+import { worktreeSetupStageLabel } from "./contractLabels.ts";
 
 export function resolveVisibleWorktreeSetup(input: {
   live: WorktreeSetupSnapshot | null;
   recorded: WorktreeSetupSnapshot | null;
-  turnStarted: boolean;
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "startedAt">>;
   followUpSent: boolean;
 }): WorktreeSetupSnapshot | null {
   const snapshot =
@@ -19,7 +23,7 @@ export function resolveVisibleWorktreeSetup(input: {
   if (snapshot.phase === "running") return snapshot;
   if (input.followUpSent) return null;
   if (snapshot.phase !== "done") return snapshot;
-  if (!input.turnStarted) return snapshot;
+  if (!input.runs.some((run) => run.startedAt !== null)) return snapshot;
   return snapshot.stages.some((stage) => stage.status === "failed") ? snapshot : null;
 }
 
@@ -35,39 +39,50 @@ function setupScriptFailed(snapshot: WorktreeSetupSnapshot): boolean {
 }
 
 /** The setup's own words for where it is; a cloud launch speaks of its session, not a worktree. */
-export function worktreeSetupHeaderLabel(snapshot: WorktreeSetupSnapshot): string {
+export function worktreeSetupHeaderLabel(
+  snapshot: WorktreeSetupSnapshot,
+  resolve: MFunctionType = mFallback,
+): string {
   const cloud = snapshot.machine !== undefined;
   switch (snapshot.phase) {
     case "running":
-      return cloud ? "Starting cloud session…" : "Setting up worktree…";
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+      return cloud ? "Starting cloud session…" : resolve(msg("Setting up worktree…"));
     case "done":
       if (setupScriptFailed(snapshot)) {
         return cloud
-          ? "Cloud session ready, setup script failed"
-          : "Worktree ready, setup script failed";
+          ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+            "Cloud session ready, setup script failed"
+          : resolve(msg("Worktree ready, setup script failed"));
       }
-      return cloud ? "Cloud session ready" : "Worktree ready";
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+      return cloud ? "Cloud session ready" : resolve(msg("Worktree ready"));
     case "failed":
-      return cloud ? "Couldn't start cloud session" : "Worktree setup failed";
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+      return cloud ? "Couldn't start cloud session" : resolve(msg("Worktree setup failed"));
     case "cancelled":
-      return cloud ? "Cloud session cancelled" : "Worktree setup cancelled";
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+      return cloud ? "Cloud session cancelled" : resolve(msg("Worktree setup cancelled"));
   }
 }
 
 export function worktreeSetupStageTitle(
   snapshot: WorktreeSetupSnapshot,
   stage: WorktreeSetupStage,
+  resolve: MFunctionType = mFallback,
 ): string {
   if (stage.id === "setup-script" && snapshot.setupScript) return snapshot.setupScript.name;
   // A cloud fetch clones or restores the repository on the machine and checks it out.
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
   if (stage.id === "fetch" && snapshot.machine !== undefined) return "Prepare repository";
-  return worktreeSetupStageLabel(stage.id);
+  return worktreeSetupStageLabel(stage.id, resolve);
 }
 
 /** A stage's trailing text: checkout percent, where the code came from, or why it didn't run. */
 export function worktreeSetupStageDetail(
   snapshot: WorktreeSetupSnapshot,
   stage: WorktreeSetupStage,
+  resolve: MFunctionType = mFallback,
 ): string | null {
   switch (stage.status) {
     case "pending":
@@ -75,7 +90,10 @@ export function worktreeSetupStageDetail(
     case "skipped":
       return (
         stage.detail ??
-        (snapshot.phase === "cancelled" && stage.startedAt !== null ? "Cancelled" : "skipped")
+        (snapshot.phase === "cancelled" && stage.startedAt !== null
+          ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+            "Cancelled"
+          : resolve(msg("skipped", { $context: "worktree setup stage status" })))
       );
     case "running":
       return stage.id === "checkout" && stage.percent !== null ? `${stage.percent}%` : stage.detail;
@@ -111,12 +129,15 @@ export function worktreeSetupMachineRow(
     nowMs - Date.parse(machine.startedAt) >= WORKTREE_SETUP_SLOW_MACHINE_MS;
   return {
     status: machine.status,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
     label: machine.status === "waiting" ? "Waiting for a machine" : "Start machine",
     detail:
       machine.status === "skipped"
-        ? "Cancelled"
+        ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+          "Cancelled"
         : slow
-          ? "Taking longer than usual"
+          ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+            "Taking longer than usual"
           : machine.detail,
     note: machine.note,
     startedAt: machine.startedAt,

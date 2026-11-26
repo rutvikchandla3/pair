@@ -1,6 +1,6 @@
 /* oxlint-disable t3code/workspace-host-boundary -- routed in M3: the ACP runtime's client files and terminals */
 // @effect-diagnostics nodeBuiltinImport:off
-import type { ProviderRequestKind, RuntimeMode } from "@t3tools/contracts";
+import type { RuntimeMode } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -10,6 +10,7 @@ export interface AcpRuntimePolicy {
   readonly cwd: string | null;
   readonly approvalPolicy?: unknown;
   readonly sandboxPolicy?: unknown;
+  readonly workspace?: { readonly extraRoots: ReadonlyArray<string> } | undefined;
 }
 
 export type AcpPermissionDisposition = "allow" | "ask" | "deny";
@@ -112,15 +113,16 @@ function acpWorkspaceWriteAllowsMutation(
     const canonicalCwd = acpCanonicalPathForContainment(cwd);
     if (canonicalCwd !== undefined) roots.push(canonicalCwd);
   }
-  const writableRoots = sandboxPolicy.writableRoots;
-  if (Array.isArray(writableRoots)) {
-    for (const writableRoot of writableRoots) {
-      if (typeof writableRoot !== "string") continue;
-      const resolved = resolveAcpPermissionPath(writableRoot, cwd);
-      if (resolved === undefined) continue;
-      const canonicalRoot = acpCanonicalPathForContainment(resolved);
-      if (canonicalRoot !== undefined) roots.push(canonicalRoot);
-    }
+  const writableRoots = [
+    ...(Array.isArray(sandboxPolicy.writableRoots) ? sandboxPolicy.writableRoots : []),
+    ...(runtimePolicy.workspace?.extraRoots ?? []),
+  ];
+  for (const writableRoot of writableRoots) {
+    if (typeof writableRoot !== "string") continue;
+    const resolved = resolveAcpPermissionPath(writableRoot, cwd);
+    if (resolved === undefined) continue;
+    const canonicalRoot = acpCanonicalPathForContainment(resolved);
+    if (canonicalRoot !== undefined) roots.push(canonicalRoot);
   }
   if (roots.length === 0) return false;
 
@@ -223,7 +225,8 @@ export function acpClientExecuteDisposition(
 }
 
 export interface AcpApprovalGrantInput {
-  readonly kind: ProviderRequestKind;
+  /** The approved request's ACP tool kind, after ID-only requests take their tracked call's kind. */
+  readonly toolKind: string;
   readonly scope: "session" | "turn";
   readonly turnKey: string;
 }
@@ -233,13 +236,14 @@ export interface AcpClientPolicyGrants {
   readonly allowsExecute: (turnKey: string | null) => boolean;
 }
 
-/** ACP cannot link commands to terminals; command approvals grant execution for the turn or accepted session. */
+/** ACP cannot link commands to terminals; approved execute requests grant execution for the turn or accepted session. */
 export function makeAcpClientPolicyGrants(): AcpClientPolicyGrants {
   let sessionExecute = false;
   let turnExecute: string | null = null;
   return {
     recordApproval: (input) => {
-      if (input.kind !== "command") return;
+      // Other kinds also show as command cards, but approving them must not open terminals.
+      if (input.toolKind !== "execute") return;
       if (input.scope === "session") {
         sessionExecute = true;
       } else {

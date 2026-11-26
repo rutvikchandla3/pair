@@ -20,14 +20,23 @@ import { resolveSpawnCommand, type SpawnCommandOptions } from "@t3tools/shared/s
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/codexLaunchArgs.ts";
+import {
+  codexExecLaunchArgs,
+  codexMcpListLaunchArgs,
+  resolveCodexLaunchArgs,
+} from "../provider/codexLaunchArgs.ts";
 import type { CodexEffectiveRuntime } from "../provider/CodexManagedRuntime.ts";
+import { codexAppServerEnvironment } from "../provider/CodexProvider.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
-import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  codexModelFamily,
+  getModelSelectionStringOptionValue,
+  readCustomModelEntries,
+} from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
@@ -37,7 +46,10 @@ import { makeMachineInvestigationFor } from "./machineInvestigation.ts";
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
 // Plugins/apps add MCP servers; use trailing config overrides because --disable loses to user -c flags.
+// Codex also reads the legacy connectors key for apps.
 const CODEX_NO_PLUGIN_ARGS = [
+  "--config",
+  "features.connectors=false",
   "--config",
   "features.plugins=false",
   "--config",
@@ -62,6 +74,11 @@ const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
   names.length === 0
     ? null
     : `mcp_servers={${names.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`;
+// Codex splits -c keys at the first "=" and on every dot, so only those names take a dotted flag.
+const codexMcpServerOffFlags = (names: ReadonlyArray<string>) =>
+  names
+    .filter((name) => !name.includes(".") && !name.includes("="))
+    .flatMap((name) => ["--config", `mcp_servers.${name}.enabled=false`]);
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   instanceId: ProviderInstanceId,
@@ -271,50 +288,72 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         machine?.environment ?? resolved?.environment ?? environment ?? hostInfo.environment;
       const models = yield* getModels;
       const requestedModel = modelSelection.model;
-      const model =
+      const listed = models.filter((candidate) => !candidate.isCustom);
+      // An unlisted slug is one this account can't run, e.g. gpt-6-luna on a ChatGPT login.
+      const requestedFamily = codexModelFamily(requestedModel);
+      const matchedModel =
         models.find((candidate) => candidate.slug === requestedModel)?.slug ??
-        models.find(
-          (candidate) => !candidate.isCustom && codexModelFamily(candidate.slug) === requestedModel,
+        // Managed snapshots omit configured custom models; send those as requested.
+        readCustomModelEntries(codexConfig.customModels).find(
+          (entry) => entry.slug === requestedModel,
         )?.slug ??
+        listed.find((candidate) => codexModelFamily(candidate.slug) === requestedFamily)?.slug;
+      const model =
+        matchedModel ??
+        listed.find((candidate) => candidate.isDefault)?.slug ??
+        listed.find((candidate) => !candidate.isLegacy)?.slug ??
+        listed[0]?.slug ??
         requestedModel;
+      // The selection's options were chosen for the requested model and may not fit a fallback.
+      const fellBack = matchedModel === undefined && model !== requestedModel;
       const launchArgs = resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment);
       const reasoningEffort =
-        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
+        (fellBack
+          ? undefined
+          : getModelSelectionStringOptionValue(modelSelection, "reasoningEffort")) ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
-      const serviceTier = resolved ? undefined : getCodexServiceTierOptionValue(modelSelection);
+      const serviceTier =
+        resolved || fellBack ? undefined : getCodexServiceTierOptionValue(modelSelection);
       // A machine runs the image's pinned codex on its own home, never this server's.
       const binary = machine === undefined ? effectiveConfig.binaryPath || "codex" : "codex";
-      const env =
+      const env = codexAppServerEnvironment(
         machine?.environment ??
-        ({
-          ...effectiveEnvironment,
-          ...(effectiveConfig.homePath
-            ? {
-                CODEX_HOME: expandHomePath(effectiveConfig.homePath, hostInfo.homeDirectory),
-              }
-            : {}),
-        } satisfies NodeJS.ProcessEnv);
-      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
+          ({
+            ...effectiveEnvironment,
+            ...(effectiveConfig.homePath
+              ? {
+                  CODEX_HOME: expandHomePath(effectiveConfig.homePath, hostInfo.homeDirectory),
+                }
+              : {}),
+          } satisfies NodeJS.ProcessEnv),
+      );
       const facts =
         machine === undefined ? undefined : { platform: hostInfo.platform, environment: env };
-      const mcpServersOff = yield* listEnabledMcpServers({
+      const enabledMcpServers = yield* listEnabledMcpServers({
         spawner: host.spawner,
         binary,
         cwd: workingDirectory,
         env,
         facts,
-        // `codex mcp` rejects --strict-config; the overrides still apply.
-        launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
-      }).pipe(Effect.map(codexMcpServersOff));
+        launchArgs: codexMcpListLaunchArgs(launchArgs),
+      });
+      const mcpServersOff = codexMcpServersOff(enabledMcpServers);
+      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
+      // A launch-arg mcp_servers={...} table replaces ours and can re-enable dotted names.
+      const launchArgsSetMcpTable = execLaunchArgs.some((arg) => /\bmcp_servers\s*=/.test(arg));
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
           "exec",
+          // Before launch args: a later table would replace servers their -c flags define.
+          ...(mcpServersOff ? ["--config", mcpServersOff] : []),
           ...execLaunchArgs,
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
           ...(serverConfig.cloudOnly && investigate === undefined ? CODEX_NO_TOOL_ARGS : []),
-          ...(mcpServersOff ? ["--config", mcpServersOff] : []),
+          ...(mcpServersOff && launchArgsSetMcpTable ? ["--config", mcpServersOff] : []),
+          // After launch args, so a launch arg's enabled=true cannot turn a server back on.
+          ...codexMcpServerOffFlags(enabledMcpServers),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",
@@ -323,6 +362,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
+          // Current Codex gives hooks precedence over the historical codex_hooks alias.
+          "--config",
+          "features.codex_hooks=false",
+          "--config",
+          "features.hooks=false",
           ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,

@@ -17,7 +17,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { openSettings } from "../settings/settings-navigation";
 import { MachineNotice } from "../threads/ThreadMachineNotices";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import {
   type BranchOffStartFrom,
   branchOffInput,

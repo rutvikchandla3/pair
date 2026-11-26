@@ -101,10 +101,7 @@ effectDescribe("saveAndBuild", () => {
           install: "",
         },
       } as const;
-      const result = yield* Effect.promise(() =>
-        saveAndBuild.run(registry, { environmentId: env, input }),
-      );
-      expect(result._tag).toBe("Success");
+      yield* saveAndBuild.run(registry, { environmentId: env, input });
       expect(calls).toEqual([
         ["save", input],
         ["build", { recipeRevision: 8 }],

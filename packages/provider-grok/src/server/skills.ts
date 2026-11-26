@@ -1,4 +1,5 @@
 /* oxlint-disable t3code/workspace-host-boundary -- routed in M3: ACP flavors other than Replay run on the server's machine */
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 // The CLI catalog honors ignored/disabled skills and nested plugin skills that flat scans miss.
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { GrokSettings } from "../settings.ts";
@@ -113,7 +114,9 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
           cause,
         }),
     ),
-    Effect.timeoutOption(GROK_SKILLS_PROBE_TIMEOUT_MS),
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("grok", GROK_SKILLS_PROBE_TIMEOUT_MS, environment),
+    ),
   );
 
   if (Option.isNone(inspectResult)) {

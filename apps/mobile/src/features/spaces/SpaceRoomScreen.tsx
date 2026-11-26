@@ -31,13 +31,14 @@ import {
   type SpaceRoomEntry,
 } from "@t3tools/contracts";
 import { type ReactNode, useState } from "react";
+// oxlint-disable-next-line no-restricted-imports -- inverted chat list that pages older posts; needs LegendList's chat setup, not a drop-in swap
 import { FlatList, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { FilePreviewGallery } from "../../components/FilePreviewGallery";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
-import type { FilePreviewItem } from "../../components/FilePreviewModal.types";
+import { FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import type { FilePreviewItem } from "../../components/ui/FilePreviewModal.types";
 import { MemberAvatar } from "../../components/MemberAvatar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -59,6 +60,7 @@ import {
 } from "../../state/spaces";
 import { useTeamRoster } from "../../state/team";
 import { useQuietThreadStructure } from "../../state/use-thread-detail";
+import { environmentCatalog } from "../../connection/catalog";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { type SpacePost, SpaceComposer } from "./SpaceComposer";
@@ -77,6 +79,7 @@ type Params = { readonly environmentId: string; readonly spaceId: string };
 
 const roomVisitTracker = createThreadVisitTracker({
   threadShellAtom: environmentThreadShells.threadShellAtom,
+  sessionGenerationAtom: environmentCatalog.sessionGenerationAtom,
   visit: threadEnvironment.visit,
 });
 

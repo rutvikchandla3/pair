@@ -42,59 +42,86 @@ const layerTest = Layer.mergeAll(
 );
 
 it.layer(layerTest)("cloud-only dispatch", (it) => {
-  it.effect("refuses a prompt, a rollback and a retry on a local thread and records nothing", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const events = yield* EventStore.EventStoreV2;
-      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
-      const threadId = ThreadId.make("thread:cloud-only-local");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("create:cloud-only-local"),
-        threadId,
-        projectId: ProjectId.make("project:cloud-only"),
-        title: "Local thread",
-        modelSelection: { instanceId, model: "gpt-5" },
-        runtimeMode: "approval-required",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const sequence = yield* events.latestSequence();
-
-      for (const command of [
-        {
-          type: "message.dispatch",
-          commandId: CommandId.make("cloud-only:prompt"),
+  it.effect(
+    "refuses a prompt, a first message, a rollback and a retry on a local thread and records nothing",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventStore.EventStoreV2;
+        const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+        const threadId = ThreadId.make("thread:cloud-only-local");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create:cloud-only-local"),
           threadId,
-          messageId: MessageId.make("cloud-only:message"),
-          text: "Run the tests",
-          attachments: [],
-          dispatchMode: { type: "start_immediately" },
+          projectId: ProjectId.make("project:cloud-only"),
+          title: "Local thread",
+          modelSelection: { instanceId, model: "gpt-5" },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
           createdBy: "user",
           creationSource: "web",
-        },
-        {
-          type: "checkpoint.rollback",
-          commandId: CommandId.make("cloud-only:rollback"),
-          threadId,
-          scopeId: CheckpointScopeId.make("scope:cloud-only"),
-          checkpointId: CheckpointId.make("checkpoint:cloud-only"),
-        },
-        {
-          type: "prepared-run.retry",
-          commandId: CommandId.make("cloud-only:retry"),
-          threadId,
-          runId: RunId.make("run:cloud-only"),
-        },
-      ] as const) {
-        const refused = yield* Effect.flip(orchestrator.dispatch(command));
-        assert.equal(refused._tag, "OrchestratorLocalThreadReadOnlyError", command.type);
-        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(command.commandId)));
-      }
-      assert.equal(yield* events.latestSequence(), sequence);
-    }),
+        });
+        const sequence = yield* events.latestSequence();
+
+        for (const command of [
+          {
+            type: "message.dispatch",
+            commandId: CommandId.make("cloud-only:prompt"),
+            threadId,
+            messageId: MessageId.make("cloud-only:message"),
+            text: "Run the tests",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          },
+          {
+            type: "checkpoint.rollback",
+            commandId: CommandId.make("cloud-only:rollback"),
+            threadId,
+            scopeId: CheckpointScopeId.make("scope:cloud-only"),
+            checkpointId: CheckpointId.make("checkpoint:cloud-only"),
+          },
+          {
+            type: "prepared-run.retry",
+            commandId: CommandId.make("cloud-only:retry"),
+            threadId,
+            runId: RunId.make("run:cloud-only"),
+          },
+        ] as const) {
+          const refused = yield* Effect.flip(orchestrator.dispatch(command));
+          assert.equal(refused._tag, "OrchestratorLocalThreadReadOnlyError", command.type);
+          assert.isTrue(Option.isNone(yield* receipts.getByCommandId(command.commandId)));
+        }
+        // A first message riding on thread.create is a prompt too; the thread is not created.
+        const createWithMessage = CommandId.make("cloud-only:create-with-message");
+        const refusedCreate = yield* Effect.flip(
+          orchestrator.dispatch({
+            type: "thread.create",
+            commandId: createWithMessage,
+            threadId: ThreadId.make("thread:cloud-only-first-message"),
+            projectId: ProjectId.make("project:cloud-only"),
+            title: "Local thread with a first message",
+            modelSelection: { instanceId, model: "gpt-5" },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+            initialMessage: {
+              messageId: MessageId.make("cloud-only:first-message"),
+              text: "Run the tests",
+              attachments: [],
+            },
+          }),
+        );
+        assert.equal(refusedCreate._tag, "OrchestratorLocalThreadReadOnlyError");
+        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(createWithMessage)));
+        assert.equal(yield* events.latestSequence(), sequence);
+      }),
   );
 });

@@ -30,6 +30,12 @@ const isRepoRootTestRun = process.cwd() === import.meta.dirname;
 
 const RESTRICTED_IMPORT_PATHS = [
   {
+    name: "react-native",
+    importNames: ["FlatList"],
+    message:
+      "Use LegendList from @legendapp/list/react-native, with renderScrollComponent={NativeScrollView} in a screen. Pass whatever renderItem reads through extraData: rows only re-render when their item or extraData changes.",
+  },
+  {
     name: "@t3tools/client-runtime",
     message:
       "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
@@ -44,6 +50,12 @@ const RESTRICTED_IMPORT_PATHS = [
     importNames: ["ScrollViewMarker"],
     message:
       "Use NativeScrollViewMarker or NativeScrollView (src/native/NativeScrollViewMarker.tsx): they carry the header's scroll-edge blur under the Duo's vertical bar.",
+  },
+  {
+    name: "react-native",
+    importNames: ["RefreshControl"],
+    message:
+      "Use RefreshControl from src/components/ui/RefreshControl: Android bottom sheets own the pull at the top, so it steps aside there.",
   },
 ];
 
@@ -85,10 +97,149 @@ const taskCacheConfig = {
   ...(cacheUrl ? { remote: { url: cacheUrl } } : {}),
 };
 
+// Pair-only UI stays English; upstream UI stays translated. Regenerate on each upstream sync.
+const PAIR_ONLY_ENGLISH_FILES = [
+  "apps/mobile/src/components/MemberAvatar.tsx",
+  "apps/mobile/src/components/PairMark.tsx",
+  "apps/mobile/src/features/agent-awareness/memberPushRegistration.ts",
+  "apps/mobile/src/features/bots/**",
+  "apps/mobile/src/features/inbox/**",
+  "apps/mobile/src/features/layout/workspace/PullRequestToolbar.android.tsx",
+  "apps/mobile/src/features/lineage/**",
+  "apps/mobile/src/features/projects/AddProjectWorkspaceRoute.tsx",
+  "apps/mobile/src/features/settings/SettingsMachinesRouteScreen.tsx",
+  "apps/mobile/src/features/settings/SettingsTeamRouteScreen.tsx",
+  "apps/mobile/src/features/settings/TeamClaudeKeyCard.tsx",
+  "apps/mobile/src/features/settings/TeamMemberGitHub.tsx",
+  "apps/mobile/src/features/spaces/**",
+  "apps/mobile/src/features/threads/ContinueInCloudSheet.tsx",
+  "apps/mobile/src/features/threads/MessageAuthorName.tsx",
+  "apps/mobile/src/features/threads/PresenceWatch.tsx",
+  "apps/mobile/src/features/threads/ShareThreadSheet.tsx",
+  "apps/mobile/src/features/threads/StoppedMachineNotice.tsx",
+  "apps/mobile/src/features/threads/ThreadAccessChip.tsx",
+  "apps/mobile/src/features/threads/ThreadMachineNotices.tsx",
+  "apps/mobile/src/features/threads/ThreadViewerStack.tsx",
+  "apps/mobile/src/features/threads/ViewerLeaseWatch.tsx",
+  "apps/mobile/src/features/threads/new-task-cloud.ts",
+  "apps/mobile/src/features/threads/thread-machine-menu.ts",
+  "apps/mobile/src/features/threads/thread-team-menu.ts",
+  "apps/mobile/src/features/threads/workspace-repositories.ts",
+  "apps/mobile/src/lib/newTaskWorkspaceMode.ts",
+  "apps/mobile/src/state/bots.ts",
+  "apps/mobile/src/state/branch-lineage.ts",
+  "apps/mobile/src/state/inbox.ts",
+  "apps/mobile/src/state/presence.ts",
+  "apps/mobile/src/state/sandbox.ts",
+  "apps/mobile/src/state/spaces.ts",
+  "apps/mobile/src/state/team.ts",
+  "apps/mobile/src/state/teamImage.ts",
+  "apps/mobile/src/state/use-selected-thread-git-target.ts",
+  "apps/mobile/src/state/use-selected-thread-workspace.ts",
+  "apps/web/src/authReturnPath.ts",
+  "apps/web/src/components/ComputeDriverIcon.tsx",
+  "apps/web/src/components/NewWorkspaceDialog.tsx",
+  "apps/web/src/components/PairMark.tsx",
+  "apps/web/src/components/auth/PrimarySignOutWatch.tsx",
+  "apps/web/src/components/bots/**",
+  "apps/web/src/components/branchOff/**",
+  "apps/web/src/components/chat/ArchivedThreadBar.tsx",
+  "apps/web/src/components/chat/BotEmptyChat.tsx",
+  "apps/web/src/components/chat/ComposerTypingLine.tsx",
+  "apps/web/src/components/chat/botChat.ts",
+  "apps/web/src/components/chat/botTimeline.logic.ts",
+  "apps/web/src/components/inbox/**",
+  "apps/web/src/components/lineage/**",
+  "apps/web/src/components/sandbox/**",
+  "apps/web/src/components/settings/ApiTokenDialog.tsx",
+  "apps/web/src/components/settings/CloudMachines.tsx",
+  "apps/web/src/components/settings/CloudSettings.logic.ts",
+  "apps/web/src/components/settings/CloudSettings.tsx",
+  "apps/web/src/components/settings/DeviceCodePrompt.tsx",
+  "apps/web/src/components/settings/GitHubAppKeySettings.logic.ts",
+  "apps/web/src/components/settings/GitHubAppKeySettings.tsx",
+  "apps/web/src/components/settings/PairingLinkShare.tsx",
+  "apps/web/src/components/settings/RetentionControl.tsx",
+  "apps/web/src/components/settings/ScheduledTaskRunShare.tsx",
+  "apps/web/src/components/settings/SettingsEnvironmentPicker.tsx",
+  "apps/web/src/components/settings/TeamImageSettings.logic.ts",
+  "apps/web/src/components/settings/TeamImageSettings.tsx",
+  "apps/web/src/components/settings/WorkspaceRepositoriesSettings.tsx",
+  "apps/web/src/components/settings/usePairingShareEndpoints.ts",
+  "apps/web/src/components/sidebar/SidebarBots.tsx",
+  "apps/web/src/components/sidebar/SidebarSpaces.logic.ts",
+  "apps/web/src/components/sidebar/SidebarSpaces.tsx",
+  "apps/web/src/components/sidebar/SidebarThreadLineage.tsx",
+  "apps/web/src/components/spaces/**",
+  "apps/web/src/components/team/**",
+  "apps/web/src/components/terminal/TerminalStoppedNotice.tsx",
+  "apps/web/src/embed/**",
+  "apps/web/src/hooks/useContinueLocally.ts",
+  "apps/web/src/routes/_chat.bots.$environmentId.$botId.tsx",
+  "apps/web/src/routes/_chat.bots.tsx",
+  "apps/web/src/routes/_chat.branch-off.$environmentId.$sourceThreadId.tsx",
+  "apps/web/src/routes/_chat.inbox.tsx",
+  "apps/web/src/routes/_chat.my-tasks.tsx",
+  "apps/web/src/routes/_chat.settings.cloud.tsx",
+  "apps/web/src/routes/_chat.settings.team.tsx",
+  "apps/web/src/routes/_chat.shared.tsx",
+  "apps/web/src/routes/_chat.spaces.$environmentId.$spaceId.tsx",
+  "apps/web/src/routes/_chat.spaces.$environmentId.$spaceId_.tasks.$taskId.tsx",
+  "apps/web/src/spaceDialogStore.ts",
+  "apps/web/src/state/bots.ts",
+  "apps/web/src/state/branchLineage.ts",
+  "apps/web/src/state/inbox.ts",
+  "apps/web/src/state/presence.ts",
+  "apps/web/src/state/presenceActivity.ts",
+  "apps/web/src/state/sandbox.ts",
+  "apps/web/src/state/sandboxViewing.ts",
+  "apps/web/src/state/spaceAgent.ts",
+  "apps/web/src/state/spaces.ts",
+  "apps/web/src/state/team.ts",
+  "apps/web/src/state/teamImage.ts",
+  "apps/web/src/state/threadMove.ts",
+  "apps/web/src/state/workspaceRepositories.ts",
+  "apps/web/src/workspaceRepositoryStore.ts",
+  "packages/client-runtime/src/botIdentity.ts",
+  "packages/client-runtime/src/branchLineage.ts",
+  "packages/client-runtime/src/inbox.ts",
+  "packages/client-runtime/src/presenceReporting.ts",
+  "packages/client-runtime/src/sandboxViewing.ts",
+  "packages/client-runtime/src/spaceAgent.ts",
+  "packages/client-runtime/src/spaces.ts",
+  "packages/client-runtime/src/state/bots.ts",
+  "packages/client-runtime/src/state/branchLineage.ts",
+  "packages/client-runtime/src/state/cloudTarget.ts",
+  "packages/client-runtime/src/state/inbox.ts",
+  "packages/client-runtime/src/state/memberPush.ts",
+  "packages/client-runtime/src/state/presence.ts",
+  "packages/client-runtime/src/state/providerInstanceEntries.ts",
+  "packages/client-runtime/src/state/sandbox.ts",
+  "packages/client-runtime/src/state/shareThread.ts",
+  "packages/client-runtime/src/state/spaceAgent.ts",
+  "packages/client-runtime/src/state/spaces.ts",
+  "packages/client-runtime/src/state/team.ts",
+  "packages/client-runtime/src/state/teamClaudeKey.ts",
+  "packages/client-runtime/src/state/teamImage.ts",
+  "packages/client-runtime/src/state/threadMove.ts",
+  "packages/client-runtime/src/state/workspaces.ts",
+  "packages/client-runtime/src/teamClaudeKey.ts",
+  "packages/client-runtime/src/teamImagePresentation.ts",
+];
+
 export default defineConfig({
   run: {
     cache: taskCacheConfig,
-    tasks: cachedTestTasks(process.env.T3_CACHED_TESTS),
+    tasks: {
+      ...cachedTestTasks(process.env.T3_CACHED_TESTS),
+      // The two knip passes read the same files and write nothing, so they run side by side.
+      // The `knip:check` script runs this task, so `vp run knip:check` and `pnpm run knip:check` both use it.
+      "knip:check:all": {
+        command: 'node -e ""',
+        dependsOn: ["knip:check:files", "knip:check:exports"],
+        cache: false,
+      },
+    },
   },
   resolve: {
     alias: {
@@ -128,6 +279,7 @@ export default defineConfig({
       NodeURL.fileURLToPath(
         new URL("./packages/shared/src/testing/providerEnv.ts", import.meta.url),
       ),
+      NodeURL.fileURLToPath(new URL("./packages/shared/src/testing/gitEnv.ts", import.meta.url)),
     ],
     ...(isRepoRootTestRun
       ? {
@@ -177,6 +329,7 @@ export default defineConfig({
       // Vendored and generated C.
       "apps/mobile/modules/t3-highlights/Vendor/**",
       "apps/mobile/modules/t3-highlights/cpp/generated/**",
+      "apps/mobile/modules/t3-highlights/nitrogen/generated/**",
       "*.icon/**",
     ],
     sortPackageJson: {},
@@ -312,6 +465,12 @@ export default defineConfig({
         rules: { "t3code/prefer-effect-fn": "off" },
       },
       {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "apps/desktop/src/**"],
+        // Users still pick their own project icon from the full Lucide set.
+        excludeFiles: ["apps/web/src/projectIconOptions.ts"],
+        rules: { "t3code/no-sparkles-icon": "error" },
+      },
+      {
         files: ["apps/web/**/*.test.{ts,tsx}"],
         rules: { "t3code/require-disposable-render": "error" },
       },
@@ -403,27 +562,6 @@ export default defineConfig({
             {
               paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
               patterns: RESTRICTED_UI_VARIANT_PATTERNS,
-            },
-          ],
-        },
-      },
-      {
-        files: ["apps/mobile/src/features/**"],
-        rules: {
-          "eslint/no-restricted-imports": [
-            "error",
-            {
-              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
-              patterns: [
-                {
-                  group: [
-                    "**/components/ui/AndroidScreenHeader",
-                    "**/components/ui/WorkspaceAppBar*",
-                  ],
-                  importNames: ["AndroidScreenHeader", "WorkspaceAppBar"],
-                  message: "Use AppBar, so every screen gets the same header and button metrics.",
-                },
-              ],
             },
           ],
         },
@@ -542,7 +680,7 @@ export default defineConfig({
         files: ["apps/mobile/src/**"],
         excludeFiles: [
           "apps/mobile/src/components/ui/AppSymbol.tsx",
-          "apps/mobile/src/components/ui/AppSymbol.ios.tsx",
+          "apps/mobile/src/components/ui/AppSymbol.android.tsx",
           "apps/mobile/src/features/pull-requests/pullRequestGlyphs.ts",
         ],
         rules: { "t3code/no-mobile-pull-request-glyph-literals": "error" },
@@ -568,6 +706,10 @@ export default defineConfig({
       {
         files: ["apps/web/src/**"],
         rules: { "t3code/no-outset-state-indicators": "error" },
+      },
+      {
+        files: ["apps/web/src/**"],
+        rules: { "t3code/max-settings-description-length": "error" },
       },
       {
         files: ["apps/*/src/**", "packages/*/src/**"],
@@ -632,6 +774,21 @@ export default defineConfig({
           ],
         },
       },
+      // Registered always so a disable comment for intentional English counts as used.
+      // `vp run i18n:untranslated` counts what it flags.
+      {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "packages/client-runtime/src/**"],
+        excludeFiles: [
+          "**/*.{test,spec,bench}.{ts,tsx}",
+          "**/{test,testkit,testing,fixtures}/**",
+          "**/*.test-fixtures.ts",
+          "**/{test-fixtures,*TestFixtures}.ts",
+          "apps/mobile/src/features/development/**",
+          "packages/client-runtime/src/rpc/**",
+          ...PAIR_ONLY_ENGLISH_FILES,
+        ],
+        rules: { "t3code/no-untranslated-copy": "error" },
+      },
       {
         // React Compiler owns memoization; upstream rules do not ban redundant useMemo/useCallback.
         files: ["apps/web/src/**/*.{ts,tsx}"],
@@ -691,15 +848,17 @@ export default defineConfig({
           "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
           "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
           "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
+          "apps/mobile/src/features/layout/nested-stacks.tsx",
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
+          "apps/mobile/src/components/ComposerSurface.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
-          "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
+          "apps/mobile/src/components/ui/SecretTextInput.android.tsx",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",

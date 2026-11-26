@@ -29,16 +29,35 @@ interface WorkspaceRoots {
 export interface CaptureCheckpointInput extends WorkspaceRoots {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
-  /** Left at HEAD's version: an excluded change or untracked file is not captured. */
+  /** The checkpoint this one follows, so a turn that switched branches starts where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
+  /**
+   * Folders below `cwd` (relative, `/`-separated) that have their own checkpoints. Left at HEAD's
+   * version: an excluded change or untracked file is not captured.
+   */
   readonly excludePaths?: ReadonlyArray<string>;
   /** With roots: a repository that already holds the ref keeps it. Callers without roots check first. */
   readonly keepExisting?: boolean;
+}
+
+export interface CaptureHeadCheckpointInput {
+  readonly cwd: string;
+  readonly checkpointRef: CheckpointRef;
+  /** A commit `resolveCleanHead` returned for this folder. */
+  readonly head: string;
+  /**
+   * When the folder was seen clean, in epoch seconds, if that was earlier than now. Commits made
+   * after a checkpoint count as the turn's own work, so a late snapshot must not postdate them.
+   */
+  readonly seenAt?: number;
 }
 
 export interface RestoreCheckpointInput extends WorkspaceRoots {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  /** Folders below `cwd` the restore leaves as they are, as in a capture. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface DiffCheckpointsInput extends WorkspaceRoots {
@@ -52,6 +71,8 @@ export interface DiffCheckpointsInput extends WorkspaceRoots {
   readonly maxOutputBytes?: number;
   /** Limits the diff to these exact paths. An empty list yields an empty diff. */
   readonly filePaths?: ReadonlyArray<string>;
+  /** Folders below `cwd` left out of the diff, as in a capture. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface ListAuthoredPathsInput extends WorkspaceRoots {
@@ -93,6 +114,17 @@ export class CheckpointStore extends Context.Service<
     readonly captureRoots: (
       input: CaptureCheckpointInput & { readonly roots: ReadonlyArray<string> },
     ) => Effect.Effect<RootCommits, CheckpointStoreError>;
+
+    /**
+     * HEAD's commit when the folder matches it exactly: nothing staged, modified or untracked.
+     * Null otherwise. One status, where a capture stages the whole worktree.
+     */
+    readonly resolveCleanHead: (cwd: string) => Effect.Effect<string | null, CheckpointStoreError>;
+
+    /** Snapshots a folder that was clean at `head` from that commit, without reading its files. */
+    readonly captureHeadCheckpoint: (
+      input: CaptureHeadCheckpointInput,
+    ) => Effect.Effect<void, CheckpointStoreError>;
 
     /**
      * With roots: every root on disk holds the ref, and at least one root is on disk. A root
@@ -323,12 +355,15 @@ export const make = Effect.gen(function* () {
   const presentRoots = (cwd: string, roots: ReadonlyArray<string>) =>
     presentRootsWith(vcsRegistry, cwd, roots);
 
-  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd, roots) =>
-    roots === undefined
-      ? vcsRegistry
-          .detect({ cwd, requestedKind: "git" })
-          .pipe(Effect.map((repository) => repository !== null))
-      : presentRoots(cwd, roots).pipe(Effect.map((present) => present.length > 0));
+  // The registry reads an unreadable repository as none; ask Git again so that fails here.
+  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = Effect.fn(
+    "CheckpointStore.isGitRepository",
+  )(function* (cwd, roots) {
+    if (roots !== undefined) return (yield* presentRoots(cwd, roots)).length > 0;
+    if ((yield* vcsRegistry.detect({ cwd, requestedKind: "git" })) !== null) return true;
+    const git = yield* vcsRegistry.get("git");
+    return (yield* git.detectRepository(cwd)) !== null;
+  });
 
   const captureRoots: CheckpointStore["Service"]["captureRoots"] = Effect.fn("captureRoots")(
     function* (input) {
@@ -351,6 +386,10 @@ export const make = Effect.gen(function* () {
             .captureCheckpoint({
               cwd: root.cwd,
               checkpointRef: input.checkpointRef,
+              // A root added since the previous checkpoint lacks the ref; the driver then starts fresh.
+              ...(input.previousCheckpointRef === undefined
+                ? {}
+                : { previousCheckpointRef: input.previousCheckpointRef }),
               ...(input.excludePaths === undefined
                 ? {}
                 : { excludePaths: pathsUnderRoot(input.excludePaths, root.name) }),
@@ -390,6 +429,20 @@ export const make = Effect.gen(function* () {
       (root) => root.commitOid !== null,
     );
     return first?.commitOid ?? (yield* Effect.die("captureRoots captured no repository."));
+  });
+
+  const resolveCleanHead: CheckpointStore["Service"]["resolveCleanHead"] = Effect.fn(
+    "CheckpointStore.resolveCleanHead",
+  )(function* (cwd) {
+    const checkpoints = yield* resolveCheckpoints(cwd);
+    return yield* checkpoints.resolveCleanHead(cwd);
+  });
+
+  const captureHeadCheckpoint: CheckpointStore["Service"]["captureHeadCheckpoint"] = Effect.fn(
+    "CheckpointStore.captureHeadCheckpoint",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
+    return yield* checkpoints.captureHeadCheckpoint(input);
   });
 
   const hasCheckpointRef: CheckpointStore["Service"]["hasCheckpointRef"] = Effect.fn(
@@ -494,6 +547,8 @@ export const make = Effect.gen(function* () {
     presentRoots,
     captureCheckpoint,
     captureRoots,
+    resolveCleanHead,
+    captureHeadCheckpoint,
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,

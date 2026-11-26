@@ -4,6 +4,7 @@ import { ComposerControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { CloudIcon, FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
 import { memo, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { T, useGT, useMessages } from "gt-react";
 
 import {
   resolveCurrentWorkspaceLabel,
@@ -68,6 +69,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   cloudSize,
   machine,
 }: BranchToolbarEnvModeSelectorProps) {
+  const gt = useGT();
+  const m = useMessages();
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
@@ -84,7 +87,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
 
   if (envLocked || forcedWorktreeReason !== null) {
     const lockedLabel = withMachineSize(
-      resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode),
+      resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode, m),
       effectiveEnvMode === "cloud" ? cloudSize : null,
     );
     const lockedRow = (
@@ -102,7 +105,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           <FolderIcon className="size-3" />
         )}
         <ComposerContextLabel>
-          {forcedWorktreeReason !== null ? resolveEnvModeLabel("worktree") : lockedLabel}
+          {forcedWorktreeReason !== null ? resolveEnvModeLabel("worktree", m) : lockedLabel}
         </ComposerContextLabel>
       </span>
     );
@@ -110,7 +113,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     return (
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
-        <TooltipPopup>{forcedWorktreeReason ?? lockedLabel}</TooltipPopup>
+        <TooltipPopup>
+          {forcedWorktreeReason ??
+            (effectiveEnvMode !== "cloud" && activeWorktreePath ? activeWorktreePath : lockedLabel)}
+        </TooltipPopup>
       </Tooltip>
     );
   }
@@ -118,14 +124,14 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   const value = effectiveEnvMode === "cloud" ? (cloudItem?.value ?? "cloud") : effectiveEnvMode;
   const triggerLabel =
     effectiveEnvMode === "local"
-      ? resolveCurrentWorkspaceLabel(activeWorktreePath)
+      ? resolveCurrentWorkspaceLabel(activeWorktreePath, m)
       : effectiveEnvMode === "cloud"
         ? withMachineSize(
             cloudItem?.rows.find((row) => row.value === value)?.label ??
-              resolveEnvModeLabel("cloud"),
+              resolveEnvModeLabel("cloud", m),
             cloudSize,
           )
-        : resolveEnvModeLabel(effectiveEnvMode);
+        : resolveEnvModeLabel(effectiveEnvMode, m);
 
   return (
     <Menu modal={false}>
@@ -137,7 +143,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
                 <ComposerControl
                   size="xs"
                   className="min-w-0 shrink"
-                  aria-label="Workspace"
+                  aria-label={gt("Workspace")}
                   data-composer-shortcut="composer.workspace"
                   data-composer-context-control
                   onMouseDownCapture={stopContextMenuMouseDown}
@@ -159,10 +165,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         </TooltipTrigger>
         <TooltipPopup>
           {effectiveEnvMode === "local"
-            ? resolveCurrentWorkspaceLabel(activeWorktreePath)
+            ? resolveCurrentWorkspaceLabel(activeWorktreePath, m)
             : effectiveEnvMode === "cloud"
-              ? withMachineSize(resolveEnvModeLabel("cloud"), cloudSize)
-              : resolveEnvModeLabel(effectiveEnvMode)}
+              ? withMachineSize(resolveEnvModeLabel("cloud", m), cloudSize)
+              : resolveEnvModeLabel(effectiveEnvMode, m)}
           {shortcutLabel ? ` · ${shortcutLabel}` : null}
         </TooltipPopup>
       </Tooltip>
@@ -172,7 +178,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         className={showPreviousWorktree ? "w-[min(21rem,calc(100vw-2rem))]" : undefined}
       >
         <MenuGroup>
-          <MenuGroupLabel>Workspace</MenuGroupLabel>
+          <MenuGroupLabel>
+            <T>Workspace</T>
+          </MenuGroupLabel>
           <MenuRadioGroup
             value={value}
             onValueChange={(next: string) => {
@@ -195,14 +203,14 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
                       ) : (
                         <FolderIcon className="size-3" />
                       )}
-                      {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                      {resolveCurrentWorkspaceLabel(activeWorktreePath, m)}
                     </span>
                   </MenuRadioItem>
                 </CloudEnvModeTooltip>
                 <MenuRadioItem value="worktree" closeOnClick>
                   <span className="inline-flex items-center gap-1.5">
                     <FolderGit2Icon className="size-3" />
-                    {resolveEnvModeLabel("worktree")}
+                    {resolveEnvModeLabel("worktree", m)}
                   </span>
                 </MenuRadioItem>
               </>
@@ -242,6 +250,7 @@ export function CloudMachineMenuGroup({ machine }: { machine: CloudMachineChoice
     <>
       <MenuSeparator />
       <MenuGroup>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
         <MenuGroupLabel>Machine</MenuGroupLabel>
         <MenuRadioGroup
           value={machine.selected}
@@ -257,7 +266,9 @@ export function CloudMachineMenuGroup({ machine }: { machine: CloudMachineChoice
                 <span className="truncate text-muted-foreground">{machineSpecLabel(spec)}</span>
                 {spec.default ? (
                   <span className="ms-auto shrink-0 ps-2 text-muted-foreground text-xs">
+                    {/* oxlint-disable t3code/no-untranslated-copy -- Pair copy stays English */}
                     team default
+                    {/* oxlint-enable t3code/no-untranslated-copy */}
                   </span>
                 ) : null}
               </span>

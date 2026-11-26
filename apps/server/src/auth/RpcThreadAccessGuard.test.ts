@@ -135,6 +135,14 @@ it.effect("refuses unknown threads and machines, and paths that climb into anoth
     );
     expect(yield* read("/t3-sandbox/not-a-machine")).toBe("missing");
     expect(yield* read(`/t3-sandbox/${SHARED_SANDBOX}/repo`)).toBe("allowed");
+    const openInEditor = (projectRoot: string) =>
+      call(WS_METHODS.shellOpenInEditor, {
+        cwd: `/t3-sandbox/${SHARED_SANDBOX}/repo/a.ts`,
+        editor: "cursor",
+        projectRoot,
+      }).pipe(Effect.map(({ result }) => result));
+    expect(yield* openInEditor(`/t3-sandbox/${PRIVATE_SANDBOX}/repo`)).toBe("missing");
+    expect(yield* openInEditor(`/t3-sandbox/${SHARED_SANDBOX}/repo`)).toBe("allowed");
     // Local paths are 2.45's to confine, so a cloud-only server's own disk passes here.
     expect(yield* read("/home/carol/repo")).toBe("allowed");
     expect(yield* read("relative/repo")).toBe("allowed");

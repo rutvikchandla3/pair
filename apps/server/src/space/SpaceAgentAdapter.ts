@@ -1079,7 +1079,6 @@ export const make = Effect.gen(function* () {
       providerThread: ProviderAdapter.ProviderAdapterV2ThreadSnapshot["providerThread"],
     ): ProviderAdapter.ProviderAdapterV2ThreadSnapshot => ({
       providerThread,
-      providerTurns: [],
       messages: [],
       runtimeRequests: [],
     });

@@ -24,7 +24,7 @@ import {
   type SpacePostAttachments,
   type SpaceRoomEntry,
 } from "@t3tools/contracts";
-import { ArrowUpIcon, SparklesIcon, XIcon } from "lucide-react";
+import { ArrowUpIcon, BotIcon, XIcon } from "lucide-react";
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { cn, randomUUID } from "~/lib/utils";
@@ -34,7 +34,7 @@ import { useCanManageTeamClaudeKey, useTeamClaudeKeyStatus } from "../../state/s
 import { spaceEnvironment } from "../../state/spaces";
 import { useTeamMembers } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ComposerAttachButton } from "../chat/ComposerAttachmentStrip";
+import { ComposerAttachButton, ComposerAttachInput } from "../chat/ComposerAttachmentStrip";
 import { ComposerSurface } from "../chat/ComposerSurface";
 import { MemberAvatar } from "../team/MemberAvatar";
 import { TeamClaudeKeyDialog } from "../team/TeamClaudeKeyCard";
@@ -69,6 +69,7 @@ export function SpaceComposer(props: {
   const narrow = useMediaQuery("max-sm");
   const post = useAtomCommand(spaceEnvironment.post, "Post to space");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachInputRef = useRef<HTMLInputElement>(null);
   const keyStatus = useTeamClaudeKeyStatus(props.environmentId);
   const canManageKey = useCanManageTeamClaudeKey(props.environmentId);
   const pairReady = teamClaudeKeyIsSet(keyStatus);
@@ -323,7 +324,7 @@ export function SpaceComposer(props: {
                         onClick={() => choose(token)}
                       >
                         {token.mention.type === "pair" ? (
-                          <SparklesIcon className="size-5 text-input-foreground" />
+                          <BotIcon className="size-5 text-input-foreground" />
                         ) : (
                           <MemberAvatar
                             size="sm"
@@ -390,13 +391,15 @@ export function SpaceComposer(props: {
                 onKeyDown={onKeyDown}
               />
               <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
-                <ComposerAttachButton
+                <ComposerAttachInput
+                  ref={attachInputRef}
                   addComposerAttachments={async (files) => {
                     await addFiles(files);
                     return false;
                   }}
                   focusComposer={() => textareaRef.current?.focus()}
                 />
+                <ComposerAttachButton onOpenPicker={() => attachInputRef.current?.click()} />
                 <Button
                   size="xs"
                   variant={tagsPair ? "secondary" : "ghost-muted"}
@@ -404,7 +407,7 @@ export function SpaceComposer(props: {
                   disabled={!pairReady || tagsPair}
                   onClick={insertPair}
                 >
-                  <SparklesIcon />
+                  <BotIcon />
                   @pair
                 </Button>
                 <span

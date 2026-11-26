@@ -278,7 +278,7 @@ const sessionsHarness = (input: {
             ),
         }),
         Layer.mock(GitWorkflow.GitWorkflowService)({
-          isRepository: (cwd) => Effect.succeed(cwd === "/home/user/acme/app"),
+          repositoryRoot: (cwd) => Effect.succeed(cwd === "/home/user/acme/app" ? cwd : null),
           defaultBranch: () => Effect.succeed("main"),
         }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({

@@ -18,7 +18,8 @@ import * as NetAddress from "effect/net/NetAddress";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { acceptsPrivateNetworkConnection, formatHostForUrl } from "../../startupAccess.ts";
+import { formatHostForUrl } from "@t3tools/shared/hostClassification";
+import { acceptsPrivateNetworkConnection } from "../../startupAccess.ts";
 import { type DockerHost, parseDockerHost } from "../compute/DockerEngineApi.ts";
 import { RunnerBundle } from "./RunnerBundle.ts";
 import { RunnerHub } from "./RunnerHub.ts";

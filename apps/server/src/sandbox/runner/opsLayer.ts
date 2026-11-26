@@ -8,6 +8,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
@@ -55,6 +56,21 @@ const layerAgentSpawner = Layer.effect(
   }),
 );
 
+// The runner has no clients to hold leases or host-power state to respect, so its scans always run.
+const layerAlwaysActive = Layer.succeed(
+  BackgroundPolicy.BackgroundPolicy,
+  BackgroundPolicy.BackgroundPolicy.of({
+    // @effect-diagnostics-next-line effectFnOpportunity:off -- constant answers for a runner with no clients.
+    reportClientActivity: () => Effect.void,
+    // @effect-diagnostics-next-line effectFnOpportunity:off -- constant answers for a runner with no clients.
+    removeRpcClient: () => Effect.void,
+    snapshot: Effect.die("The sandbox runner keeps no background policy snapshot."),
+    // @effect-diagnostics-next-line effectFnOpportunity:off -- constant answers for a runner with no clients.
+    shouldRunScopeWork: () => Effect.succeed(true),
+    shouldRunOpportunisticWork: Effect.succeed(true),
+  }),
+);
+
 /**
  * The server services coarse operations run, against the sandbox's own disk. Every path is local
  * here, the sandbox root included. No server config, settings or database.
@@ -65,7 +81,10 @@ export const layer = Layer.mergeAll(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(WorkspaceReadGuard.layerUnconfined),
   ),
-  PortScanner.layerAllListeners.pipe(Layer.provide(FetchHttpClient.layer)),
+  PortScanner.layerAllListeners.pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(layerAlwaysActive),
+  ),
 ).pipe(
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(ProcessRunner.layer),

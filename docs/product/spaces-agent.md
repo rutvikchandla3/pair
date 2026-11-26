@@ -979,8 +979,8 @@ Docs to change when M1 lands:
     [06 Credentials and security](./cloud/06-credentials-and-security.md).
   - The Spaces design review and prototype screens (2026-11, v2 2026-11-13): room, task page, thread in a task, space
     settings and the empty space.
-- **Internals:** [overview](../internals/overview.md), [Effect services](../internals/effect-services.md),
-  [providers](../internals/providers.md) and [context handoffs](../internals/context-handoffs.md).
+- **Internals:** [overview](../internals/01_architecture.md), [Effect services](../internals/02_effect-services.md),
+  [providers](../internals/03_providers.md) and [context handoffs](../internals/01_architecture.md#pair-cloud-and-workspace-hosts).
 - **Code:**
   - `apps/server/src/orchestration-v2/`: Orchestrator.ts, CommandPolicy.ts, ThreadMessageIntake.ts,
     HumanAuthorship.ts, EffectWorker.ts, EventSink.ts, ThreadSearch.ts, messageSearchIndex.ts,

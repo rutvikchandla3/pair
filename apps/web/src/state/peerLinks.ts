@@ -7,23 +7,31 @@ import {
   offersAgentLink,
   offersLinkedEnvironments,
 } from "@t3tools/client-runtime/link-request";
-import { createPeerLinkEnvironmentAtoms } from "@t3tools/client-runtime/state/peerLinks";
+import { linkBackOffer, type LinkBackOffer } from "@t3tools/client-runtime/link-batch";
+import {
+  createPeerLinkEnvironmentAtoms,
+  linkThroughRoutes,
+} from "@t3tools/client-runtime/state/peerLinks";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   type AuthMcpClientAccess,
   type EnvironmentId,
   type PeerLink,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 import { Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent } from "react";
 
+import { useNowMinute } from "../hooks/useNowMinute";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { mintPairingCodeOn } from "./peerPairingCode";
+import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { useEnvironmentIdentities, useEnvironments } from "./environments";
 import { environmentPresentations } from "./presentation";
 import { relayEnvironmentDiscovery } from "./relay";
@@ -32,6 +40,11 @@ import { useEnvironmentsWithScope } from "./session";
 import { useAtomCommand } from "./use-atom-command";
 
 export const peerLinkEnvironment = createPeerLinkEnvironmentAtoms(connectionAtomRuntime);
+
+/** Each environment's link list as the settings list loads it, in the order of the ids. */
+export const peerLinkListsAtom = environmentAtomList("peer-links:lists", (environmentId) =>
+  peerLinkEnvironment.list({ environmentId, input: {} }),
+);
 
 /** Whether `environmentId` offers links, so its threads may name another machine. */
 export const offersLinkedEnvironmentsAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -44,8 +57,7 @@ const offersNoLinksAtom = Atom.make(false).pipe(Atom.withLabel("peer-links:offer
 
 /**
  * The machines `environmentId` links to, by name, while it offers links, and none otherwise.
- * Its agents can read threads there. Listing asks each linked machine whether it answers, so
- * every caller shares one briefly cached list.
+ * Its agents can read threads there, and so can a client allowed to read threads on it.
  */
 export function useLinkedEnvironments(
   environmentId: EnvironmentId | null,
@@ -56,7 +68,7 @@ export function useLinkedEnvironments(
   const identities = useEnvironmentIdentities();
   const links = useEnvironmentQuery(
     offered && environmentId !== null
-      ? peerLinkEnvironment.list({ environmentId, input: {} })
+      ? peerLinkEnvironment.names({ environmentId, input: {} })
       : null,
   );
   return linkedEnvironmentNames({
@@ -130,6 +142,7 @@ export function useLinkMachine(hostEnvironmentId: EnvironmentId) {
     if (url === undefined) {
       return Result.fail({
         minting: false,
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
         message: `This app has no address for ${machine.label} that another machine can reach.`,
       });
     }
@@ -153,5 +166,97 @@ export function useLinkMachine(hostEnvironmentId: EnvironmentId) {
       minting: false,
       message: isAtomCommandInterrupted(linked) ? null : String(squashAtomCommandFailure(linked)),
     });
+  };
+}
+
+/**
+ * The machines `sourceId` can link to through another environment's full-access link, by
+ * environment id. Reads those environments' links only while `enabled`: listing them asks every
+ * linked machine whether it answers.
+ */
+export function useLinkThroughRoutes(sourceId: EnvironmentId, enabled: boolean) {
+  const { environments } = useEnvironments();
+  const writable = useEnvironmentsWithScope(environments, AuthAccessWriteScope);
+  const nowMinute = useNowMinute();
+  const hosts = environments
+    .filter(
+      (environment) =>
+        enabled &&
+        environment.environmentId !== sourceId &&
+        environment.connection.phase === "connected" &&
+        offersLinkedEnvironments(environment.serverConfig) &&
+        writable.has(environment.environmentId),
+    )
+    .map((environment) => environment.environmentId);
+  const lists = useAtomValue(peerLinkListsAtom(environmentIdsKey(hosts)));
+  return linkThroughRoutes({
+    sourceEnvironmentId: sourceId,
+    hosts: hosts.map((environmentId, index) => {
+      const list = lists[index];
+      return { environmentId, links: list?._tag === "Success" ? list.value.links : [] };
+    }),
+    now: DateTime.makeUnsafe(nowMinute),
+  });
+}
+
+const NOT_OFFERED: LinkBackOffer = { kind: "hidden" };
+
+/**
+ * Whether linking `sourceId` to each of `targetIds` can also link that machine back, and the
+ * source as the reverse link names it. Only machines that could link back are asked for their
+ * links, and only while `enabled`: listing asks every machine they link to whether it answers.
+ */
+export function useLinkBackOffers(
+  sourceId: EnvironmentId,
+  targetIds: ReadonlyArray<EnvironmentId>,
+  enabled: boolean,
+) {
+  const { environments } = useEnvironments();
+  const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
+  const writable = useEnvironmentsWithScope(environments, AuthAccessWriteScope);
+  const source = linkableMachines({
+    environments,
+    threadEnvironmentId: null,
+    links: [],
+    connect: discovery.environments,
+  }).find((machine) => machine.environmentId === sourceId);
+  const wanted = new Set(targetIds);
+  const targets = environments.filter((environment) => wanted.has(environment.environmentId));
+  const listed = targets
+    .filter(
+      (target) =>
+        enabled &&
+        target.connection.phase === "connected" &&
+        offersLinkedEnvironments(target.serverConfig) &&
+        writable.has(target.environmentId),
+    )
+    .map((target) => target.environmentId);
+  const lists = useAtomValue(peerLinkListsAtom(environmentIdsKey(listed)));
+  const offers = new Map<EnvironmentId, LinkBackOffer>();
+  for (const target of targets) {
+    if (source === undefined) break;
+    const list = lists[listed.indexOf(target.environmentId)];
+    offers.set(
+      target.environmentId,
+      linkBackOffer({
+        source: {
+          environmentId: sourceId,
+          connected: source.connected,
+          writable: writable.has(sourceId),
+          urls: source.urls,
+        },
+        target: {
+          connected: target.connection.phase === "connected",
+          offersLinks: offersLinkedEnvironments(target.serverConfig),
+          writable: writable.has(target.environmentId),
+          links: list?._tag === "Success" ? list.value.links : null,
+        },
+      }),
+    );
+  }
+  return {
+    source: source ?? null,
+    offerFor: (targetId: EnvironmentId | null): LinkBackOffer =>
+      (targetId === null ? undefined : offers.get(targetId)) ?? NOT_OFFERED,
   };
 }

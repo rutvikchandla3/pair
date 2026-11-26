@@ -1,8 +1,7 @@
 import type { SourceControlSignInPrompt } from "@t3tools/contracts";
-import { Check, Copy } from "lucide";
-import { ExternalLinkIcon } from "lucide-react";
+import { msg, T, useGT, Var } from "gt-react";
+import { CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 
-import { MorphIcon } from "~/components/MorphIcon";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 
@@ -35,9 +34,14 @@ function DeviceCode(props: { readonly code: string }) {
 
 /** A GitHub device-flow code to copy, and the page to enter it on. */
 export function DeviceCodePrompt({ prompt }: { readonly prompt: SourceControlSignInPrompt }) {
+  const gt = useGT();
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     timeout: 1500,
-    target: "sign-in code",
+    target: {
+      target: "sign-in code",
+      unavailableMessage: msg("Clipboard API is unavailable while copying sign-in code."),
+      failureMessage: msg("Failed to copy sign-in code to the clipboard."),
+    },
   });
   return (
     // Sized by its container: the /pair card is narrower than the `sm` viewport breakpoint implies.
@@ -48,10 +52,10 @@ export function DeviceCodePrompt({ prompt }: { readonly prompt: SourceControlSig
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Copy code"
+            aria-label={gt("Copy code")}
             onClick={() => copyToClipboard(prompt.userCode, undefined)}
           >
-            <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+            {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
           </Button>
         </div>
         <div className="grid gap-2 @2xl:justify-items-end">
@@ -60,12 +64,14 @@ export function DeviceCodePrompt({ prompt }: { readonly prompt: SourceControlSig
             render={<a href={prompt.verificationUri} target="_blank" rel="noreferrer noopener" />}
             onClick={() => copyToClipboard(prompt.userCode, undefined)}
           >
-            Copy code & open GitHub
+            <T>Copy code & open GitHub</T>
             <ExternalLinkIcon aria-hidden className="size-3.5" />
           </Button>
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span aria-hidden className="size-1.5 rounded-full bg-warning" />
-            Waiting for approval · code expires at {expiryTime(prompt.expiresAt)}
+            <T>
+              Waiting for approval · code expires at <Var>{expiryTime(prompt.expiresAt)}</Var>
+            </T>
           </p>
         </div>
       </div>

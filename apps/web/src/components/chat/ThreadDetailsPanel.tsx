@@ -7,24 +7,31 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import { summarizeWorkspaceRepository } from "@t3tools/client-runtime/state/workspaces";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import {
+  summarizeWorkspaceRepository,
+  workspaceRepositoryForPullRequest,
+} from "@t3tools/client-runtime/state/workspaces";
 
-import type { DraftId } from "../../composerDraftStore";
+import type { ComposerThreadTarget, DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
-import BaseGitActionsControl from "../GitActionsControl";
+import GitActionsControl from "../GitActionsControl";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { memo, useState, type ComponentProps } from "react";
+import { T, useGT } from "gt-react";
+import { useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadRepositorySections } from "./ThreadRepositorySections";
 import { ThreadServersPanel } from "./ThreadServersPanel";
 import {
   ThreadDetailsContext,
@@ -38,6 +45,10 @@ import {
   selectWorkspaceRepository,
   type WorkspaceRepositoriesState,
 } from "../../state/workspaceRepositories";
+import { useProject, useProjects, useServerConfigs } from "../../state/entities";
+import { filesystemEnvironment } from "../../state/filesystem";
+import { useEnvironmentQuery } from "../../state/query";
+import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 import { cn } from "../../lib/utils";
 import { CheckIcon, FolderGitIcon, SlidersHorizontalIcon } from "lucide-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -46,8 +57,6 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
-
-const GitActionsControl = memo(BaseGitActionsControl);
 
 interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
@@ -60,6 +69,7 @@ interface ThreadDetailsPanelProps extends Pick<
   worktreePath: string | null;
   isServerThread: boolean;
   draftId?: DraftId;
+  composerDraftTarget: ComposerThreadTarget;
   activeProjectName: string | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -70,9 +80,12 @@ interface ThreadDetailsPanelProps extends Pick<
   gitCwd: string | null;
   /** Where "Open in" opens: the selected repository for a workspace thread. */
   openInCwd: string | null;
+  workspaceMutationId: string | null;
   isGitRepo: boolean;
   /** A workspace thread's repositories; null for a thread in a single repository. */
   workspace: WorkspaceRepositoriesState | null;
+  /** False when no worktree can come from this folder, so it offers no workspace modes. */
+  offersWorkspaceModes: boolean;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -99,6 +112,7 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const gt = useGT();
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
@@ -109,8 +123,44 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const selectedRepository = workspace?.selected ?? null;
   // A workspace thread's git controls act on its selected repository, once its folder exists.
   const gitCwd = workspace ? (selectedRepository?.cwd ?? null) : props.gitCwd;
+  const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
+  const serverConfig = useServerConfigs().get(props.environmentId);
+  const tracksFolders = (project?.trackedFolders?.length ?? 0) > 0;
+  // A worktree thread reaches tracked repositories only through its own task folder.
+  const taskFolderQuery = useEnvironmentQuery(
+    // Asked whatever the project tracks now: a thread keeps its task folder when that changes.
+    props.isServerThread && props.worktreePath !== null
+      ? filesystemEnvironment.taskFolder({
+          environmentId: props.environmentId,
+          input: { worktreePath: props.worktreePath },
+        })
+      : null,
+  );
+  const taskFolder = taskFolderQuery.data?.taskFolder ?? null;
+  // A task folder's plain project directory can sit inside someone else's repository.
+  const folderIsRepo = props.isGitRepo && taskFolder?.projectIsWorktree !== false;
+  // A No project thread's folder sits inside the shared scratch root, so it must never get git.
+  // Until the config and project load, a No project thread looks like any other folder.
+  const offersGit =
+    gitCwd !== null &&
+    serverConfig !== undefined &&
+    project !== null &&
+    !isScratchProject(project, serverConfig.scratchWorkspaceRoot);
+  const projects = useProjects();
+  // Each repository's branch row shows its own pull requests; the rest still need a row.
+  const rootProjects =
+    workspace === null
+      ? []
+      : (project?.roots ?? []).flatMap((root) =>
+          projects.filter(
+            (candidate) =>
+              candidate.environmentId === props.environmentId && candidate.id === root.projectId,
+          ),
+        );
+  const keepUnmatchedPullRequest = (link: { readonly repository: string }) =>
+    workspaceRepositoryForPullRequest(link, rootProjects) === undefined;
   const branchToolbarProps = {
-    showGitControls: props.isGitRepo,
+    showGitControls: folderIsRepo,
     environmentId: props.environmentId,
     threadId: props.threadId,
     projectId: props.projectId,
@@ -169,11 +219,18 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
           scripts: visible.scripts && props.activeProjectScripts !== undefined,
-          branch: gitCwd !== null && props.isGitRepo && visible.branch,
+          branch: offersGit && folderIsRepo && visible.branch,
+          // Without a branch selector, linked pull requests still need somewhere to show.
+          pullRequests: workspace === null && !(offersGit && folderIsRepo) && visible.branch,
+          // A plain folder that tracks repositories is not asked to become one itself.
           git:
-            gitCwd !== null &&
+            offersGit &&
             props.activeProjectName !== undefined &&
-            (visible.gitActions || (visible.changes && props.isGitRepo)),
+            (folderIsRepo || (!tracksFolders && taskFolder === null)) &&
+            (visible.gitActions || (visible.changes && folderIsRepo)),
+          // Also for a project that tracks nothing: a thread can change a submodule.
+          repositories:
+            workspace === null && offersGit && density !== "essential" && visible.gitActions,
         };
         return (
           <>
@@ -181,7 +238,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {show.environment || show.openIn || show.scripts ? (
                 <ThreadDetailsSection
                   headingId="thread-details-workspace-heading"
-                  title="Workspace"
+                  title={gt("Workspace")}
                   separated={false}
                   showHeading={false}
                 >
@@ -197,6 +254,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         autoEnvironmentLabel={props.autoEnvironmentLabel}
                         onAutoEnvironment={props.onAutoEnvironment}
                         {...branchToolbarProps}
+                        // Workspace modes follow the composer's rule, not this folder's own status.
+                        showGitControls={props.offersWorkspaceModes}
                       />
                     ) : null}
 
@@ -231,17 +290,26 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {workspace !== null && (visible.branch || visible.gitActions) ? (
                 <ThreadDetailsSection
                   headingId="thread-details-repositories-heading"
+                  // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
                   title="Repositories"
                   separated={density === "full"}
                 >
                   <WorkspaceRepositories workspace={workspace} />
+                  {visible.branch ? (
+                    <ThreadDetailsThreadPrRows
+                      threadRef={activeThreadRef}
+                      project={project}
+                      composerTarget={props.composerDraftTarget}
+                      keepPullRequest={keepUnmatchedPullRequest}
+                    />
+                  ) : null}
                 </ThreadDetailsSection>
               ) : null}
 
-              {gitCwd && (show.branch || show.git) ? (
+              {show.branch || show.pullRequests || show.git || show.repositories ? (
                 <ThreadDetailsSection
                   headingId="thread-details-version-control-heading"
-                  title={selectedRepository?.name ?? "Version Control"}
+                  title={selectedRepository?.name ?? gt("Version Control")}
                   showHeading={selectedRepository !== null}
                   separated={density === "full" || selectedRepository !== null}
                 >
@@ -249,12 +317,21 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     {show.branch ? (
                       <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                     ) : null}
-                    {show.git ? (
+                    {show.pullRequests ? (
+                      <ThreadDetailsThreadPrRows
+                        threadRef={activeThreadRef}
+                        project={project}
+                        composerTarget={props.composerDraftTarget}
+                      />
+                    ) : null}
+                    {show.git && gitCwd ? (
                       <GitActionsControl
                         compact={density !== "full"}
                         showActions={visible.gitActions}
                         showChanges={visible.changes}
                         gitCwd={gitCwd}
+                        name={props.activeProjectName ?? ""}
+                        workspaceMutationId={props.workspaceMutationId}
                         activeThreadRef={activeThreadRef}
                         {...(workspace && selectedRepository
                           ? {
@@ -267,6 +344,22 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                           : {})}
                         {...(props.draftId ? { draftId: props.draftId } : {})}
                         {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                      />
+                    ) : null}
+                    {show.repositories ? (
+                      <ThreadRepositorySections
+                        environmentId={props.environmentId}
+                        threadId={props.threadId}
+                        projectId={props.projectId}
+                        isServerThread={props.isServerThread}
+                        threadCwd={props.gitCwd}
+                        taskFolder={taskFolder}
+                        reachesTracked={
+                          props.worktreePath === null ? tracksFolders : taskFolder !== null
+                        }
+                        onTaskFolderChange={taskFolderQuery.refresh}
+                        explainsEmpty={!folderIsRepo}
+                        showActions={visible.gitActions}
                       />
                     ) : null}
                   </div>
@@ -313,7 +406,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 >
                   <SlidersHorizontalIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
                   <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                    Choose what to show
+                    <T>Choose what to show</T>
                   </span>
                 </ThreadDetailsControl>
               </div>
@@ -349,7 +442,9 @@ function WorkspaceRepositories({ workspace }: { workspace: WorkspaceRepositories
   if (workspace.repositories.length === 0) {
     return (
       <p className="px-2.5 py-1 text-muted-foreground text-xs">
+        {/* oxlint-disable t3code/no-untranslated-copy -- Pair copy stays English */}
         Each repository gets its own worktree when the thread starts.
+        {/* oxlint-enable t3code/no-untranslated-copy */}
       </p>
     );
   }

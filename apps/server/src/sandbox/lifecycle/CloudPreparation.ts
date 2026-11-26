@@ -396,7 +396,8 @@ const cloneTarget = Effect.fn("CloudPreparation.cloneTarget")(function* (input: 
 });
 
 const isCheckout = (cwd: string) =>
-  GitWorkflow.GitWorkflowService.use((git) => git.isRepository(cwd)).pipe(
+  GitWorkflow.GitWorkflowService.use((git) => git.repositoryRoot(cwd)).pipe(
+    Effect.map((root) => root !== null),
     Effect.orElseSucceed(() => false),
   );
 

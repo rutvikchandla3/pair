@@ -30,7 +30,7 @@ import { useSpaceList } from "~/state/spaces";
 import { useCurrentMemberId, useTeamMembers } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
-import { searchableSetting } from "../settings/settingsSearch";
+import { useSearchableSetting } from "../settings/settingsSearch";
 import { useSpaceComposerDraftStore } from "../spaces/spaceComposerDraftStore";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -196,6 +196,7 @@ function RemoveKeyDialog(props: {
 
 /** Settings → Team: the key that pays for @pair, and who to ask when it's missing. */
 export function TeamClaudeKeyCard(props: { readonly environmentId: EnvironmentId }) {
+  const searchableSetting = useSearchableSetting();
   const { environmentId } = props;
   const status = useTeamClaudeKeyStatus(environmentId);
   const canManage = useCanManageTeamClaudeKey(environmentId);

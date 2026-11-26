@@ -13,6 +13,9 @@ import type {
 import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 
 import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
 
@@ -33,17 +36,16 @@ export async function checkoutNewTaskBranch<E>(input: {
 }): Promise<AtomCommandResult<VcsRef, E | Error>> {
   if (!input.project) {
     return AsyncResult.failure(
-      Cause.fail(new Error("The selected project is unavailable. Reconnect and try again.")),
+      Cause.fail(
+        new Error(m(msg("The selected project is unavailable. Reconnect and try again."))),
+      ),
     );
   }
   // Worktree and Cloud base a new branch on it; only Current checkout switches to it.
-  if (input.workspaceMode !== "local" || input.branch.current) {
-    return AsyncResult.success(
-      input.branch.current ? { ...input.branch, worktreePath: null } : input.branch,
-    );
-  }
+  if (input.workspaceMode !== "local") return AsyncResult.success(input.branch);
 
-  // Remote refs omit local worktrees, and historical thread metadata can be stale.
+  // The picked ref's current flag, remote refs' missing worktrees and historical
+  // thread metadata can all be stale, so Git is asked again before choosing.
   const localName = localBranchName(input.branch);
   let cursor: number | undefined;
   for (;;) {
@@ -69,7 +71,11 @@ export async function checkoutNewTaskBranch<E>(input: {
         return AsyncResult.failure(
           Cause.fail(
             new Error(
-              "The server did not report whether this project is at the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
+              m(
+                msg(
+                  "The server did not report whether this project is at the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
+                ),
+              ),
             ),
           ),
         );
@@ -78,7 +84,11 @@ export async function checkoutNewTaskBranch<E>(input: {
         return AsyncResult.failure(
           Cause.fail(
             new Error(
-              "This project is a repository subdirectory. Choose another branch or add the repository root as a project to reuse this worktree.",
+              m(
+                msg(
+                  "This project is a repository subdirectory. Choose another branch or add the repository root as a project to reuse this worktree.",
+                ),
+              ),
             ),
           ),
         );

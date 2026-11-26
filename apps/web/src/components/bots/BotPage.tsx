@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { BotsError, type BotAskId, type EnvironmentId, type RunId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
@@ -8,7 +9,7 @@ import {
   PauseIcon,
   PencilIcon,
   PlayIcon,
-  SparklesIcon,
+  BotIcon,
   Trash2Icon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
@@ -62,7 +63,7 @@ import {
 
 const isBotsError = Schema.is(BotsError);
 
-const EMBEDDED_PANEL: SideChatParentPanel = {
+const EMBEDDED_PANEL: Omit<SideChatParentPanel, "hostRef"> = {
   openToolDiff: () => {},
   runShellCommand: () => {},
 };
@@ -248,7 +249,7 @@ export function BotPage(props: {
           onPressedChange={setMemoryOpen}
           aria-label="Memory"
         >
-          <SparklesIcon />
+          <BotIcon />
           Memory
         </Toggle>
         <Menu>
@@ -305,7 +306,10 @@ export function BotPage(props: {
                   environmentId={props.environmentId}
                   threadId={bot.homeThreadId}
                   routeKind="server"
-                  embedded={EMBEDDED_PANEL}
+                  embedded={{
+                    ...EMBEDDED_PANEL,
+                    hostRef: scopeThreadRef(props.environmentId, bot.homeThreadId),
+                  }}
                   bot={{ identity: bot, focus }}
                 />
               </ComposerHandleContext>

@@ -18,6 +18,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import { holderOf } from "./MemberThreadState.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -81,17 +82,7 @@ export class RuntimePolicyV2 extends Context.Service<RuntimePolicyV2, RuntimePol
   "t3/orchestration-v2/RuntimePolicy/RuntimePolicyV2",
 ) {}
 
-export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2, {
-  resolve: Effect.fn("RuntimePolicyV2.resolve")(function (input) {
-    return Effect.succeed({
-      runtimeMode: input.thread.runtimeMode,
-      interactionMode: input.thread.interactionMode,
-      cwd: input.thread.worktreePath,
-    });
-  }),
-});
-
-function providerRuntimeMode(
+export function providerRuntimeMode(
   runtimeMode: RuntimeMode,
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
 ): RuntimeMode {
@@ -146,10 +137,12 @@ export const layerFromProjectStore: Layer.Layer<
   | ProjectStore.ProjectStoreV2
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ServerSettings.ServerSettingsService
+  | WorkspaceFolders.WorkspaceFolders
 > = Layer.effect(
   RuntimePolicyV2,
   Effect.gen(function* () {
     const projects = yield* ProjectStore.ProjectStoreV2;
+    const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     // The same ceiling the orchestrator enforces, fixed for the server's life.
     const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
@@ -210,6 +203,24 @@ export const layerFromProjectStore: Layer.Layer<
             : yield* projections.value
                 .slotFor(input.thread.id)
                 .pipe(Effect.orElseSucceed(() => null));
+        // Tracked folders live on the server's own disk: a machine's threads and a workspace
+        // thread's roots never have them.
+        const workspace =
+          input.thread.sandboxId !== undefined || input.thread.roots !== undefined
+            ? undefined
+            : yield* workspaceFolders
+                .forThread({
+                  projectId: input.thread.projectId,
+                  worktreePath: input.thread.worktreePath,
+                })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning(
+                      "Could not resolve the thread's tracked folders.",
+                      cause,
+                    ).pipe(Effect.as(undefined)),
+                  ),
+                );
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
@@ -217,6 +228,7 @@ export const layerFromProjectStore: Layer.Layer<
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
           ...(gitAuthor === undefined ? {} : { gitAuthor }),
           ...(threadSlot === null ? {} : { threadSlot }),
+          ...(workspace === undefined || workspace.folders.length === 0 ? {} : { workspace }),
         });
       }),
     });

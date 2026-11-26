@@ -6,6 +6,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Duration from "effect/Duration";
@@ -33,6 +34,7 @@ import * as WorkspaceHostTesting from "../../apps/server/src/workspaceHost/Works
 const { values } = NodeUtil.parseArgs({
   options: {
     model: { type: "string" },
+    case: { type: "string", multiple: true },
     out: { type: "string" },
     baseline: { type: "string" },
     initial: { type: "boolean", default: false },
@@ -40,6 +42,11 @@ const { values } = NodeUtil.parseArgs({
 });
 if (!values.model || !values.out)
   throw new Error("Use --model <configured-model> --out <directory>.");
+for (const id of values.case ?? []) {
+  if (!threadTitleEvaluationCases.some((fixture) => fixture.id === id)) {
+    throw new Error(`Unknown case id: ${id}.`);
+  }
+}
 const model = values.model;
 const outputDirectory = values.out;
 const Results = Schema.fromJsonString(
@@ -72,6 +79,7 @@ await Effect.runPromise(
     const review = [];
     const answerKey = [];
     for (const fixture of threadTitleEvaluationCases) {
+      if (values.case?.length && !values.case.includes(fixture.id)) continue;
       const previous = baseline.find((entry) => entry.id === fixture.id);
       if (values.baseline && !previous) throw new Error(`Baseline is missing ${fixture.id}.`);
       const firstMessage: ThreadTitleMessage | undefined = fixture.messages.find(
@@ -97,6 +105,8 @@ await Effect.runPromise(
         const generated = yield* generation.generateThreadTitle({
           cwd,
           message,
+          ...("projectTitle" in fixture ? { projectTitle: fixture.projectTitle } : {}),
+          ...("instructions" in fixture ? { instructions: fixture.instructions } : {}),
           previousTitle: values.initial ? undefined : fixture.previousTitle,
           attachments,
           linkedContext,
@@ -147,6 +157,7 @@ await Effect.runPromise(
         WorkspaceHostTesting.layerFromContext,
         SourceControlProviderRegistry.layer.pipe(
           Layer.provide(SourceControlBuiltInDrivers.layer),
+          Layer.provide(FeatureFlags.layer),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           Layer.provide(GitVcsDriver.layer),

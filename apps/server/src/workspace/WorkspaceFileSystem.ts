@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -32,6 +33,7 @@ import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { WorkspaceReadGuard } from "./WorkspaceReadGuard.ts";
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
+import { toHostDrivePath } from "./hostDrivePath.ts";
 
 export const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -144,6 +146,8 @@ export class WorkspaceFileSystem extends Context.Service<
   }
 >()("t3/workspace/WorkspaceFileSystem") {}
 
+const UTF8_BOM = "\uFEFF";
+
 /** @public */
 export const make = Effect.gen(function* () {
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
@@ -182,7 +186,7 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({
         SandboxAsleep: () =>
           Effect.succeed({
-            relativePath: input.relativePath.trim(),
+            relativePath: input.relativePath,
             contents: "",
             byteLength: 0,
             truncated: false,
@@ -208,10 +212,21 @@ export const make = Effect.gen(function* () {
         operation,
         cause,
       });
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: wslpath runs only for cwd-less and local-host paths, which a sandbox path never is
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  const toHostPath = (requestedPath: string) =>
+    toHostDrivePath(requestedPath).pipe(
+      // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: the spawner above
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     // These paths carry no cwd: `~/` is the server's home, and each path resolves its own host.
-    const expandedPath = expandHomePath(requestedPath, (yield* hosts.local.info).homeDirectory);
+    const expandedPath = expandHomePath(
+      yield* toHostPath(requestedPath),
+      (yield* hosts.local.info).homeDirectory,
+    );
     // Chips ask as soon as an agent's message renders, and touching a network
     // path makes Windows sign in to its host with the user's NTLM credentials.
     if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
@@ -225,7 +240,8 @@ export const make = Effect.gen(function* () {
       if (!confined) return null;
     }
     const stat = yield* host.value.fileSystem.stat(expandedPath).pipe(Effect.option);
-    if (stat._tag === "None") return null;
+    // Server state files answer like missing paths, as readFile refuses them.
+    if (stat._tag === "None" || (yield* isServerInternalPath(expandedPath))) return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
     if (stat.value.type !== "File") return { kind: "other" } as const;
     let mimeType: string | undefined;
@@ -295,10 +311,13 @@ export const make = Effect.gen(function* () {
     input: ProjectReadFileInput,
     host: WorkspaceHost,
   ) {
-    const requestedPath = input.relativePath.trim();
-    const hostPath = requestedPath.startsWith("~/")
-      ? expandHomePath(requestedPath, (yield* host.info).homeDirectory)
-      : requestedPath;
+    const requestedPath = input.relativePath;
+    const hostPath =
+      requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
+        ? expandHomePath(requestedPath, (yield* host.info).homeDirectory)
+        : host.kind === "local"
+          ? yield* toHostPath(requestedPath)
+          : requestedPath;
     if (
       isNetworkPath(hostPath) &&
       !WorkspacePaths.isWithinRoot(path, path.resolve(hostPath), path.resolve(input.cwd))
@@ -332,13 +351,19 @@ export const make = Effect.gen(function* () {
       relativePath: input.relativePath,
     });
 
-    const realWorkspaceRoot = yield* host.files
-      .realPath(path.resolve(input.cwd))
-      .pipe(
-        Effect.mapError(
-          operationError(input, target.absolutePath, input.cwd, "realpath-workspace-root"),
-        ),
-      );
+    const realWorkspaceRoot = yield* host.files.realPath(path.resolve(input.cwd)).pipe(
+      // Storage cleanup removes idle worktrees but keeps their path, so nothing below them exists.
+      Effect.catchIf(
+        (error) => input.allowMissing === true && error.code === "ENOENT",
+        () => Effect.succeed(null),
+      ),
+      Effect.mapError(
+        operationError(input, target.absolutePath, input.cwd, "realpath-workspace-root"),
+      ),
+    );
+    if (realWorkspaceRoot === null) {
+      return { relativePath: target.relativePath, realTargetPath: null };
+    }
     const resolved = yield* Effect.gen(function* () {
       let candidate = target.absolutePath;
       for (;;) {
@@ -428,22 +453,22 @@ export const make = Effect.gen(function* () {
           resolvedPath: realTargetPath,
         });
       }
-      if (file.bytes.includes(0)) {
-        return yield* new WorkspaceBinaryFileError({
+      const truncated = file.size > PROJECT_READ_FILE_MAX_BYTES;
+      const binaryFileError = () =>
+        new WorkspaceBinaryFileError({
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
           resolvedPath: realTargetPath,
         });
-      }
-
-      const truncated = file.size > PROJECT_READ_FILE_MAX_BYTES;
-      return {
-        relativePath: target.relativePath,
-        // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
-        contents: new TextDecoder("utf-8").decode(file.bytes, { stream: truncated }),
-        byteLength: file.size,
-        truncated,
-      };
+      if (file.bytes.includes(0)) return yield* binaryFileError();
+      // Fatal decoding rejects invalid UTF-8, since U+FFFD contents would corrupt the file on save.
+      // Streaming decode drops a character the byte limit split, instead of rejecting it.
+      const contents = yield* Effect.try({
+        try: () =>
+          new TextDecoder("utf-8", { fatal: true }).decode(file.bytes, { stream: truncated }),
+        catch: binaryFileError,
+      });
+      return { relativePath: target.relativePath, contents, byteLength: file.size, truncated };
     },
     (effect, input) =>
       effect.pipe(
@@ -525,13 +550,28 @@ export const make = Effect.gen(function* () {
       const replacesFile = yield* host.fileSystem
         .exists(realTargetPath)
         .pipe(Effect.orElseSucceed(() => false));
+      // readFile decodes the BOM away, so an editor save would otherwise drop it from the file.
+      const keepsBom =
+        replacesFile &&
+        !input.contents.startsWith(UTF8_BOM) &&
+        (yield* host.files.readFile(realTargetPath, 3).pipe(
+          Effect.map(
+            (file) =>
+              file.kind === "file" &&
+              file.bytes[0] === 0xef &&
+              file.bytes[1] === 0xbb &&
+              file.bytes[2] === 0xbf,
+          ),
+          Effect.orElseSucceed(() => false),
+        ));
+      const contents = keepsBom ? UTF8_BOM + input.contents : input.contents;
 
       const directory = path.dirname(realTargetPath);
       yield* host.fileSystem
         .makeDirectory(directory, { recursive: true })
         .pipe(Effect.mapError(operationError(input, realTargetPath, directory, "make-directory")));
       yield* host.files
-        .writeNoFollow(realTargetPath, input.contents)
+        .writeNoFollow(realTargetPath, contents)
         .pipe(Effect.mapError(operationError(input, realTargetPath, realTargetPath, "write-file")));
       // Editor autosave overwrites existing files, which leaves the indexed paths unchanged, and
       // fff's watcher applies the new contents on its own. A forced rescan re-walks the whole

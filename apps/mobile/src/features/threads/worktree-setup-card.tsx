@@ -1,5 +1,13 @@
+import { msg, T, useGT, useMessages } from "gt-react-native";
+
+import type { MessageResolver } from "../../i18n/messages";
+
 import { Button } from "../../components/ui/Button";
-import type { WorktreeSetupSnapshot, WorktreeSetupStage } from "@t3tools/contracts";
+import {
+  WORKTREE_SETUP_STAGE_ORDER,
+  type WorktreeSetupSnapshot,
+  type WorktreeSetupStage,
+} from "@t3tools/contracts";
 import {
   worktreeSetupAgentStarted,
   worktreeSetupHeaderLabel,
@@ -9,35 +17,49 @@ import {
   worktreeSetupStageTitle,
   type WorktreeSetupMachineRow,
 } from "@t3tools/client-runtime/worktree-setup";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-import { useState } from "react";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
-import { WorktreeSetupSheet } from "./worktree-setup-sheet";
+import { Sheet } from "../../components/ui/Sheet";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 export interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
   turnStarted: boolean;
-  turnStartedAt: string | null;
-  working: boolean;
   onCancel: () => void;
   onWorkLocally: (() => void) | null;
 }
 
-function elapsed(start: string | null, end: string | null, now: number) {
+function elapsed(start: string | null, end: string | null, now: number, resolve: MessageResolver) {
   const duration = (end ? Date.parse(end) : now) - (start ? Date.parse(start) : NaN);
-  return Number.isFinite(duration) ? formatDuration(Math.max(0, duration)) : null;
+  return Number.isFinite(duration) ? formatDuration(Math.max(0, duration), resolve) : null;
 }
 
-const icons: Record<
-  WorktreeSetupStage["status"] | WorktreeSetupMachineRow["status"],
-  AppSymbolName
-> = {
+const statusLabels = {
+  pending: msg("pending", { $context: "setup stage status" }),
+  running: msg("running", { $context: "setup stage status" }),
+  done: msg("done", { $context: "setup stage status" }),
+  skipped: msg("skipped", { $context: "setup stage status" }),
+  failed: msg("failed", { $context: "setup stage status" }),
+  warning: msg("warning", { $context: "setup stage status" }),
+  waiting: "waiting",
+} as const satisfies Record<SetupRowStatus, string>;
+
+const stageLabels = {
+  fetch: msg("Fetch base branch"),
+  checkout: msg("Check out files"),
+  submodules: msg("Init submodules"),
+  "setup-script": msg("Run setup script"),
+  agent: msg("Start agent"),
+} as const satisfies Record<WorktreeSetupStage["id"], string>;
+
+type SetupRowStatus = WorktreeSetupStage["status"] | WorktreeSetupMachineRow["status"];
+
+const icons: Record<SetupRowStatus, AppSymbolName> = {
   pending: "circle",
   // The clock means waiting for a machine; a paused running row is not that.
   waiting: "clock",
@@ -48,70 +70,58 @@ const icons: Record<
   warning: "exclamationmark.triangle",
 };
 
-export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
-  const { snapshot, turnStarted, turnStartedAt, working } = props;
-  const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
+/** The feed owns whether the details sheet is open, so it survives the card turning into a chip or summary. */
+interface SetupDetailsControl {
+  readonly detailsOpen: boolean;
+  readonly onOpenDetails: () => void;
+}
+
+export function WorktreeSetupCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  // Once the agent has the turn, running setup is a chip on the live Working row.
+  if (worktreeSetupHandedOff(props)) {
+    // As on web, only a setup that went wrong stays in view.
+    return setupWentWrong(props.snapshot) ? <WorktreeSetupSummaryRow {...props} /> : null;
+  }
+  return <WorktreeSetupHeaderCard {...props} />;
+}
+
+function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  const { snapshot, detailsOpen } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const running = snapshot.phase === "running";
-  const backgroundSetup = handedOff && running;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const now = useVisibleSecondClock(running || working);
+  const now = useVisibleSecondClock(running);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
-  const label =
-    handedOff && working
-      ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
-      : running && handedOff
-        ? "Setup continues…"
-        : worktreeSetupHeaderLabel(snapshot);
+  const label = worktreeSetupHeaderLabel(snapshot);
   const machineRow = worktreeSetupMachineRow(snapshot, now);
 
   return (
-    <View accessibilityLabel="Worktree setup" className="py-1">
+    <View accessibilityLabel={gt("Worktree setup")} className="py-1">
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
         <HeaderLabel
           label={label}
-          active={(working || (running && !worktreeSetupMachineWaiting(snapshot))) && !detailsOpen}
-          failed={failed && !working}
+          active={running && !worktreeSetupMachineWaiting(snapshot) && !detailsOpen}
+          failed={failed}
         />
         {/* While setup runs, only its active row ticks. */}
-        {!handedOff && !running ? (
+        {!running ? (
           <Text
             className="text-2xs text-foreground-secondary"
             style={{ fontVariant: ["tabular-nums"] }}
           >
-            {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
+            {elapsed(snapshot.startedAt, snapshot.endedAt, now, messages)}
           </Text>
         ) : null}
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            backgroundSetup
-              ? `Background setup is still running: ${scriptName}. Show setup progress.`
-              : "Worktree setup details"
-          }
+          accessibilityLabel={gt("Worktree setup details")}
           accessibilityState={{ expanded: detailsOpen }}
-          onPress={() => setDetailsOpen(true)}
+          onPress={props.onOpenDetails}
           className="min-h-11 max-w-[55%] justify-center px-2"
         >
-          <View
-            className={
-              backgroundSetup
-                ? "min-w-0 flex-row items-center gap-1 rounded-full border border-border px-2 py-1"
-                : "flex-row items-center gap-1"
-            }
-          >
-            {backgroundSetup ? (
-              <AppActivityIndicator
-                size={Platform.OS === "android" ? 12 : "small"}
-                colorClassName="accent-icon-muted"
-                style={{
-                  width: 12,
-                  height: 12,
-                  transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
-                }}
-              />
-            ) : failed ? (
+          <View className="flex-row items-center gap-1">
+            {failed ? (
               <SymbolView
                 name="exclamationmark.circle"
                 size={12}
@@ -119,46 +129,155 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
               />
             ) : null}
             <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-              {backgroundSetup ? "Background setup" : "Details"}
+              <T>Details</T>
             </Text>
-            {!backgroundSetup ? (
-              <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
-            ) : null}
+            <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
           </View>
         </Pressable>
       </View>
-      {!handedOff ? (
-        <View className="pt-1 pb-2">
-          {machineRow ? (
-            <MachineRow row={machineRow} now={now} compact animate={!detailsOpen} />
-          ) : null}
-          {snapshot.stages
-            .filter((stage) => stage.id !== "agent")
-            .map((stage) => (
-              <StageRow
-                key={stage.id}
-                snapshot={snapshot}
-                stage={stage}
-                now={now}
-                compact
-                animate={!detailsOpen}
-              />
-            ))}
-        </View>
-      ) : null}
-      {detailsOpen ? (
-        <SetupDetailsSheet {...props} now={now} onClose={() => setDetailsOpen(false)} />
-      ) : null}
+      <View className="pt-1 pb-2">
+        {machineRow ? (
+          <MachineRow row={machineRow} now={now} compact animate={!detailsOpen} />
+        ) : null}
+        {snapshot.stages
+          .filter((stage) => stage.id !== "agent")
+          .map((stage) => (
+            <StageRow
+              key={stage.id}
+              snapshot={snapshot}
+              stage={stage}
+              now={now}
+              compact
+              animate={!detailsOpen}
+            />
+          ))}
+      </View>
     </View>
   );
 }
 
-export function WorktreeWorkingHeader({ startedAt }: { startedAt: string }) {
-  const now = useVisibleSecondClock(true);
+/** True once the agent has the turn; the turn's fold row then carries the setup instead of the card. */
+export function worktreeSetupHandedOff(props: WorktreeSetupCardProps): boolean {
+  return props.turnStarted && worktreeSetupAgentStarted(props.snapshot);
+}
+
+/** The card's state on the turn's fold row: setup still running, or a failure to look at. */
+export function WorktreeSetupFoldChip(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  const gt = useGT();
+  const scriptName = props.snapshot.setupScript?.name ?? gt("Setup script");
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt(
+        "Background setup is still running: {scriptName}. Show setup progress.",
+        { scriptName },
+      )}
+      onPress={props.onOpenDetails}
+      hitSlop={8}
+      className="ml-2 min-w-0 max-w-[55%] flex-row items-center gap-1 rounded-full border border-border px-2 py-1 active:opacity-70"
+    >
+      <AppActivityIndicator
+        size={Platform.OS === "android" ? 12 : "small"}
+        colorClassName="accent-icon-muted"
+        style={{
+          width: 12,
+          height: 12,
+          transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
+        }}
+      />
+      <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
+        <T>Background setup</T>
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
+ * Setup that ended after the agent took the turn, as one row under the prompt, like web's
+ * collapsed summary. Tapping it opens the details.
+ */
+function setupWentWrong(snapshot: WorktreeSetupSnapshot): boolean {
+  return (
+    snapshot.phase === "failed" ||
+    snapshot.phase === "cancelled" ||
+    (snapshot.phase === "done" &&
+      snapshot.stages.some((stage) => stage.id === "setup-script" && stage.status === "failed"))
+  );
+}
+
+function WorktreeSetupSummaryRow(props: WorktreeSetupCardProps & SetupDetailsControl) {
+  const { snapshot } = props;
+  const gt = useGT();
+  const messages = useMessages();
+  const now = useVisibleSecondClock(false);
+  const label = worktreeSetupHeaderLabel(snapshot);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt("{label}. Show setup details.", { label })}
+      onPress={props.onOpenDetails}
+      className="mb-1 min-h-8 flex-row items-center px-1 active:opacity-70"
+      style={{ columnGap: 8 }}
+    >
+      <View className="w-6 items-center">
+        <SymbolView name="xmark" size={14} tintColorClassName="accent-danger-foreground" />
+      </View>
+      <Text numberOfLines={1} className="flex-1 text-sm text-danger-foreground">
+        {label}
+      </Text>
+      <Text
+        className="text-2xs text-foreground-secondary"
+        style={{ fontVariant: ["tabular-nums"] }}
+      >
+        {elapsed(snapshot.startedAt, snapshot.endedAt, now, messages)}
+      </Text>
+      <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
+    </Pressable>
+  );
+}
+
+/** The one setup details sheet, opened from the card, the chip, or the summary row. */
+export function WorktreeSetupDetails(
+  props: WorktreeSetupCardProps & { readonly onClose: () => void },
+) {
+  const now = useVisibleSecondClock(props.snapshot.phase === "running");
+  return <SetupDetailsSheet {...props} now={now} />;
+}
+
+/** Holds the card's place until the server publishes the first setup snapshot. */
+// Same rows the first snapshot brings, so the card keeps its height when that snapshot lands.
+const PREPARING_STAGES: ReadonlyArray<WorktreeSetupStage> = WORKTREE_SETUP_STAGE_ORDER.filter(
+  (id) => id !== "agent",
+).map((id) => ({
+  id,
+  status: "pending",
+  startedAt: null,
+  endedAt: null,
+  percent: null,
+  detail: null,
+  tail: [],
+}));
+
+export function WorktreePreparingHeader() {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <View className="py-1">
       <View className="min-h-11 flex-row items-center border-b border-border px-1">
-        <HeaderLabel label={`Working for ${elapsed(startedAt, null, now) ?? "0s"}`} active />
+        <HeaderLabel label={gt("Setting up worktree…")} active />
+      </View>
+      <View className="pt-1 pb-2">
+        {PREPARING_STAGES.map((stage) => (
+          <SetupRow
+            key={stage.id}
+            label={m(stageLabels[stage.id])}
+            status={stage.status}
+            detail={null}
+            duration={null}
+            compact
+            animate
+          />
+        ))}
       </View>
     </View>
   );
@@ -203,16 +322,15 @@ function SetupDetailsSheet({
   onClose,
   now,
 }: WorktreeSetupCardProps & { onClose: () => void; now: number }) {
+  const gt = useGT();
   const insets = useSafeAreaInsets();
-  const [bodyHeight, setBodyHeight] = useState(0);
   const canCancel = snapshot.phase === "running" && !turnStarted;
   const machineRow = worktreeSetupMachineRow(snapshot, now);
   return (
-    <WorktreeSetupSheet height={bodyHeight} onClose={onClose}>
+    <Sheet title={gt("Worktree setup")} onClose={onClose}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         bounces={false}
-        onContentSizeChange={(_width, height) => setBodyHeight(height)}
         contentContainerStyle={{
           paddingHorizontal: 20,
           paddingTop: 12,
@@ -239,9 +357,9 @@ function SetupDetailsSheet({
         {canCancel ? (
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
             <Button
-              label="Cancel setup"
+              label={gt("Cancel setup")}
               tone="danger"
-              accessibilityLabel="Cancel worktree setup"
+              accessibilityLabel={gt("Cancel worktree setup")}
               onPress={() => {
                 onClose();
                 onCancel();
@@ -249,7 +367,7 @@ function SetupDetailsSheet({
             />
             {onWorkLocally ? (
               <Button
-                label="Work locally"
+                label={gt("Work locally")}
                 tone="secondary"
                 onPress={() => {
                   onClose();
@@ -260,7 +378,7 @@ function SetupDetailsSheet({
           </View>
         ) : null}
       </ScrollView>
-    </WorktreeSetupSheet>
+    </Sheet>
   );
 }
 
@@ -275,13 +393,14 @@ function MachineRow({
   compact?: boolean;
   animate?: boolean;
 }) {
+  const m = useMessages();
   return (
     <View>
       <SetupRow
         label={row.label}
         status={row.status}
         detail={row.detail}
-        duration={row.status === "skipped" ? null : elapsed(row.startedAt, row.endedAt, now)}
+        duration={row.status === "skipped" ? null : elapsed(row.startedAt, row.endedAt, now, m)}
         compact={compact}
         animate={animate}
       />
@@ -305,6 +424,7 @@ function StageRow({
   compact?: boolean;
   animate?: boolean;
 }) {
+  const m = useMessages();
   return (
     <SetupRow
       label={worktreeSetupStageTitle(snapshot, stage)}
@@ -313,7 +433,7 @@ function StageRow({
       duration={
         stage.status === "pending" || stage.status === "skipped"
           ? null
-          : elapsed(stage.startedAt, stage.endedAt, now)
+          : elapsed(stage.startedAt, stage.endedAt, now, m)
       }
       compact={compact}
       animate={animate}
@@ -330,15 +450,17 @@ function SetupRow({
   animate,
 }: {
   label: string;
-  status: WorktreeSetupStage["status"] | WorktreeSetupMachineRow["status"];
+  status: SetupRowStatus;
   detail: string | null;
   duration: string | null;
   compact: boolean;
   animate: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <View
-      accessibilityLabel={`${label}, ${status}`}
+      accessibilityLabel={gt("{label}, {status}", { label, status: m(statusLabels[status]) })}
       className={compact ? "min-h-8 flex-row items-center" : "min-h-11 flex-row items-center"}
       style={{ columnGap: 8, opacity: status === "pending" ? 0.4 : 1 }}
     >
@@ -402,9 +524,10 @@ function SetupRow({
 const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 
 function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
+  const gt = useGT();
   return (
     <View
-      accessibilityLabel="Setup script output"
+      accessibilityLabel={gt("Setup script output")}
       className={
         failed
           ? "mb-2 ml-8 rounded-md border border-danger-border bg-danger px-3 py-2"

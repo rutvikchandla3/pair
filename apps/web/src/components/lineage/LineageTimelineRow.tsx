@@ -32,7 +32,7 @@ import {
 import { useDiffPanelStore } from "~/diffPanelStore";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
-import { selectActiveRightPanel, useRightPanelStore } from "~/rightPanelStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { useQuietThreadShell } from "~/state/entities";
 import { useLineageView, useLineageViewer } from "~/state/branchLineage";
 import { useTeamMembers } from "~/state/team";
@@ -74,9 +74,7 @@ const TONE_CLASS: Record<LineageNoticeCopy["tone"], string> = {
 
 /** View changes on an offer: the thread's Changes panel, scoped to the offer's own lines. */
 function openOfferChanges(threadRef: ScopedThreadRef, offerId: OfferId): void {
-  const diffOpen =
-    selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef) === "diff";
-  useDiffPanelStore.getState().selectOffer(threadRef, offerId, !diffOpen);
+  useDiffPanelStore.getState().selectOffer(threadRef, offerId);
   useRightPanelStore.getState().open(threadRef, "diff");
 }
 

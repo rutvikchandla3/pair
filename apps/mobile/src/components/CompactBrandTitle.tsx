@@ -1,6 +1,5 @@
 import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../native/NativeWorkspaceColumns";
 import Constants from "expo-constants";
-import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
 import { useState } from "react";
 import { Platform, View } from "react-native";
 
@@ -11,6 +10,7 @@ import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 
 const BRAND_MAX_FONT_SCALE = 1.4;
+const WORDMARK_SUFFIX = "Pair";
 
 export function brandTitleOffset(): number {
   if (Platform.OS !== "ios") return 0;
@@ -40,6 +40,7 @@ export function CompactBrandTitle(
         props.fit && showStage ? (event) => setFullWidth(event.nativeEvent.layout.width) : undefined
       }
       aria-level={1}
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
       accessibilityLabel={props.accessibilityLabel ?? "Pair, Threads"}
       accessible
       role="heading"
@@ -58,7 +59,7 @@ export function CompactBrandTitle(
         className="font-t3-semibold text-foreground"
         style={{ fontSize: 21 * scale, letterSpacing: -0.2 * scale }}
       >
-        Pair
+        {WORDMARK_SUFFIX}
       </Text>
       {showStage ? (
         <View
@@ -92,19 +93,4 @@ export function CompactBrandTitle(
   ) : (
     title
   );
-}
-
-function renderCompactBrandTitle() {
-  return <CompactBrandTitle allowFontScaling={Platform.OS === "ios"} />;
-}
-
-export function getCompactBrandHeaderOptions(
-  fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"],
-): NativeStackNavigationOptions {
-  return {
-    headerTitle: renderCompactBrandTitle,
-    headerTitleStyle: fallbackTitleStyle,
-    title: "Threads",
-    unstable_headerLeftItems: undefined,
-  };
 }

@@ -7,7 +7,9 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import { HttpApiSchemaError } from "effect/http-api/HttpApiError";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
@@ -39,7 +41,12 @@ import {
 import type { ThreadViewer } from "./MemberThreadView.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
+import {
+  loadShellUnlessResumable,
+  loadSubscriberShellSnapshot,
+  projectIdentitiesDigest,
+} from "./ShellStream.ts";
+import { encodeThreadSnapshotBody } from "./threadSnapshotBody.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
@@ -94,7 +101,12 @@ export const layer = HttpApiBuilder.group(
       // Cached identities only; git probes can take a minute and exceed shell-snapshot budgets.
       const { projects } = yield* projectService.enrichShells(snapshot.projects);
       const threads = yield* overlayForViewer(viewer, snapshot.threads);
-      return { ...snapshot, threads, projects };
+      return {
+        ...snapshot,
+        threads,
+        projects,
+        projectIdentities: projectIdentitiesDigest(projects),
+      };
     });
 
     const viewSnapshot = <S extends { readonly projection: OrchestrationV2ThreadProjection }>(
@@ -109,6 +121,26 @@ export const layer = HttpApiBuilder.group(
             projection: projectThreadProjectionForWire({ ...snapshot.projection, thread }),
           })),
         );
+
+    // A client that holds rows names their cursor; a small answer tells it to keep them.
+    const answerShellSnapshot = Effect.fn("http.orchestration.answerShellSnapshot")((
+      viewer: ThreadViewer | null,
+      query: {
+        readonly omitIdleSubagents?: string;
+        readonly omitOlderSettled?: string;
+        readonly resumeFrom?: string;
+      },
+    ) => {
+      const resumeFrom = query.resumeFrom === undefined ? Number.NaN : Number(query.resumeFrom);
+      return loadShellUnlessResumable({
+        events: applicationEvents,
+        resumeFrom: Number.isSafeInteger(resumeFrom) && resumeFrom >= 0 ? resumeFrom : undefined,
+        loadSnapshot: loadShellSnapshot(viewer, {
+          omitIdleSubagents: query.omitIdleSubagents === "1",
+          omitOlderSettled: query.omitOlderSettled === "1",
+        }),
+      });
+    });
 
     const loadThreadSnapshot = Effect.fn("http.orchestration.loadThreadSnapshot")(function* (
       viewer: ThreadViewer | null,
@@ -176,10 +208,7 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* loadShellSnapshot(viewers(session.memberId), {
-            omitIdleSubagents: args.query.omitIdleSubagents === "1",
-            omitOlderSettled: args.query.omitOlderSettled === "1",
-          }).pipe(
+          return yield* answerShellSnapshot(viewers(session.memberId), args.query).pipe(
             traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),
@@ -192,15 +221,25 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const snapshot = yield* loadThreadSnapshot(
+          const body = yield* loadThreadSnapshot(
             viewers(session.memberId),
             args.params.threadId,
             "orchestration_thread_snapshot_failed",
-          ).pipe(traceLocalHandlerWork);
-          return {
-            snapshotSequence: snapshot.snapshotSequence,
-            projection: snapshot.projection,
-          };
+          ).pipe(
+            Effect.flatMap((snapshot) =>
+              encodeThreadSnapshotBody({
+                snapshotSequence: snapshot.snapshotSequence,
+                projection: snapshot.projection,
+              }).pipe(
+                // The same defect, and the same empty 500, as a failed response encoding.
+                Effect.catch((cause) =>
+                  Effect.die(new HttpApiSchemaError({ kind: "Body", cause })),
+                ),
+              ),
+            ),
+            traceLocalHandlerWork,
+          );
+          return HttpServerResponse.stream(body, { contentType: "application/json" });
         }),
       )
       .handle(

@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess } from "effect/process";
 
@@ -25,7 +27,6 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
-  isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
@@ -38,6 +39,9 @@ import {
 } from "../provider/Drivers/ClaudeHome.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import { makeMachineInvestigationFor } from "./machineInvestigation.ts";
+import { readClaudeLaunchArgSettings } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 /** `--tools` takes bare names; patterns go in the allow list. */
@@ -57,6 +61,9 @@ const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"
 const NO_SESSION_PERSISTENCE = "--no-session-persistence";
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
+// Only a rejection of images as such marks a model text-only, not a size or count limit.
+const IMAGES_UNSUPPORTED =
+  /image[^\n]*(?:not support|unsupported)|(?:not support|unsupported)[^\n]*image/i;
 
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
@@ -72,7 +79,13 @@ const decodeClaudeOutput = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Union([ClaudeOutputEnvelope, Schema.Array(ClaudeOutputMessage)])),
 );
 
-const ClaudeErrorResult = Schema.Struct({ is_error: Schema.Literal(true), result: Schema.String });
+// Only `success` results carry `result`; error subtypes such as
+// error_max_structured_output_retries report through `errors` instead.
+const ClaudeErrorResult = Schema.Struct({
+  is_error: Schema.Literal(true),
+  result: Schema.optionalKey(Schema.String),
+  errors: Schema.optionalKey(Schema.Array(Schema.String)),
+});
 const isClaudeErrorResult = Schema.is(ClaudeErrorResult);
 const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
@@ -82,7 +95,14 @@ function claudeErrorResult(stdout: string): string | undefined {
   const messages: ReadonlyArray<unknown> = Array.isArray(output) ? output : [output];
   return messages
     .filter(isClaudeErrorResult)
-    .map((message) => message.result.trim())
+    .map((message) =>
+      (
+        message.result ??
+        // error_during_execution mixes CLI telemetry into the list.
+        message.errors?.filter((error) => !error.startsWith("[ede_diagnostic]")).join("\n") ??
+        ""
+      ).trim(),
+    )
     .findLast((result) => result.length > 0);
 }
 
@@ -91,13 +111,21 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  routeModelCatalog: (
+    catalog: ClaudeModelCatalog,
+    cwd: string,
+  ) => Effect.Effect<ClaudeModelCatalog> = Effect.succeed,
 ) {
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const machineInvestigationFor = yield* makeMachineInvestigationFor;
+  const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
+  // Models that failed with images and then succeeded without them; later runs skip the image attempt.
+  const textOnlyModels = new Set<string>();
 
   const readStreamAsString = <E>(
     operation: string,
@@ -130,6 +158,37 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
+  const readImageBlocks = Effect.fn("readImageBlocks")(function* (
+    attachments: TextGenerationOperations.Request<Schema.Top>["attachments"],
+  ) {
+    const blocks: Array<{
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string };
+    }> = [];
+    for (const attachment of attachments ?? []) {
+      if (attachment.type !== "image") continue;
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      });
+      if (!attachmentPath) continue;
+      // Attachments live in this server's T3 home; a machine run gets them as stdin bytes.
+      const bytes = yield* hosts.local.fileSystem
+        .readFile(attachmentPath)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (!bytes) continue;
+      blocks.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: attachment.mimeType,
+          data: Buffer.from(bytes).toString("base64"),
+        },
+      });
+    }
+    return blocks;
+  });
+
   const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
@@ -137,12 +196,50 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchema: outputSchemaJson,
     modelSelection,
     investigate,
+    attachments,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
-    S["DecodingServices"]
+    S["DecodingServices"] | Scope.Scope
   > {
-    const catalog = yield* scopedModelCatalog;
+    // Text in, text out, so a cloud thread's request runs here too: in its machine it would carry
+    // the server's env. An investigation reads the checkout, so it runs where the checkout is.
+    const machine =
+      investigate === undefined
+        ? undefined
+        : yield* machineInvestigationFor({
+            operation,
+            cwd,
+            instanceId,
+            homeVariable: "CLAUDE_CONFIG_DIR",
+          });
+
+    const host = machine?.host ?? hosts.local;
+    const cwdOnServer =
+      machine === undefined &&
+      (yield* hosts.forPath(cwd).pipe(
+        Effect.map((cwdHost) => cwdHost.kind === "local"),
+        Effect.orElseSucceed(() => false),
+      ));
+    const workingDirectory =
+      machine !== undefined || (cwdOnServer && operation !== "generateThreadTitle")
+        ? cwd
+        : yield* host.fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3code-claude-" })
+            .pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError(
+                  "claude",
+                  operation,
+                  cause,
+                  "Failed to create a working directory",
+                ),
+              ),
+            );
+    // Model routes read Claude settings from the cwd on this server's disk.
+    const catalog = cwdOnServer
+      ? yield* routeModelCatalog(yield* scopedModelCatalog, workingDirectory)
+      : yield* scopedModelCatalog;
     const resolvedModelSelection = {
       ...modelSelection,
       model: resolveClaudeModelSlug(catalog, modelSelection.model),
@@ -169,7 +266,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       resolvedEffort,
       resolvedModelSelection.model,
     );
-    const ultracode = isClaudeCatalogUltracodeEffort(resolvedEffort);
+    const ultracode = findDescriptor("ultracode")?.currentValue;
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     // Only a chosen value; otherwise Claude Code's own default applies, as in chat turns.
@@ -179,11 +276,26 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         : undefined;
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
+    // A machine has its own Claude settings; a settings path resolves on this server's disk.
+    const launchArgSettings =
+      machine === undefined
+        ? yield* readClaudeLaunchArgSettings({
+            settings: claudeSettings,
+            cwd: cwdOnServer ? cwd : null,
+            fileSystem: hosts.local.fileSystem,
+            path,
+          }).pipe(
+            Effect.mapError(
+              (cause) => new TextGenerationError({ operation, detail: cause.message, cause }),
+            ),
+          )
+        : undefined;
     const settings = {
+      ...launchArgSettings,
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
-      ...(ultracode ? { ultracode: true } : {}),
+      ...(typeof ultracode === "boolean" ? { ultracode } : {}),
     };
     const settingsJson = yield* encodeJsonForOperation(
       operation,
@@ -191,53 +303,38 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       "Failed to encode Claude CLI settings.",
     );
 
-    // Text in, text out, so a cloud thread's request runs here too: in its machine it would carry
-    // the server's env. An investigation reads the checkout, so it runs where the checkout is.
-    const machine =
-      investigate === undefined
-        ? undefined
-        : yield* machineInvestigationFor({
+    // `claude -p` accepts images only as content blocks of a stream-json user message.
+    const apiModelId = resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection);
+    const imageBlocks = textOnlyModels.has(apiModelId) ? [] : yield* readImageBlocks(attachments);
+    const imageStdin =
+      imageBlocks.length > 0
+        ? `${yield* encodeJsonForOperation(
             operation,
-            cwd,
-            instanceId,
-            homeVariable: "CLAUDE_CONFIG_DIR",
-          });
+            {
+              type: "user",
+              message: { role: "user", content: [{ type: "text", text: prompt }, ...imageBlocks] },
+            },
+            "Failed to encode Claude CLI input.",
+          )}\n`
+        : undefined;
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
+      withImages: boolean,
     ) {
-      const host = machine?.host ?? hosts.local;
-      const cwdOnServer =
-        machine === undefined &&
-        (yield* hosts.forPath(cwd).pipe(
-          Effect.map((cwdHost) => cwdHost.kind === "local"),
-          Effect.orElseSucceed(() => false),
-        ));
-      const workingDirectory =
-        machine !== undefined || (cwdOnServer && operation !== "generateThreadTitle")
-          ? cwd
-          : yield* host.fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-" })
-              .pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError(
-                    "claude",
-                    operation,
-                    cause,
-                    "Failed to create a working directory",
-                  ),
-                ),
-              );
+      const streamJson = withImages && imageStdin !== undefined;
+      const stdin = streamJson ? imageStdin : prompt;
       // The image has no managed-mcp.json, so a machine run always isolates servers by flag.
       const managedMcpConfig = machine === undefined && (yield* hasClaudeManagedMcpConfig());
       const args = [
         "-p",
-        "--output-format",
-        "json",
+        ...(streamJson
+          ? ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+          : ["--output-format", "json"]),
         "--json-schema",
         jsonSchemaStr,
         "--model",
-        resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+        apiModelId,
         ...(cliEffort ? ["--effort", cliEffort] : []),
         "--settings",
         settingsJson,
@@ -251,6 +348,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               CLAUDE_INVESTIGATION_DENIED,
             ]
           : ["--tools", ""]),
+        ...(investigate ? ["--setting-sources", "user"] : []),
         "--disable-slash-commands",
         ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
         // managed-mcp.json already isolates servers and makes Claude reject this flag.
@@ -270,7 +368,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
-          stream: Stream.encodeText(Stream.make(prompt)),
+          stream: Stream.encodeText(Stream.make(stdin)),
         },
         forceKillAfter: "1 second",
       });
@@ -296,14 +394,38 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         { concurrency: "unbounded" },
       );
 
-      return { stdout, stderr, exitCode };
+      // stream-json prints one message per line and ends with the result message.
+      return {
+        stdout: streamJson ? (stdout.trim().split("\n").at(-1) ?? "") : stdout,
+        stderr,
+        exitCode,
+      };
     });
 
-    const rawStdout = yield* runClaudeCommand(true).pipe(
+    const runClaudeAttempt = (withImages: boolean) =>
+      runClaudeCommand(true, withImages).pipe(
+        Effect.filterOrElse(
+          (result) =>
+            result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
+          () => runClaudeCommand(false, withImages),
+        ),
+      );
+
+    const rawStdout = yield* runClaudeAttempt(true).pipe(
+      // Text-only models (custom models behind Anthropic-compatible endpoints) reject image blocks.
       Effect.filterOrElse(
-        (result) =>
-          result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
-        () => runClaudeCommand(false),
+        (result) => result.exitCode === 0 || imageStdin === undefined,
+        (imageResult) =>
+          runClaudeAttempt(false).pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                const imageFailure = `${imageResult.stdout}\n${imageResult.stderr}`;
+                if (result.exitCode === 0 && IMAGES_UNSUPPORTED.test(imageFailure)) {
+                  textOnlyModels.add(apiModelId);
+                }
+              }),
+            ),
+          ),
       ),
       Effect.flatMap(({ stdout, stderr, exitCode }) => {
         if (exitCode === 0) return Effect.succeed(stdout);
@@ -366,5 +488,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
   });
 
-  return TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson);
+  return TextGenerationOperations.fromRunner(
+    "ClaudeTextGeneration",
+    <S extends Schema.Top>(request: TextGenerationOperations.Request<S>) =>
+      Effect.scoped(runClaudeJson(request)),
+  );
 });

@@ -24,7 +24,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TeamState from "../team/TeamState.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
-import { personalStateOf } from "./MemberThreadState.ts";
+import { personalStateOf, viewThreadEvent } from "./MemberThreadState.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -249,7 +249,7 @@ it.effect("a single member reaches the solo end state and writes no member rows"
       ["thread.snoozed"],
       ["thread.settled"],
       ["thread.pinned"],
-      ["thread.visited"],
+      ["thread.visit-recorded"],
       ["thread.marked-unread"],
       [],
     ]);
@@ -259,7 +259,8 @@ it.effect("a single member reaches the solo end state and writes no member rows"
       ["thread.metadata-updated", `thread.snoozed:${team.owner}`],
       ["thread.settled"],
       ["thread.unsettled", `thread.pinned:${team.owner}`],
-      [`thread.visited:${team.owner}`],
+      // Off a team the holder's visit carries only its read state.
+      ["thread.visit-recorded"],
       [`thread.marked-unread:${team.owner}`],
       // The holder follows implicitly.
       [],
@@ -301,13 +302,24 @@ it.effect("a non-holder's pin, snooze, visit and mark-unread change only their o
       }),
       [`thread.snoozed:${bob}`],
     );
-    yield* dispatch({
+    const owner = (yield* serverOwner)!;
+    const shellBefore = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadShell(threadId);
+    const bobVisit = yield* dispatch({
       type: "thread.visit",
       commandId: CommandId.make("bob-visit"),
       threadId,
       visitedAt: "1970-01-01T00:00:05.000Z",
       actorId: bob,
     });
+    // The holder's stream drops bob's visit, and the holder's shell keeps its read state.
+    assert.deepEqual(
+      bobVisit.storedEvents.map(({ event }) => viewThreadEvent(event, owner, owner, null).event),
+      [null],
+    );
+    assert.deepEqual(
+      yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadShell(threadId),
+      shellBefore,
+    );
     yield* dispatch({
       type: "thread.visit",
       commandId: CommandId.make("carol-visit"),
@@ -324,9 +336,10 @@ it.effect("a non-holder's pin, snooze, visit and mark-unread change only their o
 
     const { row, members } = yield* readState;
     assert.deepEqual(personalStateOf(row), personalStateOf(before));
+    // Settle disarmed the limit snooze; nothing bob does arms it again.
     assert.deepEqual(
       [row.settledOverride, row.ownerId, row.limitRecovery?.snooze],
-      ["active", null, true],
+      ["active", null, false],
     );
     const bobState = members.get(bob)!;
     assert.deepEqual(

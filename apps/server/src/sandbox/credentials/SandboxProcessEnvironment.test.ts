@@ -105,6 +105,7 @@ const layerWith = (settings: Parameters<typeof ServerSettings.layerTest>[0]) => 
       Layer.succeed(
         SecretResolver.SecretResolver,
         SecretResolver.SecretResolver.of({
+          label: (provider) => Effect.succeed(provider),
           read: (references) =>
             Effect.sync(() => {
               reads.push(references);

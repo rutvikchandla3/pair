@@ -103,7 +103,7 @@ import { RetentionControl } from "./RetentionControl";
 import { useSecretSources } from "./SecretSourceInput";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { formatDayAwareTimestamp } from "../../timestampFormat";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { SettingsEnvironmentPicker } from "./SettingsEnvironmentPicker";
 import { TeamImageSettings } from "./TeamImageSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
@@ -130,6 +130,7 @@ function formatDuration(ms: number): string {
 }
 
 export function CloudSettings() {
+  const searchableSetting = useSearchableSetting();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const scope = useOptionalSettingsScope();
@@ -268,6 +269,7 @@ function CloudEnvironmentSettings({
   readonly environmentId: EnvironmentId;
   readonly serverConfig: EnvironmentServerConfig;
 }) {
+  const searchableSetting = useSearchableSetting();
   const sandbox = serverConfig.settings.sandbox;
   const drivers = sandbox?.drivers ?? [];
   const diskRetention = sandbox?.diskRetention ?? DEFAULT_DISK_RETENTION;
@@ -302,11 +304,13 @@ function CloudEnvironmentSettings({
     return result._tag === "Success";
   };
 
-  const saveDiskRetention = (patch: Partial<SandboxDiskRetention>) =>
+  const saveDiskRetention = (patch: Partial<SandboxDiskRetention>, onFailed: () => void) =>
     void save(
       { sandbox: { diskRetention: { ...diskRetention, ...patch } } },
       "Disk retention not saved",
-    );
+    ).then((saved) => {
+      if (!saved) onFailed();
+    });
 
   const startNewMachinesOn = (driver: SandboxDriverInstance) =>
     void save({ sandbox: { defaultDriverId: driver.id } }, "Default driver not saved");
@@ -730,7 +734,9 @@ function CloudEnvironmentSettings({
                     label="Delete archived machines' disks"
                     value={diskRetention.archivedAfterDays}
                     enabledDays={DEFAULT_DISK_RETENTION.archivedAfterDays}
-                    onChange={(archivedAfterDays) => saveDiskRetention({ archivedAfterDays })}
+                    onChange={(archivedAfterDays, onFailed) =>
+                      saveDiskRetention({ archivedAfterDays }, onFailed)
+                    }
                   />
                 }
               />
@@ -742,7 +748,9 @@ function CloudEnvironmentSettings({
                     label="Delete unused machines' disks"
                     value={diskRetention.asleepAfterDays}
                     enabledDays={DEFAULT_DISK_RETENTION.asleepAfterDays}
-                    onChange={(asleepAfterDays) => saveDiskRetention({ asleepAfterDays })}
+                    onChange={(asleepAfterDays, onFailed) =>
+                      saveDiskRetention({ asleepAfterDays }, onFailed)
+                    }
                   />
                 }
               />

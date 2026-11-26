@@ -1,8 +1,12 @@
 import { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
 import { WORKSPACE_WORKTREE_BASE_REF } from "@t3tools/client-runtime/state/workspaces";
+import { msg } from "gt-react-native";
+
 import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { ComposerDraftWorkspaceSelection } from "../../state/use-composer-drafts";
 
 export function resolveNewTaskWorkspaceSelection(input: {
@@ -15,6 +19,8 @@ export function resolveNewTaskWorkspaceSelection(input: {
   readonly cloudLaunch: boolean;
   /** The project is a workspace of several repositories. */
   readonly workspace: boolean;
+  /** A project folder that is no repository can still take a worktree of one it tracks. */
+  readonly tracksGitRepositories?: boolean | undefined;
 }): ComposerDraftWorkspaceSelection {
   const selection = input.selection ?? input.fallback;
   // A workspace thread runs in a new worktree of each repository, here or on one machine, each
@@ -30,8 +36,19 @@ export function resolveNewTaskWorkspaceSelection(input: {
         : {}),
     };
   }
-  const mode = resolveSendEnvMode({ requestedEnvMode: selection.mode, isGitRepo: input.isGitRepo });
-  if (!input.isGitRepo) return { mode, branch: null, worktreePath: null };
+  if (!input.isGitRepo) {
+    const mode = resolveSendEnvMode({
+      requestedEnvMode: selection.mode,
+      isGitRepo: false,
+      tracksGitRepositories: input.tracksGitRepositories === true,
+    });
+    return {
+      mode,
+      branch: null,
+      worktreePath: null,
+      ...(selection.repositories !== undefined ? { repositories: selection.repositories } : {}),
+    };
+  }
   if (input.cloudLaunch) {
     return selection.mode === "cloud"
       ? selection
@@ -43,15 +60,19 @@ export function resolveNewTaskWorkspaceSelection(input: {
     : selection;
 }
 
-export function resolveNewTaskWorkspaceLabel(input: {
-  readonly workspaceMode: NewTaskWorkspaceMode;
-  readonly worktreePath: string | null;
-}): "Current checkout" | "Current worktree" | "New worktree" | "Cloud" {
+export function resolveNewTaskWorkspaceLabel(
+  input: {
+    readonly workspaceMode: NewTaskWorkspaceMode;
+    readonly worktreePath: string | null;
+  },
+  resolve: MessageResolver = m,
+): string {
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
   if (input.workspaceMode === "cloud") return "Cloud";
   if (input.workspaceMode === "worktree") {
-    return "New worktree";
+    return resolve(msg("New worktree"));
   }
-  return input.worktreePath ? "Current worktree" : "Current checkout";
+  return input.worktreePath ? resolve(msg("Current worktree")) : resolve(msg("Current checkout"));
 }
 
 /** A machine clones origin and branches from `origin/<base>`, so its base names no remote. */
@@ -111,18 +132,30 @@ export function resolveNewTaskLocalWorkspaceSelection(input: {
   };
 }
 
-export function resolveNewTaskBranchLabel(input: {
-  readonly branchName: string | null;
-  readonly startFromOrigin: boolean;
-  readonly workspaceMode: NewTaskWorkspaceMode;
-  readonly pullRequestReference?: string;
-}): string {
+export function resolveNewTaskBranchLabel(
+  input: {
+    readonly branchName: string | null;
+    readonly startFromOrigin: boolean;
+    readonly workspaceMode: NewTaskWorkspaceMode;
+    readonly pullRequestReference?: string;
+  },
+  resolve: MessageResolver = m,
+): string {
   if (input.workspaceMode === "worktree" && input.pullRequestReference) {
     const parsed = sourceControlClients.parseChangeRequestUrl(input.pullRequestReference);
-    if (parsed) return `From ${parsed.definition.changeRequest.shortLabel} #${parsed.link.number}`;
+    if (parsed)
+      return resolve(
+        msg(
+          "{term, select, mr {From MR #{number}} cr {From change request #{number}} other {From PR #{number}}}",
+          {
+            term: changeRequestTermKind(parsed.definition.changeRequest),
+            number: parsed.link.number,
+          },
+        ),
+      );
   }
   if (!input.branchName) {
-    return "Choose branch";
+    return resolve(msg("Choose branch"));
   }
 
   if (input.workspaceMode === "local") {
@@ -131,8 +164,8 @@ export function resolveNewTaskBranchLabel(input: {
 
   // Only the server can determine a local branch's configured remote. A machine clones the remote.
   return input.workspaceMode === "worktree" && input.startFromOrigin
-    ? `From ${input.branchName} (remote)`
-    : `From ${input.branchName}`;
+    ? resolve(msg("From {branchName} (remote)", { branchName: input.branchName }))
+    : resolve(msg("From {branchName}", { branchName: input.branchName }));
 }
 
 export function shouldCheckoutNewTaskBranch(input: {
@@ -212,6 +245,7 @@ export function resolveNewTaskDraftWorkspace(input: {
   readonly cloudAvailable: boolean;
   readonly cloudLaunch: boolean;
   readonly workspace: boolean;
+  readonly tracksGitRepositories?: boolean | undefined;
   readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
   readonly projectCwd: string | null;
 }): ComposerDraftWorkspaceSelection {
@@ -224,6 +258,7 @@ export function resolveNewTaskDraftWorkspace(input: {
       cloudAvailable: input.cloudAvailable,
       cloudLaunch: input.cloudLaunch,
       workspace: input.workspace,
+      tracksGitRepositories: input.tracksGitRepositories,
     }),
     branches: input.branches,
     projectCwd: input.projectCwd,

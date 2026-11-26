@@ -13,7 +13,14 @@ import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as TeamState from "../../../team/TeamState.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readThread, sendActorId, unavailable } from "../../threadAccess.ts";
+import { isThreadManagementError, threadManagementFailure } from "../../OrchestratorMcpService.ts";
+import {
+  dispatchFailure,
+  newCommandId,
+  readThread,
+  sendActorId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -63,7 +70,10 @@ export const layer = McpToolAccess.toLayer(
               if (now - entry.issuedAt > UPLOAD_OWNER_TTL_MS) uploadOwners.delete(id);
             }
             uploadOwners.set(result.attachmentId, { owner: yield* uploadOwner, issuedAt: now });
-            return result;
+            const { origin } = yield* McpInvocationContext.McpInvocationContext;
+            return origin === undefined
+              ? result
+              : { ...result, uploadUrl: `${origin}${result.relativeUrl}` };
           }),
         { linkedCallers: "allowed" },
       ),
@@ -124,7 +134,9 @@ export const layer = McpToolAccess.toLayer(
                       code: "orchestration_error",
                       message: error.message,
                     })
-                  : unavailable(),
+                  : isThreadManagementError(error)
+                    ? threadManagementFailure(error)
+                    : dispatchFailure(error),
               ),
             );
             return {

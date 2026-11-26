@@ -9,6 +9,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { type ReactNode, useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
@@ -26,6 +27,8 @@ export function ThreadApprovalCard(props: {
   const { approval } = props;
   const canRespond = useEnvironmentScope(props.thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
+  const gt = useGT();
+  const messages = useMessages();
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -40,13 +43,13 @@ export function ThreadApprovalCard(props: {
       {approval.appName ? <p className="mt-2 text-muted-foreground">{approval.appName}</p> : null}
       {approval.responseCapability !== "live" ? (
         <p className="mt-2 text-warning">
-          Provider process is gone. Interrupt or restart the child thread to respond.
+          <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
         </p>
       ) : null}
       {approval.reason ? <p className="mt-2 text-muted-foreground">{approval.reason}</p> : null}
       {approval.fullAccessOverride ? (
         <p className="mt-2 text-muted-foreground">
-          {fullAccessOverrideExplanation(approval.fullAccessOverride)}
+          {fullAccessOverrideExplanation(approval.fullAccessOverride, messages)}
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap gap-2">
@@ -68,7 +71,9 @@ export function ThreadApprovalCard(props: {
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const failure = squashAtomCommandFailure(result);
               setError(
-                failure instanceof Error ? failure.message : "Failed to submit approval decision.",
+                failure instanceof Error
+                  ? failure.message
+                  : gt("Failed to submit approval decision."),
               );
             }
             setResponding(false);
@@ -87,12 +92,17 @@ export function ThreadApprovalCard(props: {
 }
 
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
+  const gt = useGT();
   return (
     <ThreadApprovalCard
       thread={entry.thread}
       approval={entry.approval}
-      label={`Approval from ${entry.title}`}
-      heading={`Approval needed from ${entry.title}`}
+      label={gt("Approval from {title}", { title: entry.title })}
+      heading={
+        <T>
+          Approval needed from <Var>{entry.title}</Var>
+        </T>
+      }
     />
   );
 }

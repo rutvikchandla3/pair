@@ -1,7 +1,8 @@
+import { LegendList } from "@legendapp/list/react-native";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import type { Bot, BotSession, BotsSnapshot, EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
-import { FlatList, Platform, Pressable, View, type ScrollViewProps } from "react-native";
+import { Platform, Pressable, View, type ScrollViewProps } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -20,7 +21,7 @@ import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { retryBotsSnapshot, useBotsCommands, useBotsEnvironments } from "../../state/bots";
 import { startOpeningEnvironmentThread } from "../../state/threads";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { BotAvatar } from "./BotAvatar";
 import {
   type BotsEnvironmentEntry,
@@ -165,7 +166,7 @@ export function BotsScreen() {
 
   return (
     <View className="flex-1 bg-screen">
-      <FlatList
+      <LegendList
         data={rows}
         keyExtractor={(row) =>
           row.kind === "header"
@@ -173,6 +174,7 @@ export function BotsScreen() {
             : `bot:${row.entry.environmentId}:${row.bot.id}`
         }
         renderScrollComponent={Platform.OS === "ios" ? renderBotsScrollView : undefined}
+        estimatedItemSize={96}
         // The workspace header is transparent on iOS; UIKit insets the list below it.
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ flexGrow: 1, paddingBottom: listBottomPadding }}

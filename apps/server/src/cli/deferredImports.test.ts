@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -46,123 +47,138 @@ const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(Effect.provide(layerCliRuntime));
 
-it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imports", (it) => {
-  it.effect("runs commands that do not need them without loading them", () =>
-    Effect.gen(function* () {
-      hooks.importsAttempted.length = 0;
-      for (const args of [["--version"], ["--help"], ["project", "--help"], ["thread", "--help"]]) {
-        yield* runCli(args);
-      }
-      assert.deepEqual(hooks.importsAttempted, []);
-    }),
-  );
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()))(
+  "CLI deferred imports",
+  (it) => {
+    it.effect("runs commands that do not need them without loading them", () =>
+      Effect.gen(function* () {
+        hooks.importsAttempted.length = 0;
+        for (const args of [
+          ["--version"],
+          ["--help"],
+          ["project", "--help"],
+          ["thread", "--help"],
+        ]) {
+          yield* runCli(args);
+        }
+        assert.deepEqual(hooks.importsAttempted, []);
+      }),
+    );
 
-  it.effect("fails a server start on a broken import before resolving config", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-server-" });
-      const baseDir = NodePath.join(root, "state");
+    it.effect("fails a server start on a broken import before resolving config", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-server-" });
+        const baseDir = NodePath.join(root, "state");
 
-      for (const command of ["serve", "start"]) {
-        const exit = yield* runCli([command, "--base-dir", baseDir]).pipe(Effect.exit);
-        assert.isTrue(Exit.hasDies(exit));
-      }
+        for (const command of ["serve", "start"]) {
+          const exit = yield* runCli([command, "--base-dir", baseDir]).pipe(Effect.exit);
+          assert.isTrue(Exit.hasDies(exit));
+        }
 
-      assert.isFalse(yield* fs.exists(baseDir));
-    }),
-  );
+        assert.isFalse(yield* fs.exists(baseDir));
+      }),
+    );
 
-  it.effect("keeps server state when the offline project runtime fails to import", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-project-" });
-      const baseDir = NodePath.join(root, "state");
-      const runtimeStatePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
-      yield* persistServerRuntimeState({
-        path: runtimeStatePath,
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: 3_773,
-        }),
-      });
-      const unreachable: typeof globalThis.fetch = () =>
-        Promise.reject(new Error("connection refused"));
+    it.effect("keeps server state when the offline project runtime fails to import", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-project-" });
+        const baseDir = NodePath.join(root, "state");
+        const runtimeStatePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        yield* persistServerRuntimeState({
+          path: runtimeStatePath,
+          // An owner id skips the legacy liveness probe, so only the free lock decides.
+          state: {
+            ...(yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: 3_773,
+            })),
+            ownerId: "dead-server",
+          },
+        });
+        const unreachable: typeof globalThis.fetch = () =>
+          Promise.reject(
+            new TypeError("fetch failed", {
+              cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+            }),
+          );
 
-      const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, unreachable),
-        Effect.exit,
-      );
-
-      assert.isTrue(Exit.hasDies(exit));
-      assert.isTrue(yield* fs.exists(runtimeStatePath));
-      assert.isFalse(yield* fs.exists(NodePath.join(baseDir, "userdata", "server-owner.sqlite")));
-    }),
-  );
-
-  it.effect("forwards live project mutations without importing the offline runtime", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-live-project-" });
-      const baseDir = NodePath.join(root, "state");
-      const workspaceRoot = NodePath.join(root, "workspace");
-      yield* fs.makeDirectory(workspaceRoot);
-      yield* persistServerRuntimeState({
-        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: 3_773,
-        }),
-      });
-
-      hooks.importsAttempted.length = 0;
-      let mutations = 0;
-      const fetch: typeof globalThis.fetch = async (_input, init) => {
-        const isMutation = init?.method === "POST";
-        if (isMutation) mutations++;
-        return Response.json(
-          isMutation
-            ? {
-                id: "live-project",
-                title: NodePath.basename(workspaceRoot),
-                workspaceRoot,
-                defaultModelSelection: null,
-                scripts: [],
-                createdAt: "2026-01-01T00:00:00.000Z",
-                updatedAt: "2026-01-01T00:00:00.000Z",
-                deletedAt: null,
-              }
-            : { projects: [], updatedAt: "2026-01-01T00:00:00.000Z" },
+        const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
+          Effect.provideService(FetchHttpClient.Fetch, unreachable),
+          Effect.exit,
         );
-      };
 
-      const exit = yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, fetch),
-        Effect.exit,
-      );
+        assert.isTrue(Exit.hasDies(exit));
+        assert.isTrue(yield* fs.exists(runtimeStatePath));
+      }),
+    );
 
-      assert.isTrue(Exit.isSuccess(exit));
-      assert.equal(mutations, 1);
-      assert.deepEqual(hooks.importsAttempted, []);
-    }),
-  );
+    it.effect("forwards live project mutations without importing the offline runtime", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-deferred-live-project-" });
+        const baseDir = NodePath.join(root, "state");
+        const workspaceRoot = NodePath.join(root, "workspace");
+        yield* fs.makeDirectory(workspaceRoot);
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: 3_773,
+          }),
+        });
 
-  it.effect("never starts the history worker after an interrupted import", () =>
-    Effect.gen(function* () {
-      const history = yield* runCli(["__claude-history", "getSessionMessages", "session"]).pipe(
-        Effect.forkChild,
-      );
-      yield* Effect.promise(() => hooks.historyImportStarted.promise);
-      yield* Fiber.interrupt(history);
-      hooks.releaseHistoryImport.resolve();
-      yield* Effect.promise(() => import("../claudeHistoryWorker.ts"));
-      assert.equal(hooks.runClaudeHistoryWorker.mock.calls.length, 0);
+        hooks.importsAttempted.length = 0;
+        let mutations = 0;
+        const fetch: typeof globalThis.fetch = async (_input, init) => {
+          const isMutation = init?.method === "POST";
+          if (isMutation) mutations++;
+          return Response.json(
+            isMutation
+              ? {
+                  id: "live-project",
+                  title: NodePath.basename(workspaceRoot),
+                  workspaceRoot,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                  deletedAt: null,
+                }
+              : { projects: [], updatedAt: "2026-01-01T00:00:00.000Z" },
+          );
+        };
 
-      yield* runCli(["__claude-history", "getSessionMessages", "session"]);
-      yield* runCli(["__claude-history", "forkSession", "session", '{"dir":"/repo"}']);
-      assert.deepEqual(hooks.runClaudeHistoryWorker.mock.calls, [
-        ["getSessionMessages", "session", undefined],
-        ["forkSession", "session", '{"dir":"/repo"}'],
-      ]);
-    }),
-  );
-});
+        const exit = yield* runCli(["project", "add", workspaceRoot, "--base-dir", baseDir]).pipe(
+          Effect.provideService(FetchHttpClient.Fetch, fetch),
+          Effect.exit,
+        );
+
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.equal(mutations, 1);
+        assert.deepEqual(hooks.importsAttempted, []);
+      }),
+    );
+
+    it.effect("never starts the history worker after an interrupted import", () =>
+      Effect.gen(function* () {
+        const history = yield* runCli(["__claude-history", "getSessionMessages", "session"]).pipe(
+          Effect.forkChild,
+        );
+        yield* Effect.promise(() => hooks.historyImportStarted.promise);
+        yield* Fiber.interrupt(history);
+        hooks.releaseHistoryImport.resolve();
+        yield* Effect.promise(() => import("../claudeHistoryWorker.ts"));
+        assert.equal(hooks.runClaudeHistoryWorker.mock.calls.length, 0);
+
+        yield* runCli(["__claude-history", "getSessionMessages", "session"]);
+        yield* runCli(["__claude-history", "forkSession", "session", '{"dir":"/repo"}']);
+        assert.deepEqual(hooks.runClaudeHistoryWorker.mock.calls, [
+          ["getSessionMessages", "session", undefined],
+          ["forkSession", "session", '{"dir":"/repo"}'],
+        ]);
+      }),
+    );
+  },
+);

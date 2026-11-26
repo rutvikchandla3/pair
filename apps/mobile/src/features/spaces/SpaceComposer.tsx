@@ -23,11 +23,12 @@ import {
 } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
+import { Effect } from "effect";
 import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { MemberAvatar } from "../../components/MemberAvatar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -38,6 +39,7 @@ import {
   releasePendingAttachmentUploads,
 } from "../../lib/attachmentUpload";
 import { cn } from "../../lib/cn";
+import { uploadComposerAttachmentShared } from "../../state/composer-attachment-uploads";
 import {
   type DraftComposerAttachment,
   convertPastedImagesToAttachments,
@@ -136,7 +138,10 @@ export function SpaceComposer(props: {
 
   const onPaste = useNativePaste((uris) => {
     void convertPastedImagesToAttachments({ uris, existingCount: attachments.length })
-      .then(addAttachments)
+      .then((result) => {
+        addAttachments(result.attachments);
+        if (result.error !== null) Dialog.alert("Could not paste", result.error);
+      })
       .catch(() => Dialog.alert("Could not paste", "The image could not be read."));
   });
 
@@ -160,17 +165,25 @@ export function SpaceComposer(props: {
     let pending: ReadonlyArray<string> = [];
     if (sentAttachments.length > 0) {
       setSending(true);
-      const prepared = await prepareTurnAttachments({
-        environmentId: props.environmentId,
-        attachments: sentAttachments,
-        supportsImageUploads: true,
-      }).catch((error: unknown) => {
-        Dialog.alert(
-          "Could not upload attachments",
-          error instanceof Error && error.message.trim() !== "" ? error.message : "Try again.",
-        );
-        return null;
-      });
+      const prepared = await Effect.runPromise(
+        prepareTurnAttachments({
+          environmentId: props.environmentId,
+          attachments: sentAttachments,
+          supportsImageUploads: true,
+          uploadAttachment: (attachment) =>
+            uploadComposerAttachmentShared(props.environmentId, attachment),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              Dialog.alert(
+                "Could not upload attachments",
+                error.message.trim() !== "" ? error.message : "Try again.",
+              );
+              return null;
+            }),
+          ),
+        ),
+      );
       setSending(false);
       if (prepared === null || prepared.status !== "ready") return;
       uploaded = prepared.attachments.filter(
@@ -245,7 +258,7 @@ export function SpaceComposer(props: {
                 )}
               >
                 {token.mention.type === "pair" ? (
-                  <SymbolView name="sparkles" size={18} tintColorClassName="accent-icon" />
+                  <SymbolView name="robot" size={18} tintColorClassName="accent-icon" />
                 ) : (
                   <MemberAvatar
                     member={{ name: token.label, color: member?.color ?? "#71717a" }}

@@ -21,7 +21,6 @@ import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
 it.effect("preserves binary frames through the real socket proxy until the session ends", () =>
   Effect.gen(function* () {
-    const sessionEnd = yield* Deferred.make<void>();
     const hub = yield* Effect.acquireRelease(
       Effect.sync(() => new NodeWS.WebSocketServer({ port: 0 })),
       (server) =>
@@ -37,13 +36,23 @@ it.effect("preserves binary frames through the real socket proxy until the sessi
       yield* Effect.promise(() => new Promise<void>((resolve) => hub.once("listening", resolve)));
     const address = hub.address();
     if (typeof address !== "object" || !address) throw new Error("Missing hub port");
+    const upstreamClosed = Promise.withResolvers<void>();
     hub.on("connection", (socket) => {
+      socket.once("close", upstreamClosed.resolve);
       socket.send(Uint8Array.of(0x83));
       socket.on("message", (data, binary) => socket.send(data, { binary }));
     });
+    const invalidated = yield* Deferred.make<void>();
     const services = yield* Layer.build(
       HttpRouter.serve(DeviceHubProxy.layer, { disableListenLog: true }).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(
+          Layer.mock(SessionStore.SessionStore, {
+            cookieName: "test",
+            legacyCookieName: undefined,
+            awaitInvalidation: () => Deferred.await(invalidated),
+          }),
+        ),
         Layer.provide(
           Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
             authenticateWebSocketUpgrade: () =>
@@ -63,13 +72,6 @@ it.effect("preserves binary frames through the real socket proxy until the sessi
                 hub: { origin: `http://127.0.0.1:${address.port}` },
               }),
           } as DeviceService.DeviceService["Service"]),
-        ),
-        Layer.provide(
-          Layer.mock(SessionStore.SessionStore)({
-            cookieName: "t3_session",
-            legacyCookieName: undefined,
-            awaitInvalidation: () => Deferred.await(sessionEnd),
-          }),
         ),
       ),
     );
@@ -101,10 +103,10 @@ it.effect("preserves binary frames through the real socket proxy until the sessi
 
     // A removed member's session is revoked; their device socket closes with it.
     const closed = new Promise<void>((resolve) =>
-      client.addEventListener("close", () => resolve()),
+      client.addEventListener("close", () => resolve(), { once: true }),
     );
-    yield* Deferred.succeed(sessionEnd, undefined);
-    yield* Effect.promise(() => closed);
+    yield* Deferred.succeed(invalidated, undefined);
+    yield* Effect.promise(() => Promise.all([closed, upstreamClosed.promise]));
   }),
 );
 
@@ -135,6 +137,7 @@ it.live("closes an upstream socket that is still connecting without an unhandled
     );
     const connection = yield* Effect.promise(() => dialed.promise);
     const abandoned = new Promise<void>((resolve) => connection.once("close", () => resolve()));
+    connection.resume();
     yield* Fiber.interrupt(reading);
     yield* Effect.promise(() => abandoned);
   }),

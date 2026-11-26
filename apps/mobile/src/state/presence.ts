@@ -15,6 +15,7 @@ import {
   type PresenceState,
   type PresentMember,
 } from "@t3tools/client-runtime/state/presence";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { EMPTY_TEAM_MEMBERS } from "@t3tools/client-runtime/state/team";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -106,10 +107,12 @@ function stepReporter(
   const next = step(reporter.state, Date.now());
   reporter.state = next.state;
   if (next.report === undefined) return;
-  void presenceEnvironment.reportPresence.run(appAtomRegistry, {
-    environmentId,
-    input: next.report,
-  });
+  void runAtomCommand(
+    appAtomRegistry,
+    presenceEnvironment.reportPresence,
+    { environmentId, input: next.report },
+    { reportFailure: false },
+  );
 }
 
 export function mountPresenceReporter(environmentId: EnvironmentId): () => void {

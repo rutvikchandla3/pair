@@ -10,12 +10,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-/**
- * The public client ID of the GitHub App the device flow signs in with (no secret).
- * Unset turns the app sign-in off: no app tokens, no sign-in, nothing for clients to show.
- */
-export const CLIENT_ID_VARIABLE = "T3CODE_GITHUB_APP_CLIENT_ID";
-
 const KIND = SourceControlProviderKind.make("github");
 const REQUEST_TIMEOUT = Duration.seconds(15);
 const isOk = (status: number) => status >= 200 && status < 300;
@@ -252,8 +246,15 @@ export const make = (options: {
       },
       TokenResponse,
     ).pipe(Effect.mapError((cause) => new GitHubDeviceFlowError({ host, cause })));
-    if (response.error === "bad_refresh_token") {
-      yield* Effect.logWarning("GitHub refused the app sign-in refresh.", { host });
+    if (
+      response.error === "bad_refresh_token" ||
+      response.error === "incorrect_client_credentials"
+    ) {
+      // Final: the user revoked the app, the session lapsed, or this server's client cannot refresh it.
+      yield* Effect.logWarning("GitHub refused the app sign-in refresh; signing out.", {
+        host,
+        error: response.error,
+      });
       return { _tag: "revoked" };
     }
     if (response.access_token === undefined) {

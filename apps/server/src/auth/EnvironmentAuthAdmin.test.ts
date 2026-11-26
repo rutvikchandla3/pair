@@ -1,4 +1,5 @@
 import { AuthStandardClientScopes, type ManagedPolicyDocument, MemberId } from "@t3tools/contracts";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
@@ -46,6 +47,7 @@ const layerEnvironmentAuth = (
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(ServerEnvironment.layerIdentity),
     Layer.provide(layerServerConfig(overrides)),
+    Layer.provide(FeatureFlags.layerTest()),
   );
 
 const desktopAndLocalOnly: ManagedPolicyDocument = {
@@ -54,7 +56,7 @@ const desktopAndLocalOnly: ManagedPolicyDocument = {
   limits: { clients: ["desktop", "local-browser"] },
 };
 
-it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()))(
   "EnvironmentAuth administrative operations",
   (it) => {
     it.effect("refuses pairing links when the policy does not allow remote clients", () =>
@@ -88,6 +90,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         const startupPhone = yield* startup("192.168.1.20");
         const startupBrowser = yield* startup("127.0.0.1");
         yield* environmentAuth.createPairingLink({ subject: "one-time-token" });
+        yield* environmentAuth.issuePairingCredential({ access: "auto" });
 
         yield* EnvironmentAuth.make.pipe(
           Effect.provide(
@@ -138,6 +141,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           subject: "one-time-token",
           label: "CI phone",
         });
+        // An app approval code is never listed.
+        yield* environmentAuth.issuePairingCredential({ access: "auto" });
         const listedBeforeRevoke = yield* environmentAuth.listPairingLinks();
         const revoked = yield* environmentAuth.revokePairingLink(created.id);
         const listedAfterRevoke = yield* environmentAuth.listPairingLinks();

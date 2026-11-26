@@ -180,7 +180,7 @@ free-form URLs. That keeps one list of repos and lets session start map a projec
    with `runOnWorktreeCreate: true` ([t3ProjectFile.ts](../../../packages/contracts/src/t3ProjectFile.ts)).
 
 **Dockerfile and dev container teams (later).** `base: { type: "image", ref }` points at an image
-the team builds, e.g. with `devcontainer build --push` ([devcontainer.md](../../internals/devcontainer.md)).
+the team builds, e.g. with `devcontainer build --push` ([devcontainer](../../operations/01_devcontainer.md)).
 Pair checks a base contract (glibc, `bash`, `git`, `sudo`, uid 1000) and runs `provision.sh` on top.
 
 ## 3. The build pipeline
@@ -263,7 +263,7 @@ The workspace host applies `imageEnv` to every process in a sandbox from that bu
 ### The build is an orchestration flow
 
 A build follows the command and event pattern
-([overview](../../internals/overview.md#durable-intent-and-side-effects)): the
+([overview](../../internals/01_architecture.md#durable-intent-and-side-effects)): the
 [orchestrator](../../../apps/server/src/orchestration-v2/Orchestrator.ts) decides events with no I/O,
 and the [effect worker](../../../apps/server/src/orchestration-v2/EffectWorker.ts) calls the driver
 and feeds the result back as a command. The event store knows `project` and `thread` today

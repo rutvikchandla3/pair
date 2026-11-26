@@ -29,12 +29,13 @@ export const makeProjectCloneHooks = Effect.gen(function* () {
         })
         .pipe(
           Effect.asVoid,
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationDispatchCommandError({
-                message: "Failed to create clone project.",
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            cause._tag === "ProjectConflictError"
+              ? cause
+              : new OrchestrationDispatchCommandError({
+                  message: "Failed to create clone project.",
+                  cause,
+                }),
           ),
         ),
     onCloned: (project) =>

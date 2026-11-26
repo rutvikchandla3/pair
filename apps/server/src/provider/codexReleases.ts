@@ -3,7 +3,8 @@ export interface CodexReleaseAsset {
   readonly target: string;
   readonly url: string;
   readonly sha256: string;
-  readonly archiveBytes: number;
+  /** Null for an upstream release, whose package checksum is published without a size. */
+  readonly archiveBytes: number | null;
 }
 export const CODEX_RELEASES: Readonly<Record<string, CodexReleaseAsset>> = {
   "darwin-arm64": {

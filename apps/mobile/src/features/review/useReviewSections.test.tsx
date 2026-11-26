@@ -48,8 +48,8 @@ vi.mock("../../state/review", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     reviewEnvironment: {
-      diffPreview: ({ input }: { input: { cwd: string } }) => {
-        harness.diffPreviewCwds.push(input.cwd);
+      diffPreview: ({ input }: { input: { cwd: string; sourceKind: string } }) => {
+        harness.diffPreviewCwds.push(`${input.cwd}:${input.sourceKind}`);
         return Atom.make(null);
       },
     },
@@ -68,6 +68,9 @@ vi.mock("../../state/use-selected-thread-worktree", () => ({
   useSelectedThreadWorktree: () => ({ selectedThreadCwd: "/threads/checkout" }),
   useSelectedThreadRepositories: () => harness.repositories,
 }));
+vi.mock("../../state/use-thread-selection", () => ({
+  useThreadSelection: () => ({ selectedThreadProject: null }),
+}));
 vi.mock("./reviewState", () => ({ setReviewSelectedSectionId: () => {} }));
 
 import { useReviewSections } from "./useReviewSections";
@@ -76,7 +79,7 @@ it.each([
   [
     "one repository",
     null,
-    ["/threads/checkout"],
+    ["/threads/checkout:working-tree", "/threads/checkout:branch-range"],
     ["turn:2", "turn:1", "git:branch-range", "git:working-tree"],
     "git:branch-range",
   ],
@@ -111,7 +114,7 @@ it.each([
     try {
       act(() => root.render(<Consumer />));
       expect(seen).toEqual({ ids, selected });
-      expect(harness.diffPreviewCwds).toEqual(previewCwds);
+      expect([...new Set(harness.diffPreviewCwds)]).toEqual(previewCwds);
     } finally {
       act(() => root.unmount());
     }

@@ -38,7 +38,7 @@ import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRo
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settings/settingsLayout";
 import { SettingsEnvironmentPicker } from "../settings/SettingsEnvironmentPicker";
 import { useOptionalSettingsScope } from "../settings/SettingsScopeContext";
-import { searchableSetting } from "../settings/settingsSearch";
+import { useSearchableSetting } from "../settings/settingsSearch";
 import { ManagedControl } from "../ManagedPolicy";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -87,6 +87,7 @@ function sortMembers(members: ReadonlyArray<TeamMember>): ReadonlyArray<TeamMemb
 }
 
 export function TeamSettings() {
+  const searchableSetting = useSearchableSetting();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const teamEnvironmentIds = useTeamSettingsEnvironmentIds();
@@ -131,6 +132,7 @@ export function TeamSettings() {
 }
 
 function TeamMembersSection({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const searchableSetting = useSearchableSetting();
   const members = useTeamMembers(environmentId);
   const selfId = useCurrentMemberId(environmentId);
   const canInvite = useAtomValue(teamEnvironment.inviteMember.permissionAtom(environmentId));

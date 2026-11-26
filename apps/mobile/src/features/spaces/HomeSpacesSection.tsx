@@ -1,10 +1,10 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { type SidebarSpaceRow, sidebarSpaceRows } from "@t3tools/client-runtime/inbox";
 import { isSpaceOwner } from "@t3tools/client-runtime/spaces";
 import type { EnvironmentId, SpaceId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
@@ -13,7 +13,7 @@ import { IconButton } from "../../components/ui/IconButton";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
 import { useInboxSummary } from "../../state/inbox";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import {
   reportSpaceResult,
   spaceEnvironment,
@@ -25,6 +25,7 @@ import {
 } from "../../state/spaces";
 import { useIsTeamMode } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { Preferences as MobilePreferences } from "../../persistence/mobile-preferences";
 import {
   homeMoreLabel,
@@ -88,7 +89,7 @@ function HomeTeamForEnvironment(props: { readonly environmentId: EnvironmentId }
   const teamMode = useIsTeamMode(environmentId);
   const summary = useInboxSummary(environmentId);
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const registry = useContext(RegistryContext);
   const [expanded, setExpanded] = useState(false);
   const orderLoaded = AsyncResult.isSuccess(preferences);
   // Stored ids are only ever ranked against live spaces, so a stale one is harmless.
@@ -116,11 +117,19 @@ function HomeTeamForEnvironment(props: { readonly environmentId: EnvironmentId }
   useEffect(() => {
     if (!unremembered) return;
     const ids = shownKey.split(",");
-    savePreferences(spaceOrderUpdate(environmentId, (stored) => rememberSpaceOrder(stored, ids)));
-  }, [unremembered, shownKey, environmentId, savePreferences]);
+    void runAtomCommand(
+      registry,
+      saveMobilePreferences,
+      spaceOrderUpdate(environmentId, (stored) => rememberSpaceOrder(stored, ids)),
+      { reportFailure: false },
+    );
+  }, [unremembered, shownKey, environmentId, registry]);
   const move = (spaceId: string, delta: -1 | 1) =>
-    savePreferences(
+    void runAtomCommand(
+      registry,
+      saveMobilePreferences,
       spaceOrderUpdate(environmentId, (stored) => moveSpaceInOrder(stored, shown, spaceId, delta)),
+      { reportFailure: false },
     );
 
   return (

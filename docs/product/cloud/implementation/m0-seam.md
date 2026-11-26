@@ -1329,7 +1329,7 @@ git work around it: the turn-start baseline check, checkpoint capture, the files
 and run finalization's local status (02 §5). So it exercises exactly what 0.3 and 0.6 touch, for
 free.
 
-1. Start a local OTLP receiver as in [observability](../../../operations/observability.md)
+1. Start a local OTLP receiver as in [observability](../../../operations/04_observability.md)
    (Grafana LGTM), and export `T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics` in the
    shell that runs the dev server. Do not set `VITE_HTTP_URL` or `VITE_WS_URL`.
 2. In the PR's worktree, check out the PR's merge base. `vp run dev` (seeded from real data as

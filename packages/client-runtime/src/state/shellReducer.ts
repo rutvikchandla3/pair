@@ -138,10 +138,7 @@ export const isStaleShellDelta = (sequence: number, cursor: number, cursorFromDe
 
 export function applyShellStreamEvent(
   snapshot: OrchestrationV2ShellSnapshot,
-  event: Exclude<
-    OrchestrationV2ShellStreamItem,
-    { readonly kind: "snapshot" } | { readonly kind: "synchronized" }
-  >,
+  event: ShellStreamEvent,
 ): OrchestrationV2ShellSnapshot {
   if (event.sequence <= snapshot.snapshotSequence) return snapshot;
 
@@ -224,9 +221,9 @@ function batchRows<T extends { readonly id: unknown }>(rows: ReadonlyArray<T>) {
   };
 }
 
-export type ShellStreamEvent = Exclude<
+export type ShellStreamEvent = Extract<
   OrchestrationV2ShellStreamItem,
-  { readonly kind: "snapshot" } | { readonly kind: "synchronized" }
+  { readonly sequence: number }
 >;
 
 /** Apply ordered deltas with one index and at most one new array per collection. */

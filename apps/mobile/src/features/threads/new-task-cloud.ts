@@ -1,6 +1,11 @@
 import type { CloudTarget, PairCloudWorkspace } from "@t3tools/client-runtime/state/cloud-target";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { type EnvironmentId, type ProjectId, repositoryGroupingKeyOf } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ProjectId,
+  repositoryGroupingKeyOf,
+  trackedFoldersRefusal,
+} from "@t3tools/contracts";
 
 interface NewTaskCloudOption {
   readonly environmentId: EnvironmentId;
@@ -40,7 +45,9 @@ export const NO_NEW_TASK_CLOUD: NewTaskCloud = {
 /** The draft's pick (`cloudEnvironmentId`) wins, else the first launchable target. */
 export function resolveNewTaskCloud(input: {
   readonly cloudTarget: CloudTarget;
-  readonly project: Pick<EnvironmentProject, "environmentId" | "repositoryIdentity">;
+  readonly project: Pick<EnvironmentProject, "environmentId" | "repositoryIdentity"> & {
+    readonly trackedFolders?: ReadonlyArray<unknown> | undefined;
+  };
   readonly cloudEnvironmentId: EnvironmentId | undefined;
 }): NewTaskCloud {
   const { cloudTarget, project } = input;
@@ -51,6 +58,9 @@ export function resolveNewTaskCloud(input: {
   const repository = project.repositoryIdentity
     ? repositoryGroupingKeyOf(project.repositoryIdentity).replace(/^github\.com\//i, "")
     : "this repo";
+  // A cloud machine holds one checkout, so a project with tracked folders cannot launch there.
+  const trackedFoldersReason =
+    (project.trackedFolders?.length ?? 0) > 0 ? trackedFoldersRefusal({}, "sandbox") : undefined;
   const several = cloudTarget.targets.length > 1;
   const options = cloudTarget.targets.map((target) => ({
     target,
@@ -64,6 +74,7 @@ export function resolveNewTaskCloud(input: {
           ? `Cloud on ${target.label}`
           : "Cloud",
       disabledReason:
+        trackedFoldersReason ??
         target.disabledReason ??
         (target.projectId === null && !target.createWorkspace
           ? `Add ${repository} to ${target.label} first.`

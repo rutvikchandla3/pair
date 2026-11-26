@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -89,12 +90,17 @@ export const renderCliShim = (input: {
     ...header,
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
-    // The runtime stays mounted until killed; traps unmount it because background jobs ignore Ctrl-C.
+    // Its own session keeps a group signal (Ctrl-C, SSH hangup) from unmounting it under the
+    // running server, and ignoring TERM survives a stop sent to every process (systemd's default).
+    // Without setsid the extract fallback runs.
     "work=$(mktemp -d) || exit 1",
-    '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
+    "trap '' TERM",
+    'setsid "$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
-    `trap 'kill "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
-    "trap 'exit 130' INT TERM",
+    // It unmounts itself on TERM, which it now ignores, so the trap unmounts it. Lazily, like the
+    // runtime: the server's own children may still be exiting.
+    `trap '[ -z "$mount" ] || fusermount3 -uz "$mount" 2>/dev/null || fusermount -uz "$mount" 2>/dev/null; kill -HUP "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
+    "trap 'exit 130' INT TERM HUP",
     "mount=",
     'while kill -0 "$mounter" 2>/dev/null; do',
     '  mount=$(head -n 1 "$work/mount")',
@@ -107,15 +113,34 @@ export const renderCliShim = (input: {
     '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 1; }',
     '  mount="$work/squashfs-root"',
     "fi",
-    run("$mount"),
+    // The runtime sets this when it launches the app; the CLI skips its path-keyed compile cache on it.
+    'export APPIMAGE="$app"',
+    // The shell must outlive the CLI to unmount, so it forwards TERM and HUP; the terminal sends
+    // Ctrl-C to the CLI directly. A background child would read /dev/null, so pass stdin on fd 9.
+    // With stdin closed, `exec 9<&0` would end the shell; `command` makes it a normal error.
+    "{ command exec 9<&0; } 2>/dev/null || exec 9</dev/null",
+    `${run("$mount")} <&9 9<&- &`,
+    "cli=$!",
+    "exec 9<&-",
+    `trap 'kill -TERM "$cli" 2>/dev/null' TERM`,
+    `trap 'kill -HUP "$cli" 2>/dev/null' HUP`,
+    "trap '' INT",
+    "status=0",
+    'wait "$cli" || status=$?',
+    // A trapped signal interrupts wait; wait again for the CLI's own exit status.
+    'while kill -0 "$cli" 2>/dev/null; do',
+    "  status=0",
+    '  wait "$cli" || status=$?',
+    "done",
+    'exit "$status"',
     "",
   ].join("\n");
 };
 
-/** Where "Install t3 command" links the launcher, in the order it tries them. */
+/** Every folder a `t3` link may be in; new links go only to the user folders, listed first. */
 export const unixCommandDirectories = (home: string, platform: NodeJS.Platform) =>
   platform === "darwin"
-    ? ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/bin`]
+    ? [`${home}/.local/bin`, `${home}/bin`, "/opt/homebrew/bin", "/usr/local/bin"]
     : [`${home}/.local/bin`, `${home}/bin`];
 
 /** The launcher line naming the app a launcher runs; equal lines run the same app. */
@@ -169,7 +194,7 @@ export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment[
     environment.platform === "win32" ? "t3.cmd" : "t3",
   );
 
-export const install = Effect.gen(function* () {
+const installShim = Effect.fn("desktop.cliShim.install")(function* (repairLinks: boolean) {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (!environment.isPackaged) return Option.none<string>();
   const fs = yield* FileSystem.FileSystem;
@@ -197,12 +222,13 @@ export const install = Effect.gen(function* () {
     }
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
-      const staging = `${shimPath}.${process.pid}.tmp`;
+      // Unique per call: backend startup and the first-launch command install can race here.
+      const staging = `${shimPath}.${process.pid}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
       yield* logInfo("installed t3 launcher", { shimPath });
     }
-    if (!windows) {
+    if (repairLinks && !windows) {
       // A reinstall can move the launcher (a new T3 home); the `t3` command follows it.
       const repaired = yield* repairCommandLinks({
         directories: unixCommandDirectories(environment.homeDirectory, environment.platform),
@@ -218,6 +244,10 @@ export const install = Effect.gen(function* () {
         Effect.as(Option.none<string>()),
       ),
     ),
-    Effect.withSpan("desktop.cliShim.install"),
   );
 });
+
+/** Writes the launcher on launch and repoints this app's `t3` links from other T3 homes to it. */
+export const install = installShim(true);
+/** Only the launcher: Install in Settings decides itself what happens to another home's link. */
+export const installLauncher = installShim(false);

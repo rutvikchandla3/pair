@@ -41,6 +41,18 @@ export const RPC_THREAD_TARGETS: {
   [WS_METHODS.guestShareCreate]: thread,
   [WS_METHODS.serverRefreshProviders]: (input) => paths(input.cwd),
   [WS_METHODS.peerLinksAnswerRequest]: thread,
+  [WS_METHODS.peerLinksSubscribeThread]: thread,
+  [WS_METHODS.peerLinksThreadHistoryPage]: thread,
+  [WS_METHODS.peerLinksThreadItem]: thread,
+  [WS_METHODS.agentFeedbackAnswerRequest]: thread,
+  [WS_METHODS.providerMcpSignInStart]: thread,
+  [WS_METHODS.providerMcpSignInComplete]: thread,
+  [WS_METHODS.workspaceScanFolders]: (input) => paths(input.workspaceRoot),
+  [WS_METHODS.workspaceTaskFolder]: (input) => paths(input.worktreePath),
+  [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => [
+    { threadId: input.threadId },
+    ...paths(input.repositoryPath),
+  ],
   [WS_METHODS.threadMovePreview]: thread,
   [WS_METHODS.threadMoveToCloud]: thread,
   [WS_METHODS.sandboxViewing]: thread,
@@ -81,7 +93,7 @@ export const RPC_THREAD_TARGETS: {
   [WS_METHODS.projectsMutate]: (input) =>
     paths("workspaceRoot" in input ? input.workspaceRoot : undefined),
   [WS_METHODS.projectsCreateFromThread]: thread,
-  [WS_METHODS.shellOpenInEditor]: cwd,
+  [WS_METHODS.shellOpenInEditor]: (input) => [...cwd(input), ...paths(input.projectRoot)],
   [WS_METHODS.filesystemBrowse]: (input) => paths(input.partialPath, input.cwd),
   [WS_METHODS.filesystemGetMetadata]: (input) => paths(...input.paths),
   [WS_METHODS.agentSessionsImport]: (input) => paths(input.expectedWorkspaceRoot),
@@ -100,6 +112,8 @@ export const RPC_THREAD_TARGETS: {
       // An attachment id is unguessable, and a member learns one only from a thread they can read.
       case "attachment":
       case "native-app-icon":
+      // The environment's theme image, shown to everyone signed in.
+      case "environment-theme-background":
         return [];
     }
   },
@@ -113,10 +127,12 @@ export const RPC_THREAD_TARGETS: {
   ],
   [WS_METHODS.providerUploadFeedback]: thread,
   [WS_METHODS.subscribeVcsStatus]: cwd,
+  [WS_METHODS.subscribeVcsBranch]: cwd,
   [WS_METHODS.subscribeWorktreeSetup]: thread,
   [WS_METHODS.worktreeSetupCancel]: thread,
   [WS_METHODS.vcsPull]: cwd,
   [WS_METHODS.vcsRefreshStatus]: cwd,
+  [WS_METHODS.vcsRefreshBranch]: cwd,
   [WS_METHODS.vcsListRefs]: cwd,
   [WS_METHODS.vcsCreateWorktree]: (input) => paths(input.cwd, input.path),
   [WS_METHODS.vcsRemoveWorktree]: (input) => paths(input.cwd, input.path),
@@ -174,6 +190,7 @@ export const RPC_THREAD_TARGETS: {
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: thread,
   [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: (input) => paths(input.worktreePath),
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: thread,
+  [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: thread,
   [WS_METHODS.lineageRead]: thread,
   [WS_METHODS.threadBranchOffDraft]: (input) => [{ threadId: input.sourceThreadId }],
   [WS_METHODS.threadBranchOff]: (input) => [{ threadId: input.sourceThreadId }],
@@ -222,6 +239,8 @@ export const RPC_THREAD_TARGET_EXEMPT: { readonly [M in WsMethod]?: string } = {
     "A refused or revoked subscription must look like a missing thread's (11 §4), not fail: the handler asserts access and ends it with ThreadAccessRevoked.",
   [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]:
     "A batch: the handler drops the titles the viewer cannot open, so one hidden id does not fail the rest.",
+  [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]:
+    "A batch: the handler drops the threads the viewer cannot open, so one hidden id does not fail the rest.",
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]:
     "`before` is a page cursor, not a target; the page's SQL keeps only threads the viewer can open.",
   [WS_METHODS.sandboxStopById]:
@@ -308,6 +327,16 @@ export const RPC_OUTPUT_FILTERED: { readonly [M in WsMethod]?: string } = {
     "lineage/BranchLineageService.ts: the source's holder only, who may open the source",
   [WS_METHODS.offerDiff]:
     "lineage/BranchLineageService.ts offerDiff: whoever may open the offer's source or branch",
+  [WS_METHODS.pullRequestsLinkedThreads]:
+    "pullRequest/linkedThreads.ts listLinkedPullRequestThreads: only threads the caller may open",
+  [WS_METHODS.issuesLinkedThreads]:
+    "orchestration-v2/ThreadIssueService.ts linkedThreads: only threads the caller may open",
+  [WS_METHODS.workflowsSubscribe]:
+    "ws.ts workflows handlers: only runs whose origin thread the caller may open (viewerMayOpen); runs with no origin thread are admins'",
+  [WS_METHODS.workflowsGet]:
+    "ws.ts workflows handlers: a run whose origin thread the caller may not open reads as missing; runs with no origin thread are admins'",
+  [WS_METHODS.workspaceListFolders]:
+    "workspace/WorkspaceFolders.ts list: folder paths on the server's own disk, refused on a project that refuses tracked folders (refusesTrackedFolders)",
 };
 
 const ownBinary = "`executablePath` is the server's own binary, not a machine's.";

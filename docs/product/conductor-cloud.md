@@ -258,7 +258,7 @@ flowchart TB
 
 3. **`pair-runner` (new, inside each VM).** A small Node process baked into the image. It dials out
    to the team server over one authenticated WebSocket, so the VM needs no inbound ports and works in a
-   private VPC or behind NAT. This is the same idea as [T3 Connect](../internals/t3-connect.md). It
+   private VPC or behind NAT. This is the same idea as [T3 Connect](../internals/06_t3-connect.md). It
    multiplexes spawn and stdio, PTY, file system operations, and TCP tunnels for previews and SSH. It
    uses a sandbox-scoped token the server mints, and that token can reach only its own sandbox channel.
 

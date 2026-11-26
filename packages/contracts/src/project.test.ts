@@ -10,6 +10,8 @@ import {
   ReceivedProjectIcon,
   StoredProjectIcon,
   ProjectReadFileError,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectCreatePayload,
   ProjectUpdatePayload,
   ProjectMutation,
@@ -17,6 +19,10 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   ProjectFileFailure,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
+  refusesTrackedFolders,
+  trackedFoldersRefusal,
 } from "./project.ts";
 import { SandboxAsleep, SandboxId } from "./sandbox.ts";
 
@@ -36,6 +42,45 @@ const decodeOldWriteError = Schema.decodeUnknownSync(
 );
 
 describe("project RPC errors", () => {
+  it("keeps whitespace in file paths across the wire", () => {
+    const roundTrip = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: S["Type"]) =>
+      Schema.decodeUnknownSync(schema)(Schema.encodeSync(schema)(value));
+
+    for (const relativePath of [" ", " report.txt", "report.txt\t"]) {
+      const cwd = "/workspace";
+      const resolvedPath = `${cwd}/${relativePath}`;
+      expect(roundTrip(ProjectReadFileInput, { cwd, relativePath }).relativePath).toBe(
+        relativePath,
+      );
+      expect(
+        roundTrip(ProjectWriteFileInput, { cwd, relativePath, contents: "" }).relativePath,
+      ).toBe(relativePath);
+      expect(
+        roundTrip(ProjectReadFileResult, {
+          relativePath,
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+        }).relativePath,
+      ).toBe(relativePath);
+      expect(roundTrip(ProjectWriteFileResult, { relativePath }).relativePath).toBe(relativePath);
+      for (const FileError of [ProjectReadFileError, ProjectWriteFileError]) {
+        const error = new FileError({
+          cwd,
+          relativePath,
+          failure: "operation_failed",
+          resolvedPath,
+          operationPath: resolvedPath,
+        });
+        expect(roundTrip(FileError, error)).toMatchObject({
+          relativePath,
+          resolvedPath,
+          operationPath: resolvedPath,
+        });
+      }
+    }
+  });
+
   it("derives stable messages from structured request context while retaining causes", () => {
     const cause = new Error("sensitive platform detail");
     const searchError = new ProjectSearchEntriesError({
@@ -218,3 +263,13 @@ effectIt.effect("an icon kind from a newer server shows the default icon", () =>
     assert.strictEqual(broken._tag, "Failure");
   }),
 );
+
+it("refuses tracked folders on a workspace first, then on cloud-only servers and sandbox paths", () => {
+  const workspace = { roots: [{ projectId: "root-1", name: "api" }] };
+  expect(refusesTrackedFolders({}, "local")).toBe(false);
+  expect(refusesTrackedFolders({ roots: [] }, "local")).toBe(false);
+  expect(refusesTrackedFolders(workspace, "local")).toBe(true);
+  expect(refusesTrackedFolders({}, "cloud-only")).toBe(true);
+  expect(refusesTrackedFolders({}, "sandbox")).toBe(true);
+  expect(trackedFoldersRefusal(workspace, "cloud-only")).toContain("Workspace settings");
+});

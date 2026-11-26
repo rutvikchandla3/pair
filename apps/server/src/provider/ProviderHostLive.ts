@@ -7,11 +7,14 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
+import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import {
@@ -19,6 +22,7 @@ import {
   type SandboxEnvironmentFor,
 } from "../sandbox/providers/SandboxProviderHome.ts";
 import * as DocumentText from "./DocumentText.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 
 /** A session cwd's machine: its spawner and agent scope, and the env its provider starts on. */
@@ -73,7 +77,22 @@ export const layer = Layer.effect(
     const fileSystem = yield* FileSystem.FileSystem;
     const workspaceHosts = yield* WorkspaceHosts.WorkspaceHosts;
     const sandboxEnvironment = yield* sandboxEnvironmentFor;
+    // Optional so standalone provider layers in tests probe at once.
+    const lifecycleEvents = yield* Effect.serviceOption(
+      ServerLifecycleEvents.ServerLifecycleEvents,
+    );
+    // Optional so hosts built without the preview layer still construct.
+    const portDiscovery = yield* Effect.serviceOption(PortScanner.PortDiscovery);
+    // Optional like the services above; without it the bundled policy still applies.
+    const manifest = yield* Effect.serviceOption(ModelManifest.ModelManifest);
+    const currentManifest = Option.match(manifest, {
+      onNone: () => Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      onSome: (service) => service.current,
+    });
     return ProviderHost.ProviderHost.of({
+      compatibility: Effect.fn("ProviderHost.compatibility")(function* (driver, version) {
+        return ModelManifest.providerCompatibility(yield* currentManifest, driver, version);
+      }),
       paths: {
         cwd: config.cwd,
         baseDir: config.baseDir,
@@ -88,6 +107,14 @@ export const layer = Layer.effect(
         subscribe: serverSettings.subscribeChanges,
       },
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
+      ...Option.match(lifecycleEvents, {
+        onNone: () => ({}),
+        onSome: (events) => ({ awaitServerReady: events.awaitReady }),
+      }),
+      ...Option.match(portDiscovery, {
+        onNone: () => ({}),
+        onSome: (discovery) => ({ trackAgent: discovery.trackAgent }),
+      }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
       // DocumentText owns the path-resolution span.

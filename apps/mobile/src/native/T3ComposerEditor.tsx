@@ -12,6 +12,7 @@ export function ComposerEditor({
   skills: _skills,
   selection,
   onPasteImages,
+  onPasteImagesPending: _onPasteImagesPending,
   onPasteText: _onPasteText,
   style,
   textStyle,
@@ -35,6 +36,7 @@ export function ComposerEditor({
       blur: () => inputRef.current?.blur(),
       setSelection: (nextSelection) =>
         inputRef.current?.setSelection(nextSelection.start, nextSelection.end),
+      flushPendingInput: async () => {},
     }),
     [],
   );

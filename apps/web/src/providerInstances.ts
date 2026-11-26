@@ -43,6 +43,11 @@ export interface ProviderInstancePickerViewer {
   readonly currentInstanceId: ProviderInstanceId | undefined;
 }
 
+/** Status dots share one corner per user, so a badge on one row can't move only that row's dot. */
+export function hasInstanceBadge(entries: ReadonlyArray<ProviderInstanceEntry>): boolean {
+  return entries.some((entry) => shouldShowInstanceBadge(entry, entries));
+}
+
 export function isProviderInstanceSelectableBy(
   entry: ProviderInstanceEntry,
   viewer: ProviderInstancePickerViewer | null,

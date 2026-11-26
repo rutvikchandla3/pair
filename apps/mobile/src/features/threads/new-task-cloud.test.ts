@@ -1,5 +1,5 @@
 import type { CloudTargetOption } from "@t3tools/client-runtime/state/cloud-target";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, trackedFoldersRefusal } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { NO_NEW_TASK_CLOUD, resolveNewTaskCloud } from "./new-task-cloud";
@@ -115,6 +115,20 @@ describe("resolveNewTaskCloud", () => {
       expected: expect.objectContaining({
         available: false,
         message: "Pair Cloud is offline.",
+        target: null,
+      }),
+    },
+    {
+      name: "a project with tracked folders, which Cloud refuses",
+      project: {
+        ...macProject,
+        trackedFolders: [{ path: "/workspace/api", name: "api" }],
+      },
+      cloudTarget: { kind: "targets" as const, targets: [option(cloud, "Pair Cloud", "p1")] },
+      cloudEnvironmentId: undefined,
+      expected: expect.objectContaining({
+        available: false,
+        message: trackedFoldersRefusal({}, "sandbox"),
         target: null,
       }),
     },

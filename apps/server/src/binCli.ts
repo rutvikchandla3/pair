@@ -1,4 +1,5 @@
 import { doctorCommand } from "./cli/doctor.ts";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import { policyCommand } from "./cli/policy.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -21,12 +22,21 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
+import { feedbackCommand } from "./cli/feedback.ts";
 import { threadCommand } from "./cli/thread.ts";
+import { workflowCommand } from "./cli/workflow.ts";
 import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
 import { drainCommand } from "./cli/drain.ts";
+import {
+  confirmCliInstall,
+  inTerminalForeground,
+  installCommand,
+  offerCliInstall,
+} from "./cli/install.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
-import { serviceLauncherCommand } from "./cli/serviceLauncher.ts";
+import { runServiceLauncherCli } from "./cli/serviceLauncher.ts";
+import { speechWorkerCommand } from "./cli/speechWorker.ts";
 import { claudeHistoryCommand } from "./cli/claudeHistory.ts";
 import { sshHelperCommand } from "./cli/sshHelper.ts";
 import { serviceCommand } from "./cli/service.ts";
@@ -36,7 +46,12 @@ import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
+const layerCliRuntime = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NetService.layer,
+  FeatureFlags.layer,
+);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
@@ -87,14 +102,23 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       browserCommand,
       projectCommand,
       threadCommand,
+      feedbackCommand,
+      workflowCommand,
       upCommand,
       statusCommand,
       serviceCommand,
       updateCommand,
       drainCommand,
+      installCommand,
       uninstallCommand,
-      serviceLauncherCommand,
+      // bin.ts runs the bare service invocation; this keeps flags and help working like other commands.
+      Command.make("__service-launcher").pipe(
+        Command.unlisted,
+        // The launcher owns shutdown until its child exits; `runMain` would interrupt that shutdown.
+        Command.withHandler(() => Effect.sync(() => void runServiceLauncherCli())),
+      ),
       claudeHistoryCommand,
+      speechWorkerCommand,
       sshHelperCommand,
 
       servicePreflightCommand,
@@ -112,7 +136,22 @@ export const cli = makeCli();
 export function runCli() {
   extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
-  Command.run(cli, { version: packageJson.version }).pipe(
+  offerCliInstall({
+    args: process.argv.slice(2),
+    // A child started over IPC (a service launcher) has no one to answer.
+    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.send === undefined,
+    foreground: inTerminalForeground,
+    confirm: confirmCliInstall,
+  }).pipe(
+    // The offer handles its own errors; even an unexpected defect must not stop the command.
+    Effect.catchDefect(() => Effect.succeed(true)),
+    Effect.flatMap((proceed) =>
+      proceed
+        ? Command.run(cli, { version: packageJson.version })
+        : Effect.sync(() => {
+            process.exitCode = 130;
+          }),
+    ),
     Effect.scoped,
     Effect.provide(layerCliRuntime),
     NodeRuntime.runMain,
