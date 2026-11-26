@@ -1,4 +1,4 @@
-import { T, useGT, useMessages } from "gt-react-native";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
@@ -753,7 +753,7 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
-      (workspaceMode !== "local" && !selectedBranchName) ||
+      (workspaceMode !== "local" && flow.isGitRepo && !selectedBranchName) ||
       flow.cloudBranch?.kind === "block"
     ) {
       return null;
@@ -862,7 +862,8 @@ export function NewTaskDraftScreen(props: {
           ? gt("Starting the thread…")
           : creatingOnPairCloud !== null
             ? `Creating the workspace on ${creatingOnPairCloud}…`
-            : flow.workspaceMode !== "local" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
+            : flow.workspaceMode !== "local" &&
+                (!flow.isGitRepoKnown || (flow.isGitRepo && !flow.selectedBranchName))
               ? flow.workspaceMode === "cloud"
                 ? "Choose a base branch before starting a machine."
                 : gt("Choose a base branch before creating a worktree.")
@@ -878,7 +879,9 @@ export function NewTaskDraftScreen(props: {
     void KeyboardController.dismiss({ animated: true });
     navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
   };
-  const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
+  const openContextPicker = (
+    routeName: "NewTaskBranch" | "NewTaskEnvironment" | "NewTaskRepositories",
+  ) => {
     if (isComposerInteractionLocked) {
       return;
     }
@@ -1001,7 +1004,9 @@ export function NewTaskDraftScreen(props: {
     );
 
   const workspaceDisabled =
-    isComposerInteractionLocked || !flow.isGitRepo || creatingOnPairCloud !== null;
+    isComposerInteractionLocked ||
+    !(flow.isGitRepo || flow.tracksGitRepositories) ||
+    creatingOnPairCloud !== null;
   // Off a cloud-only server the control stays the two-way toggle it always was.
   const offersCloud = flow.cloud.offered;
   const workspaceControl = (
@@ -1112,25 +1117,53 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const startsNewWorktree = flow.workspaceMode === "worktree";
+  const offersRepositoryChoice =
+    startsNewWorktree && (flow.worktreeRepositoryChoices?.length ?? 0) > 0;
   const workspaceControls = (
-    <View className="flex-row items-center gap-1 px-2">
+    <View className="flex-row flex-wrap items-center gap-x-1 px-2">
       {workspaceMenu(workspaceControl)}
 
-      <View className="min-w-0 shrink">
-        <ComposerInlineControl
-          accessibilityLabel={
-            flow.workspaceMode === "local"
-              ? gt("Branch: {branch}", { branch: selectedBranchLabel })
-              : gt("Base branch: {branch}", { branch: selectedBranchLabel })
-          }
-          chevronDirection="right"
-          disabled={isComposerInteractionLocked || !flow.isGitRepo}
-          icon="arrow.triangle.branch"
-          label={showBranchLoading ? gt("Loading branches…") : selectedBranchLabel}
-          maxWidth="100%"
-          onPress={() => openContextPicker("NewTaskBranch")}
-        />
-      </View>
+      {offersRepositoryChoice ? (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityHint={gt("Chooses the repositories the new worktree holds")}
+            accessibilityLabel={gt("Repositories in the new worktree: {selection}", {
+              selection: flow.worktreeRepositorySelection.label,
+            })}
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked}
+            icon="folder.badge.plus"
+            label={flow.worktreeRepositorySelection.label}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskRepositories")}
+            {...(flow.worktreeRepositorySelection.needsChoice ? { tone: "warning" as const } : {})}
+          />
+        </View>
+      ) : null}
+      {startsNewWorktree && !flow.isGitRepo ? (
+        <View className="min-h-8 min-w-0 shrink justify-center px-2">
+          <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+            <T>Each repository starts from its own default branch</T>
+          </Text>
+        </View>
+      ) : (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityLabel={
+              flow.workspaceMode === "local"
+                ? gt("Branch: {branch}", { branch: selectedBranchLabel })
+                : gt("Base branch: {branch}", { branch: selectedBranchLabel })
+            }
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked || !flow.isGitRepo}
+            icon="arrow.triangle.branch"
+            label={showBranchLoading ? gt("Loading branches…") : selectedBranchLabel}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskBranch")}
+          />
+        </View>
+      )}
     </View>
   );
 
@@ -1244,10 +1277,17 @@ export function NewTaskDraftScreen(props: {
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
-            <T>
-              Your draft is saved on this device. Connect to an environment to choose its first
-              model.
-            </T>
+            {environmentConnected && selectedEnvironmentServerConfig ? (
+              <T>
+                Your draft is saved on this device. <Var>{selectedEnvironmentLabel}</Var> has no
+                model available. Install or sign in to a provider there to choose one.
+              </T>
+            ) : (
+              <T>
+                Your draft is saved on this device. Connect to an environment to choose its first
+                model.
+              </T>
+            )}
           </Text>
           <ComposerEditor
             draftKey={flow.draftKey}
@@ -1345,6 +1385,7 @@ export function NewTaskDraftScreen(props: {
         onResumeQueue={null}
         onSendMessage={handleStart}
         offersSideChat={false}
+        onSendCommand={async () => null}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
         onRespondToApproval={async () => {}}

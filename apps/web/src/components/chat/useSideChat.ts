@@ -122,7 +122,7 @@ export function useSideChat(input: {
     } else if (modelSelection !== undefined) {
       useComposerDraftStore.getState().setModelSelection(targetRef, modelSelection);
     }
-    useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
+    useRightPanelStore.getState().openThread(threadRef, targetThreadId);
     return true;
   };
   const open = async (message?: SideChatMessage) => {
@@ -162,6 +162,6 @@ export async function openSideChatOn(threadRef: ScopedThreadRef): Promise<string
     // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
     return "The side chat was created, but it did not reach this client.";
   }
-  useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
+  useRightPanelStore.getState().openThread(threadRef, targetThreadId);
   return null;
 }

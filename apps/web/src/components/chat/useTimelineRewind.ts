@@ -154,7 +154,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
               members: team.members,
               me: team.currentMemberId,
             }).map(({ memberId, count }) => ({ name: team.nameOf(memberId), count }));
-      const checkpoint = findRevertCheckpoint(serverProjection?.checkpoints ?? [], turnCount);
+      const checkpoint = findRevertCheckpoint(serverProjection ?? null, turnCount);
       openRevertConfirm(routeThreadKey, {
         turnCount,
         messageId,
@@ -177,7 +177,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       turnCount,
       restoreFiles,
       // Keep the live checkpoint identity when command context refetches a bounded window.
-      checkpoint: findRevertCheckpoint(serverProjection?.checkpoints ?? [], turnCount),
+      checkpoint: findRevertCheckpoint(serverProjection, turnCount),
       draftTarget: composerDraftTarget,
       composerHasPendingAttachments: composerRef.current?.hasPendingAttachments() === true,
       createAssetUrl: createAttachmentAssetUrl,

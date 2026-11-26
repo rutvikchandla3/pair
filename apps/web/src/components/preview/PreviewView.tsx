@@ -96,6 +96,7 @@ import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
   alternatePreviewRuntime,
   machineBrowserProfileId,
+  useDesktopLoadsLoopback,
   useRendersServerTabNatively,
 } from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
@@ -212,6 +213,7 @@ export function PreviewView({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
   const machineBrowser = useEnvironmentHasMachineBrowser(threadRef.environmentId);
+  const desktopLoadsLoopback = useDesktopLoadsLoopback(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
@@ -477,6 +479,7 @@ export function PreviewView({
     primaryEnvironmentId,
     serverBrowser,
     machineBrowser,
+    desktopLoadsLoopback,
     snapshot,
   );
   const moveLabel =
@@ -1002,6 +1005,7 @@ export function PreviewView({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
+      data-preview-view
     >
       {pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech

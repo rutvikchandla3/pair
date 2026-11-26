@@ -99,7 +99,7 @@ The events carry no prompts or file contents, but a "nothing leaves" promise mus
 the kit's managed policy sets `telemetry: false`. Second, a phone gets notifications only through
 Expo, and the body is the thread's title. Third, a server reached through T3 Connect sends all
 client traffic through the managed Cloudflare tunnel that T3's relay allocates
-([T3 Connect](../../internals/t3-connect.md)). TLS for that tunnel ends at Cloudflare's edge
+([T3 Connect](../../internals/06_t3-connect.md)). TLS for that tunnel ends at Cloudflare's edge
 (inferred from how Cloudflare Tunnel works), so the kit turns T3 Connect off (section 5).
 
 ## 2. Prior art
@@ -549,7 +549,7 @@ Terraform first, because one tool covers AWS and GCP and BYOC buyers already run
   reads its release host from `T3CODE_RELEASE_BASE_URL`
   ([cliRelease.ts](../../../packages/shared/src/cliRelease.ts)), whose default is upstream T3
   Code's `pingdotgg/t3code`, so the kit sets it to Pair's. The new release should still install
-  through the [launcher's trial and rollback](../../internals/server-updates.md), so a failed
+  through the [launcher's trial and rollback](../../internals/07_server-updates.md), so a failed
   migration restores the SQLite snapshot (inferred: the release format must support this).
 - **Drain, then restart.** The kit's upgrade drains the server first (M2, decision 18). Upgrades
   still interrupt running agents: provider adapters run in the server process, and when it
@@ -566,13 +566,13 @@ Terraform first, because one tool covers AWS and GCP and BYOC buyers already run
 
 ### Observability the customer sees
 
-| Signal                       | Where                                                                                                                                                                                                                 |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server traces, logs, metrics | The server's existing OTLP export ([observability](../../operations/observability.md), [telemetry](../../user/telemetry.md)), pointed at the customer's collector. The kit can deploy an ADOT collector to CloudWatch |
-| Driver metrics               | New, in [Metrics.ts](../../../apps/server/src/observability/Metrics.ts): machines by state, create and wake latency, driver call errors by cloud error code, orphans found by `list`                                  |
-| Driver health                | The network path check from lesson 6, shown on Settings → Cloud → Compute                                                                                                                                             |
-| Runner logs                  | Over the runner socket into the server's trace (doc 03). The EC2 console output covers a runner that never connects                                                                                                   |
-| Cloud audit                  | CloudTrail or Cloud Audit Logs, joined to Pair's sandbox events by the `pair.sandbox` tag (`pair-sandbox` on GCE)                                                                                                     |
+| Signal                       | Where                                                                                                                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Server traces, logs, metrics | The server's existing OTLP export ([observability](../../operations/04_observability.md), [telemetry](../../user/telemetry.md)), pointed at the customer's collector. The kit can deploy an ADOT collector to CloudWatch |
+| Driver metrics               | New, in [Metrics.ts](../../../apps/server/src/observability/Metrics.ts): machines by state, create and wake latency, driver call errors by cloud error code, orphans found by `list`                                     |
+| Driver health                | The network path check from lesson 6, shown on Settings → Cloud → Compute                                                                                                                                                |
+| Runner logs                  | Over the runner socket into the server's trace (doc 03). The EC2 console output covers a runner that never connects                                                                                                      |
+| Cloud audit                  | CloudTrail or Cloud Audit Logs, joined to Pair's sandbox events by the `pair.sandbox` tag (`pair-sandbox` on GCE)                                                                                                        |
 
 ### Support boundary
 

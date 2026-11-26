@@ -5,6 +5,10 @@ that calls it. It is a project made of other projects on the same machine. Each 
 its own folder with a fresh checkout of every repository, so the agent can read and edit across
 them and you review the result in one place.
 
+A workspace and a [project with several repositories](./multi-repo-projects.md) are two different
+ways to cover more than one repository, and a project is one or the other, never both. Tracked
+folders can't be added to a workspace; manage its repositories in its settings instead.
+
 ## Create a workspace
 
 A workspace needs 2 to 8 repositories. Each one must already be a project on that machine, its

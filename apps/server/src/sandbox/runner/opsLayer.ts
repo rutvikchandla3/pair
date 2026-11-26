@@ -60,9 +60,12 @@ const layerAgentSpawner = Layer.effect(
 const layerAlwaysActive = Layer.succeed(
   BackgroundPolicy.BackgroundPolicy,
   BackgroundPolicy.BackgroundPolicy.of({
+    // @effect-diagnostics-next-line effectFnOpportunity:off -- constant answers for a runner with no clients.
     reportClientActivity: () => Effect.void,
+    // @effect-diagnostics-next-line effectFnOpportunity:off -- constant answers for a runner with no clients.
     removeRpcClient: () => Effect.void,
     snapshot: Effect.die("The sandbox runner keeps no background policy snapshot."),
+    // @effect-diagnostics-next-line effectFnOpportunity:off -- constant answers for a runner with no clients.
     shouldRunScopeWork: () => Effect.succeed(true),
     shouldRunOpportunisticWork: Effect.succeed(true),
   }),

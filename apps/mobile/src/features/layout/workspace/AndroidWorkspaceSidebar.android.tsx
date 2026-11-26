@@ -31,7 +31,7 @@ export function AndroidWorkspaceSidebar() {
   const { revealPrimarySidebar, startNewTask } = useAdaptiveWorkspaceLayout();
   const selectedPullRequest = useNavigationState(selectedPullRequestKey);
   const selectedIssue = useNavigationState(selectedIssueKey);
-  // Settings and the page tabs cover the sidebar.
+  // Settings and the one-page tabs cover the sidebar.
   const coveredByPage =
     (useAndroidWorkspaceRoot()?.settingsOpen ?? false) || isPageTab(workspace.state.selectedTab);
   const bottomClearance = floatingTabsEnabled

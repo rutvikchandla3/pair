@@ -4,8 +4,8 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -185,17 +185,16 @@ describe("provider workspace snapshot refresh atom", () => {
     let droppedReplies = options?.droppedReplies ?? 0;
     const providersAtom = Atom.make<ReadonlyArray<ServerProvider> | null>(initialProviders);
     const responses: Response[] = [...(initialResponses ?? [])];
-    const run = vi.fn(async () => {
-      const providers = await (responses.shift() ?? (() => null))();
-      if (providers === null) {
-        return AsyncResult.failure<{ providers: ReadonlyArray<ServerProvider> }, string>(
-          Cause.fail("offline"),
-        );
-      }
-      if (droppedReplies > 0) droppedReplies -= 1;
-      else registry.set(providersAtom, providers);
-      return AsyncResult.success({ providers });
-    });
+    const run = vi.fn(() =>
+      Effect.promise(async () => (responses.shift() ?? (() => null))()).pipe(
+        Effect.flatMap((providers) => {
+          if (providers === null) return Effect.fail("offline");
+          if (droppedReplies > 0) droppedReplies -= 1;
+          else registry.set(providersAtom, providers);
+          return Effect.succeed({ providers });
+        }),
+      ),
+    );
     const family = createProviderWorkspaceSnapshotRefreshAtomFamily({
       providers: () => providersAtom,
       refreshProviders: { label: "refresh", run },
@@ -212,11 +211,10 @@ describe("provider workspace snapshot refresh atom", () => {
     // A second composer on the same target shares the scan.
     registry.mount(family({ environmentId, instanceId: provider.instanceId, cwd }))();
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith(
-      expect.anything(),
-      { environmentId, input: { instanceId: provider.instanceId, cwd } },
-      {},
-    );
+    expect(run).toHaveBeenCalledWith(expect.anything(), {
+      environmentId,
+      input: { instanceId: provider.instanceId, cwd },
+    });
     responses.push(() => withSnapshot("2026-01-01T00:00:00.000Z"));
     await vi.advanceTimersByTimeAsync(0);
     registry.refresh(atom);

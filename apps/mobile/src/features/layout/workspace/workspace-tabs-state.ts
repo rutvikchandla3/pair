@@ -17,7 +17,7 @@ export type WorkspaceTab = NavigationTab;
 export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
-/** Settings, Chats, pull requests and issues pair a list with a detail column; Usage and Bots are one page. */
+/** Settings, Chats, pull requests and issues pair a list with a detail column; the others are one page. */
 export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
   return settingsOpen || !isPageTab(tab);
 }
@@ -56,6 +56,7 @@ export function initialWorkspaceTabsState(
       pullRequests: emptyTab(),
       issues: emptyTab(),
       bots: emptyTab(),
+      workflows: emptyTab(),
       usage: emptyTab(),
       settings: emptyTab(),
     },

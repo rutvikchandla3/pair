@@ -19,7 +19,7 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { CloudIcon, FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { TerminalIcon } from "lucide-react";
 import { sandboxStatePresentation } from "@t3tools/client-runtime/state/sandbox";
 import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -54,7 +54,6 @@ import {
 } from "./Sidebar.logic";
 
 import type { SidebarThreadSummary } from "../types";
-import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   PULL_REQUEST_STATE_PRESENTATION,
@@ -767,53 +766,6 @@ export function ThreadTerminalStatusButton({
         />
       </TooltipTrigger>
       <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-export function ThreadWorktreeIndicator({
-  thread,
-}: {
-  thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath" | "source">;
-}) {
-  const gt = useGT();
-  const worktreePath = thread.worktreePath?.trim();
-  // A cloud thread's worktree path is inside its sandbox and means nothing locally.
-  const cloud = thread.source.sandbox !== undefined;
-  if (!worktreePath && !cloud) {
-    return null;
-  }
-
-  const tooltip = cloud
-    ? thread.branch
-      ? `Cloud: ${thread.branch}`
-      : "Cloud"
-    : thread.branch
-      ? gt("Worktree: {path} ({branch})", {
-          path: formatWorktreePathForDisplay(worktreePath!),
-          branch: thread.branch,
-        })
-      : gt("Worktree: {path}", { path: formatWorktreePathForDisplay(worktreePath!) });
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="img"
-            aria-label={tooltip}
-            data-testid={`thread-worktree-${thread.id}`}
-            className="inline-flex items-center justify-center"
-          />
-        }
-      >
-        {cloud ? (
-          <CloudIcon className="size-3.5 shrink-0 text-icon-muted" />
-        ) : (
-          <FolderGit2Icon className="size-3.5 shrink-0 text-icon-muted" />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );
 }

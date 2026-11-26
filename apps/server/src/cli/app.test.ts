@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The integration fixture binds the same platform socket or named pipe as the CLI.
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
@@ -58,7 +59,9 @@ const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =
       Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
+        FeatureFlags.layerTest(),
         NetService.layer,
+        FeatureFlags.layerTest(),
         ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
       ),
     ),

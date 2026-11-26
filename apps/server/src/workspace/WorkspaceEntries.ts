@@ -268,6 +268,11 @@ const coarseEntriesError = (
     cause: error,
   });
 };
+// A link to an unresponsive network share must not hold up the local entries beside it.
+const SYMLINK_TARGET_STAT_TIMEOUT = Duration.seconds(1);
+// A timed-out stat cannot be cancelled and keeps a libuv worker (4 by default) busy,
+// so cap target stats in flight to leave most of the pool to other fs work.
+const MAX_PENDING_SYMLINK_TARGET_STATS = 2;
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -275,6 +280,25 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
+  let pendingSymlinkTargetStats = 0;
+  const statSymlinkTarget = (
+    host: WorkspaceHost,
+    candidate: { readonly name: string; readonly fullPath: string },
+  ) => {
+    if (pendingSymlinkTargetStats >= MAX_PENDING_SYMLINK_TARGET_STATS) {
+      return Promise.resolve(null);
+    }
+    pendingSymlinkTargetStats++;
+    // @effect-diagnostics-next-line runEffectInsideEffect:off -- the stat needs no surrounding services; the host owns its file system.
+    return Effect.runPromise(host.fileSystem.stat(candidate.fullPath))
+      .then(
+        (stats) => (stats.type === "Directory" ? candidate : null),
+        () => null,
+      )
+      .finally(() => {
+        pendingSymlinkTargetStats--;
+      });
+  };
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const readGuard = yield* WorkspaceReadGuard;
   // Absent inside the runner, where every path is local.
@@ -435,16 +459,33 @@ export const make = Effect.gen(function* () {
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      const symlinkCandidates: Array<{ readonly name: string; readonly fullPath: string }> = [];
       for (const dirent of dirents) {
         if (
-          dirent.kind === "Directory" &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
+          !dirent.name.toLowerCase().startsWith(lowerPrefix) ||
+          (!showHidden && dirent.name.startsWith("."))
         ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
+          continue;
+        }
+        const fullPath = path.join(parentPath, dirent.name);
+        if (dirent.kind === "Directory") {
+          entries.push({ name: dirent.name, fullPath });
+        } else if (dirent.kind === "SymbolicLink") {
+          symlinkCandidates.push({ name: dirent.name, fullPath });
+        }
+      }
+      if (symlinkCandidates.length > 0) {
+        const resolvedSymlinks = yield* Effect.forEach(
+          symlinkCandidates,
+          (candidate) =>
+            Effect.promise(() => statSymlinkTarget(host, candidate)).pipe(
+              Effect.timeoutOption(SYMLINK_TARGET_STAT_TIMEOUT),
+              Effect.map(Option.getOrNull),
+            ),
+          { concurrency: MAX_PENDING_SYMLINK_TARGET_STATS },
+        );
+        for (const candidate of resolvedSymlinks) {
+          if (candidate !== null) entries.push(candidate);
         }
       }
 

@@ -6,6 +6,7 @@ import {
   getGitActionDisabledReason,
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
+import type { ThreadRepositorySection } from "@t3tools/client-runtime/state/thread-repositories";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { workspaceRepositoryForPullRequest } from "@t3tools/client-runtime/state/workspaces";
@@ -35,7 +36,17 @@ import { ListRowLayout } from "../../../components/ui/ListRowLayout";
 import { RowPressable } from "../../../components/ui/RowPressable";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { type WorkspaceRepositoryRow, workspaceRepositoryRows } from "../workspace-repositories";
+import { filesystemEnvironment } from "../../../state/filesystem";
 import { useEnvironmentQuery } from "../../../state/query";
+import {
+  gitRepositoryRouteParams,
+  gitRepositoryTargetFromRoute,
+  type GitRepositoryRouteParams,
+} from "../../../state/thread-git-target";
+import {
+  unpinRepositoryFromThread,
+  useThreadRepositoryPins,
+} from "../../../state/thread-repository-pins";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
@@ -46,6 +57,7 @@ import {
 } from "../../../state/use-selected-thread-workspace";
 import { vcsEnvironment } from "../../../state/vcs";
 import { menuItemIconName, statusSummary } from "./gitSheetComponents";
+import { ThreadRepositoryRows } from "./ThreadRepositoryRows";
 import {
   LinkedPullRequestRow,
   linkedPullRequestKey,
@@ -53,10 +65,12 @@ import {
 } from "../LinkedPullRequestList";
 import { useLinkedPullRequestActions } from "../useLinkedPullRequestActions";
 
-type GitOverviewSheetProps = StaticScreenProps<{
-  readonly environmentId: string;
-  readonly threadId: string;
-}> & {
+type GitOverviewSheetProps = StaticScreenProps<
+  {
+    readonly environmentId: string;
+    readonly threadId: string;
+  } & GitRepositoryRouteParams
+> & {
   readonly presentation?: "sheet" | "inspector";
 };
 
@@ -90,13 +104,21 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     replace: presentation === "sheet",
     context: selectedThread ?? undefined,
   });
+  // A tracked repository instead of the thread's own folder: thread-only rows stay off for it.
+  const repository = gitRepositoryTargetFromRoute(props.route.params);
+  const repositoryParams = gitRepositoryRouteParams(repository);
   const { selectedThreadWorktreePath } = useSelectedThreadWorktree();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
+  const threadRef = { environmentId, threadId };
+  const pinnedRepositories = useThreadRepositoryPins(threadRef);
+  const isPinnedRepository =
+    repository !== undefined &&
+    pinnedRepositories.some((pin) => pin.repositoryPath === repository.key);
+  const gitState = useSelectedThreadGitState(repository);
+  const gitActions = useSelectedThreadGitActions(repository);
   const { canWriteSourceControl, canSwitchBranch, gitCwd, gitProject, workspace } = gitActions;
   // A workspace thread's controls below act on its selected repository, once its folder exists.
-  const repository = workspace?.selected ?? null;
-  const showsRepositoryActions = workspace === null || repository !== null;
+  const workspaceRepository = workspace?.selected ?? null;
+  const showsRepositoryActions = workspace === null || workspaceRepository !== null;
   // A workspace thread links pull requests from several repositories; show the selected one's.
   const pullRequestThread =
     selectedThread === null || workspace === null
@@ -126,21 +148,62 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
+  const isRepo = gitStatus.data?.isRepo ?? true;
+  // A plain folder that tracks repositories has no branch of its own; its turns still have diffs.
+  const projectRepositoryCount =
+    workspace === null ? (selectedThreadProject?.trackedFolders?.length ?? 0) : 0;
+  const trackedRepositoryCount =
+    workspace !== null || isRepo || repository !== undefined ? 0 : projectRepositoryCount;
+  // A worktree thread reaches tracked repositories only through its own task folder.
+  const taskFolderQuery = useEnvironmentQuery(
+    selectedThread !== null && selectedThreadWorktreePath !== null && projectRepositoryCount > 0
+      ? filesystemEnvironment.taskFolder({
+          environmentId: selectedThread.environmentId,
+          input: { worktreePath: selectedThreadWorktreePath },
+        })
+      : null,
+  );
+  const taskFolder = taskFolderQuery.data?.taskFolder ?? null;
+  // Also for a project that tracks nothing: a thread can change a submodule.
+  const listsRepositories =
+    workspace === null && repository === undefined && selectedThreadProject !== null;
+  const reachesTracked =
+    projectRepositoryCount > 0 && (selectedThreadWorktreePath === null || taskFolder !== null);
   const currentBranchLabel =
-    workspace !== null && repository === null
+    workspace !== null && workspaceRepository === null
       ? (selectedThread?.branch ?? "Workspace")
-      : (gitStatus.data?.refName ??
-        (workspace === null ? selectedThread?.branch : undefined) ??
-        gt("Detached HEAD"));
+      : repository !== undefined
+        ? repository.name
+        : trackedRepositoryCount > 0
+          ? // A task folder's plain project folder has no branch; its repositories are on the thread's.
+            ((taskFolder === null ? null : selectedThread?.branch) ??
+            selectedThreadProject?.title ??
+            gt("Repositories"))
+          : (gitStatus.data?.refName ??
+            (workspace === null ? selectedThread?.branch : undefined) ??
+            gt("Detached HEAD"));
   const currentStatusSummary =
-    repository === null
-      ? statusSummary(gitStatus.data, m)
-      : [repository.name, statusSummary(gitStatus.data, m)].filter(Boolean).join(" · ");
-  const currentWorktreePath = workspace === null ? selectedThreadWorktreePath : gitCwd;
+    workspaceRepository !== null
+      ? [workspaceRepository.name, statusSummary(gitStatus.data, m)].filter(Boolean).join(" · ")
+      : repository !== undefined
+        ? gitStatus.data?.isRepo
+          ? `${gitStatus.data.refName ?? gt("Detached HEAD")} · ${statusSummary(gitStatus.data, m)}`
+          : statusSummary(gitStatus.data, m)
+        : taskFolder !== null && trackedRepositoryCount > 0
+          ? gt(
+              "{count, plural, one {{count} repository worktree} other {{count} repository worktrees}}",
+              { count: taskFolder.repositories.length },
+            )
+          : trackedRepositoryCount > 0
+            ? gt("{count, plural, one {{count} repository} other {{count} repositories}}", {
+                count: trackedRepositoryCount,
+              })
+            : statusSummary(gitStatus.data, m);
+  const currentWorktreePath =
+    workspace !== null ? gitCwd : repository === undefined ? selectedThreadWorktreePath : null;
   const workspacePlan = workspace === null ? null : workspaceGitPlan(workspace);
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
-  const isRepo = gitStatus.data?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
@@ -217,6 +280,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         navigation.navigate("GitConfirm", {
           environmentId: String(environmentId),
           threadId: String(threadId),
+          ...repositoryParams,
           confirmAction: confirmableAction,
           branchName,
           includesCommit: String(
@@ -245,6 +309,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         navigation.navigate("GitCommit", {
           environmentId: String(environmentId),
           threadId: String(threadId),
+          ...repositoryParams,
         }),
       );
       return;
@@ -296,6 +361,21 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       navigation.dispatch(StackActions.replace("ThreadReview", params));
     } else {
       presentRoute(() => navigation.dispatch(CommonActions.navigate("ThreadReview", params)));
+    }
+  };
+
+  const openRepository = (section: ThreadRepositorySection) => {
+    const params = {
+      environmentId: String(environmentId),
+      threadId: String(threadId),
+      repositoryCwd: section.cwd,
+      repositoryName: section.name,
+    };
+    // A sheet swaps in place, so closing the repository or running an action lands on the thread.
+    if (presentation === "sheet") {
+      navigation.dispatch(StackActions.replace("GitOverview", params));
+    } else {
+      presentRoute(() => navigation.dispatch(StackActions.push("GitOverview", params)));
     }
   };
 
@@ -373,8 +453,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         </>
       ) : null}
 
-      {showsRepositoryActions ? (
-        <ListSection title={repository?.name}>
+      {workspace === null && (sheetMenuItems.length > 0 || behindCount > 0) ? (
+        <ListSection>
           {sheetMenuItems.map(({ item, disabledReason }) => (
             <ListRow
               key={`${item.id}-${item.label}`}
@@ -401,33 +481,47 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               onPress={() => void gitActions.onPullSelectedThreadBranch()}
             />
           ) : null}
-          {workspace === null ? (
+        </ListSection>
+      ) : null}
+
+      {workspace !== null && showsRepositoryActions ? (
+        <ListSection title={workspaceRepository?.name}>
+          {sheetMenuItems.map(({ item, disabledReason }) => (
             <ListRow
-              icon="text.bubble"
-              label={gt("Review changes")}
-              description={gt("Inspect changes, uncommitted edits, and turn diffs")}
-              disabled={busy || !isRepo}
-              onPress={openReview}
+              key={`${item.id}-${item.label}`}
+              icon={menuItemIconName(item.icon)}
+              label={item.label}
+              description={disabledReason ?? rowStatusDetail(item)}
+              disabled={item.disabled}
+              onPress={() => void onPressMenuItem(item)}
+            />
+          ))}
+          {behindCount > 0 ? (
+            <ListRow
+              icon="arrow.down.circle"
+              label={gt("Pull latest")}
+              description={
+                canWriteSourceControl
+                  ? gt(
+                      "{count, plural, one {{count} commit behind upstream} other {{count} commits behind upstream}}",
+                      { count: behindCount },
+                    )
+                  : gt("This connection cannot change source control.")
+              }
+              disabled={!canWriteSourceControl || busy || !isRepo}
+              onPress={() => void gitActions.onPullSelectedThreadBranch()}
             />
           ) : null}
           <ListRow
             icon="point.topleft.down.curvedto.point.bottomright.up"
-            label={
-              workspace === null
-                ? gt("Branches & worktrees")
-                : // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
-                  "Branches"
-            }
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+            label="Branches"
             description={
-              workspace !== null
-                ? canSwitchBranch
-                  ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
-                    "Switch or create a branch"
-                  : // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
-                    "View branches"
-                : canSwitchBranch
-                  ? gt("Switch branch, create branch, or move to a worktree")
-                  : gt("View branches and worktrees")
+              canSwitchBranch
+                ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                  "Switch or create a branch"
+                : // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                  "View branches"
             }
             disabled={busy || !isRepo}
             onPress={() =>
@@ -439,28 +533,86 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               )
             }
           />
-          {linkedPrActions.canLink && workspace === null ? (
+        </ListSection>
+      ) : null}
+
+      {listsRepositories ? (
+        <ThreadRepositoryRows
+          threadRef={threadRef}
+          projectId={selectedThreadProject.id}
+          threadCwd={gitCwd}
+          taskFolder={taskFolder}
+          reachesTracked={reachesTracked}
+          onTaskFolderChange={taskFolderQuery.refresh}
+          explainsEmpty={!isRepo}
+          onOpen={openRepository}
+        />
+      ) : null}
+
+      {workspace === null && (repository === undefined || isPinnedRepository) ? (
+        <ListSection>
+          {repository === undefined ? (
+            <>
+              <ListRow
+                icon="text.bubble"
+                label={gt("Review changes")}
+                description={
+                  trackedRepositoryCount > 0
+                    ? gt("Inspect turn diffs")
+                    : gt("Inspect changes, uncommitted edits, and turn diffs")
+                }
+                disabled={busy || !(isRepo || trackedRepositoryCount > 0)}
+                onPress={openReview}
+              />
+              <ListRow
+                icon="point.topleft.down.curvedto.point.bottomright.up"
+                label={gt("Branches & worktrees")}
+                description={
+                  canSwitchBranch
+                    ? gt("Switch branch, create branch, or move to a worktree")
+                    : gt("View branches and worktrees")
+                }
+                disabled={busy || !isRepo}
+                onPress={() =>
+                  presentRoute(() =>
+                    navigation.navigate("GitBranches", {
+                      environmentId: String(environmentId),
+                      threadId: String(threadId),
+                    }),
+                  )
+                }
+              />
+              {linkedPrActions.canLink ? (
+                <ListRow
+                  icon="link"
+                  label={gt(
+                    "{term, select, mr {Link merge request} cr {Link change request} other {Link pull request}}",
+                    { term: changeRequestTermKind(linkedPrActions.terminology) },
+                  )}
+                  description={gt(
+                    "{term, select, mr {Attach a merge request by URL or number} cr {Attach a change request by URL or number} other {Attach a pull request by URL or number}}",
+                    { term: changeRequestTermKind(linkedPrActions.terminology) },
+                  )}
+                  onPress={linkedPrActions.promptLink}
+                />
+              ) : null}
+            </>
+          ) : isPinnedRepository ? (
             <ListRow
-              icon="link"
-              label={gt(
-                "{term, select, mr {Link merge request} cr {Link change request} other {Link pull request}}",
-                {
-                  term: changeRequestTermKind(linkedPrActions.terminology),
-                },
-              )}
-              description={gt(
-                "{term, select, mr {Attach a merge request by URL or number} cr {Attach a change request by URL or number} other {Attach a pull request by URL or number}}",
-                {
-                  term: changeRequestTermKind(linkedPrActions.terminology),
-                },
-              )}
-              onPress={linkedPrActions.promptLink}
+              icon="pin.slash"
+              label={gt("Remove from this thread")}
+              description={gt("The repository stays tracked by the project")}
+              disabled={busy}
+              onPress={() => {
+                unpinRepositoryFromThread(threadRef, repository.key);
+                navigation.goBack();
+              }}
             />
           ) : null}
         </ListSection>
       ) : null}
 
-      {showsRepositoryActions && linkedPrLines.length > 0 ? (
+      {repository === undefined && showsRepositoryActions && linkedPrLines.length > 0 ? (
         <ListSection title={gt("Linked {terms}", { terms: linkedPrActions.terminology.plural })}>
           {linkedPrLines.map((line, index) => (
             <LinkedPullRequestRow

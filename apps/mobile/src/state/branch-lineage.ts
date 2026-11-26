@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   type LineageViewer,
   lineageBranchesOf,
@@ -26,8 +26,9 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import * as Dialog from "../components/ui/Dialog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import type { Preferences } from "../persistence/mobile-preferences";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "./preferences";
 import { useEnvironmentQuery } from "./query";
+import { useAtomCommand } from "./use-atom-command";
 import { useTeamViewer } from "./team";
 import { environmentThreadShells } from "./threads";
 
@@ -112,9 +113,9 @@ export function useRememberedRunsOn(environmentId: EnvironmentId | null) {
   const remembered = useAtomValue(
     environmentId === null ? NO_REMEMBERED_ATOM : rememberedRunsOnFamily(environmentId),
   );
-  const update = useAtomSet(updateMobilePreferencesAtom);
+  const update = useAtomCommand(saveMobilePreferences, { reportFailure: false });
   const remember = (runsOn: LineageRunsOn) => {
-    if (environmentId !== null) update({ transform: rememberRunsOn(environmentId, runsOn) });
+    if (environmentId !== null) void update({ transform: rememberRunsOn(environmentId, runsOn) });
   };
   return { remembered, remember };
 }

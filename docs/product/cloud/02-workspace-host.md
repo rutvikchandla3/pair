@@ -131,7 +131,7 @@ A handle whose streams come over a WebSocket works unchanged.
 Appealing because nothing changes at call sites. It does not work here:
 
 1. **Services capture dependencies at construction.** That is the house rule in
-   [Effect services](../../internals/effect-services.md). `VcsProcess.make` yields
+   [Effect services](../../internals/02_effect-services.md). `VcsProcess.make` yields
    `ProcessRunner` and `HostProcess.Platform` once; `ProcessRunner.make` yields the spawner once;
    `makeGitVcsDriverCore` yields `FileSystem`, `ChildProcessSpawner` and `HostProcess.Platform`
    once; the Claude query runner and Codex client factory (`layerQueryRunner`,
@@ -393,7 +393,7 @@ The last column assumes `checkpoint.capture` covers files changed too (see below
 trips are the turn-start baseline check. Local git calls cost a few milliseconds each (inferred),
 so today's turn end is a few hundred milliseconds. The baseline check runs before the provider
 turn starts, so it delays the first token. Run finalization is separate
-([overview](../../internals/overview.md)), but the diff and "files changed" arrive seconds late.
+([overview](../../internals/01_architecture.md)), but the diff and "files changed" arrive seconds late.
 Users notice a lying spinner.
 
 If a primitive takes more than one trip (spawn, then write stdin, then read), the numbers double.
@@ -500,11 +500,11 @@ Effect's `nodeBuiltinImport` diagnostic stays as the second net for the rest of 
    to blame. M2 closes or explains that gap before it ships
    ([progress](./implementation/progress.md)).
 4. `vp run test:perf:v2-wire` is unaffected because nothing changes on the wire
-   ([performance regressions](../../internals/performance-regressions.md)).
+   ([performance regressions](../../internals/16_performance-regressions.md)).
 
 ## 7. Testing
 
-Follow [testing](../../internals/testing.md): test at the lowest layer that fails, no sleeps, no
+Follow [testing](../../internals/15_testing.md): test at the lowest layer that fails, no sleeps, no
 polling.
 
 Test hosts in `workspaceHost/WorkspaceHostTesting.ts`:

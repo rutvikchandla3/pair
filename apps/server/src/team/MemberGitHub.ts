@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as GitHubDeviceFlow from "@t3tools/source-control-github/server/deviceFlow";
 import { APP_SIGN_IN } from "@t3tools/source-control-github/shared/definition";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -100,8 +100,7 @@ const make = Effect.gen(function* () {
   const teamState = yield* TeamState.TeamState;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const httpClient = yield* HttpClient.HttpClient;
-  const clientId =
-    (yield* HostProcess.Environment)[GitHubDeviceFlow.CLIENT_ID_VARIABLE]?.trim() ?? "";
+  const clientId = Option.getOrElse((yield* FeatureFlags.FeatureFlags).githubAppClientId, () => "");
   const enabled = clientId !== "";
   const flow = GitHubDeviceFlow.make({ httpClient, clientId });
   const scope = yield* Effect.scope;

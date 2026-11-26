@@ -1,3 +1,4 @@
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -153,7 +154,9 @@ const answering = (text: string) =>
     display: () => Effect.void,
   });
 
-it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))("t3 up", (it) => {
+it.layer(
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest(), NetService.layer),
+)("t3 up", (it) => {
   afterEach(() => vi.restoreAllMocks());
 
   it.effect.each<{

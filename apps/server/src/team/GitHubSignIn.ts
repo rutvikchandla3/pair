@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as GitHubDeviceFlow from "@t3tools/source-control-github/server/deviceFlow";
 import { APP_SIGN_IN } from "@t3tools/source-control-github/shared/definition";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -17,6 +17,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { HttpClient } from "effect/http";
 
@@ -83,8 +84,7 @@ const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const random = yield* SecureRandom.SecureRandom;
   const httpClient = yield* HttpClient.HttpClient;
-  const clientId =
-    (yield* HostProcess.Environment)[GitHubDeviceFlow.CLIENT_ID_VARIABLE]?.trim() ?? "";
+  const clientId = Option.getOrElse((yield* FeatureFlags.FeatureFlags).githubAppClientId, () => "");
   const flow = GitHubDeviceFlow.make({ httpClient, clientId });
   const scope = yield* Effect.scope;
   const attempts = yield* Ref.make<ReadonlyMap<string, Attempt>>(new Map());

@@ -3,6 +3,7 @@ import {
   type GitRunStackedActionResult,
   type MemberId,
   type OrchestrationProjectShell,
+  type RepositoryIdentity,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -12,6 +13,7 @@ import * as Path from "effect/Path";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { workspaceRootAt } from "../project/WorkspaceCheckouts.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
@@ -24,13 +26,14 @@ export interface CreatedPullRequestKey {
 
 export function createdPullRequestKey(
   result: Pick<GitRunStackedActionResult, "pr">,
-  project: OrchestrationProjectShell | undefined,
+  /** Of the repository the action ran in, which a tracked repository does not share with its project. */
+  identity: RepositoryIdentity | null | undefined,
 ): CreatedPullRequestKey | null {
   const { status, number, url } = result.pr;
   if ((status !== "created" && status !== "opened_existing") || number === undefined || !url) {
     return null;
   }
-  return pullRequestKey({ number, url }, project);
+  return pullRequestKey({ number, url }, { repositoryIdentity: identity });
 }
 
 /** Reads the key from the URL, else from the repository the pull request was found in. */
@@ -39,11 +42,11 @@ export function pullRequestKey(
   project: Pick<OrchestrationProjectShell, "repositoryIdentity"> | undefined,
 ): CreatedPullRequestKey | null {
   const { number, url } = pullRequest;
+  const identity = project?.repositoryIdentity;
   const parsed = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
   if (parsed !== undefined) {
     return { host: parsed.host, repository: parsed.repository, number: parsed.number, url };
   }
-  const identity = project?.repositoryIdentity;
   const kind = identity?.provider;
   const repository = sourceControlDefinitions.repositorySelector(identity);
   if (!identity || kind === undefined || repository === null) return null;
@@ -69,7 +72,10 @@ export const linkCreatedPullRequest: <E>(input: {
 }) => Effect.Effect<
   void,
   never,
-  Orchestrator.OrchestratorV2 | ProjectService.ProjectService | Path.Path
+  | Orchestrator.OrchestratorV2
+  | ProjectService.ProjectService
+  | Path.Path
+  | RepositoryIdentityResolver.RepositoryIdentityResolver
 > = Effect.fn("linkCreatedPullRequest")(
   function* <E>(input: {
     readonly threadId: ThreadId;
@@ -78,6 +84,7 @@ export const linkCreatedPullRequest: <E>(input: {
     readonly commandId: Effect.Effect<CommandId, E>;
     readonly actorId?: MemberId | undefined;
   }) {
+    const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
     const engine = yield* Orchestrator.OrchestratorV2;
     const projects = yield* ProjectService.ProjectService;
     const path = yield* Path.Path;
@@ -90,7 +97,10 @@ export const linkCreatedPullRequest: <E>(input: {
         workspaceRootAt(thread.value, input.cwd, path)?.projectId ?? thread.value.projectId,
       ),
     );
-    const key = createdPullRequestKey(input.result, project);
+    const key = createdPullRequestKey(
+      input.result,
+      (yield* identities.resolve(input.cwd)) ?? project?.repositoryIdentity,
+    );
     if (key === null) return;
     const commandId = yield* input.commandId;
     yield* engine

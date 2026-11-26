@@ -1,4 +1,5 @@
 import { INITIAL_VIEWER_LEASE, stepViewerLease } from "@t3tools/client-runtime/sandbox-viewing";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { getDocumentActivity, subscribeDocumentActivity } from "../lib/documentActivity";
@@ -20,7 +21,7 @@ function renewViewerLease(threadRef: ScopedThreadRef, cloud: boolean) {
   });
   lease = step.state;
   if (step.send === null) return;
-  void sandboxEnvironment.viewing.run(appAtomRegistry, {
+  void runAtomCommand(appAtomRegistry, sandboxEnvironment.viewing, {
     environmentId: threadRef.environmentId,
     input: { threadId: step.send },
   });

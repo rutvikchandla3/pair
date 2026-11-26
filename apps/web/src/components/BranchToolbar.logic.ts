@@ -1,4 +1,5 @@
 import {
+  GitCommandError,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type VcsRef,
@@ -8,6 +9,7 @@ import {
   type SandboxId,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type {
   EnvironmentConnectionPhase,
   EnvironmentServerConfig,
@@ -39,6 +41,17 @@ import type { AddProjectToMachineInput } from "../lib/addProjectToMachine";
 import { m, type MessageResolver } from "../i18n/messages";
 import { deriveCanInterruptRunningThread } from "../session-logic";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
+
+const isGitCommandError = Schema.is(GitCommandError);
+
+// A toast clamps to a few lines, so Git failures show their sanitized detail
+// rather than the message's operation and cwd prefix.
+export function toBranchActionErrorMessage(error: unknown): string {
+  if (isGitCommandError(error)) {
+    return error.reason === undefined ? error.detail : `${error.detail} (${error.reason})`;
+  }
+  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
+}
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
@@ -197,6 +210,16 @@ export function shouldShowEnvironmentIndicator(input: {
 }): boolean {
   if (input.canPickEnvironment) return true;
   return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
+}
+
+/** Whether a new thread here may choose between Current checkout and New worktree. */
+export function offersWorkspaceModes(input: {
+  isScratchProject: boolean;
+  isGitRepo: boolean;
+  tracksGitRepositories: boolean;
+}): boolean {
+  // No project never has git, even while its status loads and isGitRepo still assumes it does.
+  return !input.isScratchProject && (input.isGitRepo || input.tracksGitRepositories);
 }
 
 export function shouldShowComposerContextStrip(input: {

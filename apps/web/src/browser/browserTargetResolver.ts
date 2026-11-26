@@ -80,6 +80,12 @@ export const environmentMayTunnelLoopback = (
   hasMachineBrowser: boolean,
 ): boolean => canManageAccess && !hasMachineBrowser;
 
+export const readEnvironmentMayTunnelLoopback = (environmentId: EnvironmentId): boolean =>
+  environmentMayTunnelLoopback(
+    readEnvironmentScope(environmentId, AuthAccessWriteScope),
+    readEnvironmentHasMachineBrowser(environmentId),
+  );
+
 const resolveLoopbackUrl = (
   environmentId: EnvironmentId,
   rawUrl: string,

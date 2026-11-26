@@ -22,6 +22,7 @@ import {
   type ProjectMutation,
   type ProjectRootInput,
   type ProjectScript,
+  type ProjectTrackedFolder,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
   type ProviderUserInputAnswers,
@@ -55,6 +56,7 @@ import {
   request,
   requestGuarded,
 } from "../rpc/client.ts";
+import { repositoryCheckpointScopeIds } from "../state/threadRepositories.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -67,6 +69,7 @@ interface CreateProjectFields extends CommandMetadata {
   readonly title: string;
   readonly defaultModelSelection?: ModelSelection | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
 }
 
 /** A project in a folder, or a workspace of other projects whose folder the server picks. */
@@ -92,6 +95,11 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly scripts?: ReadonlyArray<ProjectScript>;
   /** Only a workspace's: new threads use them, existing threads keep theirs. */
   readonly roots?: ReadonlyArray<ProjectRootInput>;
+  /** Replaces the whole list. Paths only mean something on the project's own environment. */
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
+  /** Added to, and removed by path from, the list as the server has it. */
+  readonly trackFolders?: ReadonlyArray<ProjectTrackedFolder>;
+  readonly untrackFolders?: ReadonlyArray<string>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
 }
@@ -200,6 +208,8 @@ interface StartThreadBootstrap {
     readonly baseBranch: string;
     readonly branch?: string;
     readonly startFromOrigin?: boolean;
+    /** Tracked repositories to give a worktree; absent leaves the choice to the server. */
+    readonly repositories?: ReadonlyArray<{ readonly path: string }>;
   };
   readonly prepareCloud?: {
     readonly baseRef: string;
@@ -337,28 +347,12 @@ const MAX_LOST_TRANSPORT_RESENDS = 2;
 // alone would leave the send pending forever.
 const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
 
-const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
-  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
-  resendAfterSocketLoss: boolean,
-) {
+const resendAfterSocketLoss = Effect.fn("EnvironmentCommands.resendAfterSocketLoss")(function* <
+  A,
+  E,
+  R,
+>(attempt: Effect.Effect<A, E, R>) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  const attempt = dispatch(command).pipe(
-    Effect.timeoutOrElse({
-      duration: MESSAGE_DISPATCH_TIMEOUT,
-      orElse: () =>
-        Effect.fail(
-          new EnvironmentRpcUnavailableError({
-            environmentId: supervisor.target.environmentId,
-            ...translatableMessage(
-              msg("{host} did not confirm the message within 60 seconds.", {
-                host: supervisor.target.label,
-              }),
-            ),
-          }),
-        ),
-    }),
-  );
-  if (!resendAfterSocketLoss) return yield* attempt;
   for (let resends = 0; ; resends += 1) {
     const attemptSession = yield* SubscriptionRef.get(supervisor.session);
     const exit = yield* Effect.exit(attempt);
@@ -385,6 +379,30 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     );
     if (Option.isNone(replacement)) return yield* exit;
   }
+});
+
+const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
+  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
+  resend: boolean,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const attempt = dispatch(command).pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_DISPATCH_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            ...translatableMessage(
+              msg("{host} did not confirm the message within 60 seconds.", {
+                host: supervisor.target.label,
+              }),
+            ),
+          }),
+        ),
+    }),
+  );
+  return yield* resend ? resendAfterSocketLoss(attempt) : attempt;
 });
 
 const getProjection = (threadId: ThreadId) =>
@@ -444,6 +462,7 @@ export const createProject = Effect.fn("EnvironmentCommands.createProject")(func
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
   });
 });
 
@@ -467,6 +486,9 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
     ...(input.roots === undefined ? {} : { roots: input.roots }),
+    ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
+    ...(input.trackFolders === undefined ? {} : { trackFolders: input.trackFolders }),
+    ...(input.untrackFolders === undefined ? {} : { untrackFolders: input.untrackFolders }),
     ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
     ...(input.archived === undefined ? {} : { archived: input.archived }),
   });
@@ -887,6 +909,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     input.message.attachments,
     attachments,
   );
+  const resend = input.resendAfterSocketLoss ?? true;
   const bootstrap = input.bootstrap?.createThread;
   const prepareWorktree = input.bootstrap?.prepareWorktree;
   const prepareCloud = input.bootstrap?.prepareCloud;
@@ -915,6 +938,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
               ...(prepareWorktree.startFromOrigin === undefined
                 ? {}
                 : { startFromOrigin: prepareWorktree.startFromOrigin }),
+              ...(prepareWorktree.repositories === undefined
+                ? {}
+                : { repositories: prepareWorktree.repositories }),
             }
           : bootstrap?.worktreePath
             ? {
@@ -928,7 +954,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
                   ? {}
                   : { branch: bootstrap.branch }),
               };
-    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+    const launch = request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
       commandId,
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
@@ -947,10 +973,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         attachments,
       },
     });
+    return yield* resend ? resendAfterSocketLoss(launch) : launch;
   }
 
   const requestedMode = input.dispatchMode ?? "auto";
-  const resendAfterSocketLoss = input.resendAfterSocketLoss ?? true;
   if (requestedMode === "start") {
     return yield* dispatchMessage(
       {
@@ -981,7 +1007,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ...(input.freshContext ? { freshContext: true } : {}),
         dispatchMode: { type: "start_immediately" },
       },
-      resendAfterSocketLoss,
+      resend,
     );
   }
 
@@ -1015,7 +1041,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         : {}),
       dispatchMode,
     },
-    resendAfterSocketLoss,
+    resend,
   );
 });
 
@@ -1166,20 +1192,24 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       });
     }
     const projection = yield* getProjection(input.threadId);
+    // A tracked repository's baseline also sits at ordinal zero; it follows the thread's rewind.
+    const repositoryScopeIds = repositoryCheckpointScopeIds(projection.checkpointScopes);
     const checkpoint =
       projection.checkpoints.find(
         (candidate) => candidate.id === input.checkpointId && candidate.scopeId === input.scopeId,
       ) ??
-      projection.checkpoints.findLast((candidate) =>
-        input.turnCount === 0
-          ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
-          : candidate.appRunOrdinal === input.turnCount,
+      projection.checkpoints.findLast(
+        (candidate) =>
+          !repositoryScopeIds.has(candidate.scopeId) &&
+          (input.turnCount === 0
+            ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
+            : candidate.appRunOrdinal === input.turnCount),
       );
     if (
       checkpoint === undefined ||
-      // Missing snapshots support conversation rewind only.
+      // Missing or failed snapshots support conversation rewind only.
       (checkpoint.status !== "ready" &&
-        !(input.restoreFiles === false && checkpoint.status === "missing"))
+        !(input.restoreFiles === false && checkpoint.status !== "stale"))
     ) {
       const target =
         input.checkpointId === undefined
@@ -1268,25 +1298,29 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
   input: ResumeThreadQueueInput,
 ) {
-  return yield* dispatch({
-    ...(input.runId === undefined
-      ? { type: "queue.resume" as const }
-      : { type: "queued-run.start" as const, runId: input.runId }),
-    commandId: yield* allocateCommandId(input),
-    threadId: input.threadId,
-  });
+  return yield* resendAfterSocketLoss(
+    dispatch({
+      ...(input.runId === undefined
+        ? { type: "queue.resume" as const }
+        : { type: "queued-run.start" as const, runId: input.runId }),
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+    }),
+  );
 });
 
 export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
   input: PromoteQueuedRunInput,
 ) {
-  return yield* dispatch({
-    type: "queued-message.promote-to-steer",
-    commandId: yield* allocateCommandId(input),
-    threadId: input.threadId,
-    queuedRunId: input.queuedRunId,
-    targetRunId: input.targetRunId,
-  });
+  return yield* resendAfterSocketLoss(
+    dispatch({
+      type: "queued-message.promote-to-steer",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      queuedRunId: input.queuedRunId,
+      targetRunId: input.targetRunId,
+    }),
+  );
 });
 
 export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(function* (

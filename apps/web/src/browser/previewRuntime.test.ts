@@ -10,6 +10,16 @@ vi.mock("~/env", () => ({ isElectron: true }));
 vi.mock("~/previewStateStore", () => ({ isPreviewSupportedInRuntime: () => true }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => PRIMARY } }));
 vi.mock("~/state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: {} }));
+vi.mock("~/connection/catalog", () => ({ environmentCatalog: { catalogValueAtom: {} } }));
+vi.mock("~/state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("~/state/session", () => ({
+  environmentSession: { sessionStateAtom: () => ({}) },
+  sessionHasScope: () => true,
+}));
+vi.mock("./browserTargetResolver", () => ({
+  environmentMayTunnelLoopback: () => true,
+  tunnelsEnvironmentLoopback: () => true,
+}));
 vi.mock("~/state/entities", () => ({
   readEnvironmentSupportsServerBrowser: () => capabilities.serverBrowser,
   readEnvironmentHasMachineBrowser: () => capabilities.machineBrowser,
@@ -26,13 +36,19 @@ describe("preview runtime in the desktop app", () => {
     const { alternatePreviewRuntime, previewRuntimeFor } = await import("./previewRuntime");
     setup(false);
     expect(previewRuntimeFor(REMOTE)).toBeUndefined();
-    expect(alternatePreviewRuntime(REMOTE, PRIMARY, true, false, { runtime: "server" })).toBe(
+    expect(alternatePreviewRuntime(REMOTE, PRIMARY, true, false, true, { runtime: "server" })).toBe(
       "desktop",
     );
+    // Without its tunnel the desktop cannot load the environment's localhost.
+    expect(
+      alternatePreviewRuntime(REMOTE, PRIMARY, true, false, false, { runtime: "server" }),
+    ).toBeNull();
 
     setup(true);
     expect(previewRuntimeFor(REMOTE)).toBe("server");
-    expect(alternatePreviewRuntime(REMOTE, PRIMARY, true, true, { runtime: "server" })).toBeNull();
+    expect(
+      alternatePreviewRuntime(REMOTE, PRIMARY, true, true, true, { runtime: "server" }),
+    ).toBeNull();
   });
 
   it("collapses named profiles into the machine's one profile", async () => {

@@ -1,8 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { MemberId } from "@t3tools/contracts";
-import { CLIENT_ID_VARIABLE } from "@t3tools/source-control-github/server/deviceFlow";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -120,8 +119,8 @@ export function harness(options: { readonly clientId?: string } = {}) {
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
     Layer.provide(
-      Layer.succeed(HostProcess.Environment, {
-        [CLIENT_ID_VARIABLE]: options.clientId ?? "Iv-test-client",
+      FeatureFlags.layerTest({
+        githubAppClientId: Option.some(options.clientId ?? "Iv-test-client"),
       }),
     ),
   );

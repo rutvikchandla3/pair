@@ -11,6 +11,10 @@ import { SymbolView } from "../../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/ui/AppText";
 import { cn } from "../../../lib/cn";
 import { useEnvironmentQuery } from "../../../state/query";
+import {
+  gitRepositoryTargetFromRoute,
+  type GitRepositoryRouteParams,
+} from "../../../state/thread-git-target";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
@@ -18,20 +22,23 @@ import { workspaceGitPlan } from "../../../state/use-selected-thread-workspace";
 import { vcsEnvironment } from "../../../state/vcs";
 import { WORKSPACE_STEP_LABELS } from "../workspace-repositories";
 
-type GitCommitSheetProps = StaticScreenProps<{
-  readonly environmentId: string;
-  readonly threadId: string;
-  /** "all": a workspace thread's every changed repository, each with its own next step. */
-  readonly scope?: string;
-}>;
+type GitCommitSheetProps = StaticScreenProps<
+  {
+    readonly environmentId: string;
+    readonly threadId: string;
+    /** "all": a workspace thread's every changed repository, each with its own next step. */
+    readonly scope?: string;
+  } & GitRepositoryRouteParams
+>;
 
 export function GitCommitSheet(props: GitCommitSheetProps) {
+  const repository = gitRepositoryTargetFromRoute(props.route.params);
   const gt = useGT();
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl, canChangeThreadBranch, gitCwd, workspace } = gitActions;
+  const gitState = useSelectedThreadGitState(repository);
+  const gitActions = useSelectedThreadGitActions(repository);
+  const { canWriteSourceControl, canCreateFeatureBranch, gitCwd, workspace } = gitActions;
   const workspacePlan =
     workspace !== null && props.route.params.scope === "all" ? workspaceGitPlan(workspace) : null;
 
@@ -65,7 +72,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
   };
 
   const runCommitAction = async (featureBranch: boolean) => {
-    if (!canWriteSourceControl || (featureBranch && !canChangeThreadBranch)) return;
+    if (!canWriteSourceControl || (featureBranch && !canCreateFeatureBranch)) return;
     const commitMessage = dialogCommitMessage.trim();
     navigation.goBack();
     await gitActions.onRunSelectedThreadGitAction({
@@ -90,7 +97,11 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
                 : gt("Commit changes")
           }
           subtitle={
-            workspacePlan !== null ? undefined : (gitStatus.data?.refName ?? gt("(detached HEAD)"))
+            workspacePlan !== null
+              ? undefined
+              : [repository?.name, gitStatus.data?.refName ?? gt("(detached HEAD)")]
+                  .filter(Boolean)
+                  .join(" · ")
           }
           onCancel={() => navigation.goBack()}
           accessibilityLabel={gt("Cancel commit")}
@@ -294,7 +305,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
               icon="arrow.branch"
               tone="text"
               fullWidth
-              disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
+              disabled={!canWriteSourceControl || !canCreateFeatureBranch || noneSelected || busy}
               onPress={() => void runCommitAction(true)}
             />
           ) : null}

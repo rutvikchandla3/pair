@@ -19,6 +19,8 @@ export function resolveNewTaskWorkspaceSelection(input: {
   readonly cloudLaunch: boolean;
   /** The project is a workspace of several repositories. */
   readonly workspace: boolean;
+  /** A project folder that is no repository can still take a worktree of one it tracks. */
+  readonly tracksGitRepositories?: boolean | undefined;
 }): ComposerDraftWorkspaceSelection {
   const selection = input.selection ?? input.fallback;
   // A workspace thread runs in a new worktree of each repository, here or on one machine, each
@@ -34,8 +36,19 @@ export function resolveNewTaskWorkspaceSelection(input: {
         : {}),
     };
   }
-  const mode = resolveSendEnvMode({ requestedEnvMode: selection.mode, isGitRepo: input.isGitRepo });
-  if (!input.isGitRepo) return { mode, branch: null, worktreePath: null };
+  if (!input.isGitRepo) {
+    const mode = resolveSendEnvMode({
+      requestedEnvMode: selection.mode,
+      isGitRepo: false,
+      tracksGitRepositories: input.tracksGitRepositories === true,
+    });
+    return {
+      mode,
+      branch: null,
+      worktreePath: null,
+      ...(selection.repositories !== undefined ? { repositories: selection.repositories } : {}),
+    };
+  }
   if (input.cloudLaunch) {
     return selection.mode === "cloud"
       ? selection
@@ -232,6 +245,7 @@ export function resolveNewTaskDraftWorkspace(input: {
   readonly cloudAvailable: boolean;
   readonly cloudLaunch: boolean;
   readonly workspace: boolean;
+  readonly tracksGitRepositories?: boolean | undefined;
   readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
   readonly projectCwd: string | null;
 }): ComposerDraftWorkspaceSelection {
@@ -244,6 +258,7 @@ export function resolveNewTaskDraftWorkspace(input: {
       cloudAvailable: input.cloudAvailable,
       cloudLaunch: input.cloudLaunch,
       workspace: input.workspace,
+      tracksGitRepositories: input.tracksGitRepositories,
     }),
     branches: input.branches,
     projectCwd: input.projectCwd,

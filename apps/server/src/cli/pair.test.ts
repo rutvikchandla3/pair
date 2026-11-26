@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -48,7 +49,12 @@ import {
 import packageJson from "../../package.json" with { type: "json" };
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
+const layerCliRuntime = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  FeatureFlags.layerTest(),
+  NetService.layer,
+);
 
 const baseState = {
   version: 1,
@@ -199,7 +205,11 @@ describe("t3 pair", () => {
           assert.include(output, "Sign-in link: https://pair-test.tail.ts.net/pair#token=");
         }),
       "::1",
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
+    ),
   );
 
   // The MagicDNS probe fails whenever the host cannot reach its own *.ts.net name,
@@ -320,7 +330,9 @@ describe("t3 pair", () => {
         assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
       }),
     ).pipe(
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
       Effect.provideService(HostProcess.Environment, {
         ...process.env,
         [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
@@ -355,7 +367,11 @@ describe("t3 pair", () => {
 
         assert.include(output, "Sign-in link: http://localhost:5733/pair#token=");
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
+    ),
   );
 
   it.effect("refuses --tailscale before turning on Serve when the policy keeps clients local", () =>
@@ -429,7 +445,11 @@ describe("t3 pair", () => {
           assert.include(rendered, `\`${command}\``);
         }
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
+    ),
   );
 
   // regression: #10516 minting opens the target database with this checkout's
@@ -469,7 +489,11 @@ describe("t3 pair", () => {
           "server-runtime.json",
         ]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
+    ),
   );
 
   // regression: #15492 an older CLI minted into a V1 database the protocol 2
@@ -506,7 +530,11 @@ describe("t3 pair", () => {
         }),
       "127.0.0.1",
       { ...testDescriptor, serverVersion: "0.0.45", orchestrationProtocolVersion: 1 },
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
+    ),
   );
 
   // Without the capability `tailscale serve` blocks on an enablement URL, so
@@ -558,7 +586,11 @@ describe("t3 pair", () => {
         assert.include(String(error), "https://login.tailscale.com/admin/dns");
         assert.deepEqual(tailscaleCalls, [["status", "--json"]]);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
+    ),
   );
 
   // regression: #35517 - the macOS Tailscale apps refuse Serve targets other than
@@ -624,7 +656,11 @@ describe("t3 pair", () => {
 
       assert.instanceOf(error, TailscaleServeTargetRefusedError);
       assert.include(String(error), "127.0.0.2");
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
+    ),
   );
 
   // regression: #37459 - on Linux without an operator, tailscaled refuses Serve config
@@ -690,7 +726,11 @@ describe("t3 pair", () => {
 
       assert.include(String(error), "sudo tailscale set --operator=$USER");
       assert.notInclude(String(error), "by hand to see why");
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+      ),
+    ),
   );
 });
 

@@ -18,12 +18,10 @@ import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient } from "effect/http";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 
 import * as GitHubClient from "../shared/definition.ts";
 import * as GitHubDeviceFlow from "./GitHubDeviceFlow.ts";
-
-export { CLIENT_ID_VARIABLE } from "./GitHubDeviceFlow.ts";
 
 const KIND = SourceControlProviderKind.make("github");
 // Refresh ahead of expiry so a token never lapses between the check and a long request.
@@ -68,8 +66,8 @@ interface PendingSignIn {
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const httpClient = yield* HttpClient.HttpClient;
-  const clientId =
-    (yield* HostProcess.Environment)[GitHubDeviceFlow.CLIENT_ID_VARIABLE]?.trim() ?? "";
+  // Unset turns the app sign-in off: no app tokens, no sign-in, nothing for clients to show.
+  const clientId = Option.getOrElse((yield* FeatureFlags.FeatureFlags).githubAppClientId, () => "");
   const enabled = clientId !== "";
   const flow = GitHubDeviceFlow.make({ httpClient, clientId });
   const scope = yield* Effect.scope;

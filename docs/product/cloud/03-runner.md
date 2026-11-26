@@ -608,7 +608,7 @@ ping RTT, time paused at the source and buffer high-water marks; `T3CODE_STARTUP
 for runner startup; and `vp run bench:runner` (not in CI,
 [runner-benchmark.ts](../../../apps/server/scripts/runner-benchmark.ts)), which runs a real runner
 over loopback and in Docker and compares both with `LocalWorkspaceHost`
-([performance regressions](../../internals/performance-regressions.md#runner)).
+([performance regressions](../../internals/16_performance-regressions.md#runner)).
 
 The M1 column is M1's integrated pass on an idle 8-CPU VM; the M2 column is G2 step 12 on the same
 VM with release `0.1.7-pair.3`'s runner tree, since a shared machine's numbers say little. CPU counts only what the hub adds over local
@@ -649,7 +649,7 @@ grows.
 
 ## 10. Testing
 
-Follow [testing](../../internals/testing.md): no sleeps, no polling, no wall-clock deltas.
+Follow [testing](../../internals/15_testing.md): no sleeps, no polling, no wall-clock deltas.
 
 | Layer                      | How                                                                                                                                                                                           | What                                                                                                                 |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |

@@ -8,7 +8,9 @@ import {
   type ProjectRoot,
   type ProjectRootInput,
   type ProjectScript,
+  type ProjectTrackedFolder,
   SCRIPT_RUN_COMMAND_PATTERN,
+  trackedFoldersRefusal,
   type ThreadEnvMode,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -26,6 +28,7 @@ export interface ProjectCreateCommand {
   readonly workspaceRoot: string;
   readonly scripts?: ReadonlyArray<ProjectScript>;
   readonly roots?: ReadonlyArray<ProjectRootInput>;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -41,6 +44,7 @@ export interface ProjectMetaUpdateCommand {
   readonly projectIcon?: ProjectIconOverride | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
   readonly roots?: ReadonlyArray<ProjectRootInput>;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
 }
@@ -245,6 +249,11 @@ export function planProjectCommand(input: {
       }
       const conflict = requireWorkspaceAvailable(command.workspaceRoot);
       if (conflict !== undefined) return Result.fail(conflict);
+      if (command.trackedFolders !== undefined && command.trackedFolders.length > 0) {
+        const refusal = trackedFoldersRefusal({ roots: command.roots }, "local");
+        if (refusal !== undefined)
+          return Result.fail(new ProjectRootsInvalidError({ detail: refusal }));
+      }
       let roots: ReadonlyArray<ProjectRoot> | undefined;
       if (command.roots !== undefined) {
         const resolved = resolveProjectRoots({
@@ -267,6 +276,9 @@ export function planProjectCommand(input: {
           projectIcon: null,
           scripts: command.scripts ?? [],
           ...(roots === undefined ? {} : { roots }),
+          ...(command.trackedFolders === undefined || command.trackedFolders.length === 0
+            ? {}
+            : { trackedFolders: command.trackedFolders }),
           createdAt: occurredAt,
           updatedAt: occurredAt,
         },
@@ -301,6 +313,11 @@ export function planProjectCommand(input: {
         }
         const conflict = requireWorkspaceAvailable(command.workspaceRoot);
         if (conflict !== undefined) return Result.fail(conflict);
+      }
+      if (command.trackedFolders !== undefined && command.trackedFolders.length > 0) {
+        const refusal = trackedFoldersRefusal({ roots: command.roots ?? project.roots }, "local");
+        if (refusal !== undefined)
+          return Result.fail(new ProjectRootsInvalidError({ detail: refusal }));
       }
       let roots: ReadonlyArray<ProjectRoot> | undefined;
       if (command.roots !== undefined) {
@@ -337,6 +354,9 @@ export function planProjectCommand(input: {
           ...(command.projectIcon === undefined ? {} : { projectIcon: command.projectIcon }),
           ...(command.scripts === undefined ? {} : { scripts: command.scripts }),
           ...(roots === undefined ? {} : { roots }),
+          ...(command.trackedFolders === undefined
+            ? {}
+            : { trackedFolders: command.trackedFolders }),
           // Repeating a pin or archive keeps the original time.
           ...(command.pinned === undefined
             ? {}

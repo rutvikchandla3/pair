@@ -41,6 +41,18 @@ export const RPC_THREAD_TARGETS: {
   [WS_METHODS.guestShareCreate]: thread,
   [WS_METHODS.serverRefreshProviders]: (input) => paths(input.cwd),
   [WS_METHODS.peerLinksAnswerRequest]: thread,
+  [WS_METHODS.peerLinksSubscribeThread]: thread,
+  [WS_METHODS.peerLinksThreadHistoryPage]: thread,
+  [WS_METHODS.peerLinksThreadItem]: thread,
+  [WS_METHODS.agentFeedbackAnswerRequest]: thread,
+  [WS_METHODS.providerMcpSignInStart]: thread,
+  [WS_METHODS.providerMcpSignInComplete]: thread,
+  [WS_METHODS.workspaceScanFolders]: (input) => paths(input.workspaceRoot),
+  [WS_METHODS.workspaceTaskFolder]: (input) => paths(input.worktreePath),
+  [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => [
+    { threadId: input.threadId },
+    ...paths(input.repositoryPath),
+  ],
   [WS_METHODS.threadMovePreview]: thread,
   [WS_METHODS.threadMoveToCloud]: thread,
   [WS_METHODS.sandboxViewing]: thread,
@@ -319,6 +331,12 @@ export const RPC_OUTPUT_FILTERED: { readonly [M in WsMethod]?: string } = {
     "pullRequest/linkedThreads.ts listLinkedPullRequestThreads: only threads the caller may open",
   [WS_METHODS.issuesLinkedThreads]:
     "orchestration-v2/ThreadIssueService.ts linkedThreads: only threads the caller may open",
+  [WS_METHODS.workflowsSubscribe]:
+    "ws.ts workflows handlers: only runs whose origin thread the caller may open (viewerMayOpen); runs with no origin thread are admins'",
+  [WS_METHODS.workflowsGet]:
+    "ws.ts workflows handlers: a run whose origin thread the caller may not open reads as missing; runs with no origin thread are admins'",
+  [WS_METHODS.workspaceListFolders]:
+    "workspace/WorkspaceFolders.ts list: folder paths on the server's own disk, refused on a project that refuses tracked folders (refusesTrackedFolders)",
 };
 
 const ownBinary = "`executablePath` is the server's own binary, not a machine's.";

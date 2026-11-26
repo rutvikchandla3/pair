@@ -35,6 +35,7 @@ const requireForFfi = NodeModule.createRequire(import.meta.url);
 export const layer = Layer.effect(
   CheckoutCloner,
   Effect.gen(function* () {
+    // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: clonefile(2) clones on this server's own machine
     if ((yield* HostProcess.Platform) !== "darwin") return undefined;
     const loadClonefile = yield* Effect.cached(
       Effect.try({

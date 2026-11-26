@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { INITIAL_VIEWER_LEASE, stepViewerLease } from "@t3tools/client-runtime/sandbox-viewing";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect } from "react";
 
@@ -24,10 +25,12 @@ function renewViewerLease(threadRef: ScopedThreadRef, cloud: boolean) {
   });
   lease = step.state;
   if (step.send === null) return;
-  void sandboxEnvironment.viewing.run(appAtomRegistry, {
-    environmentId: threadRef.environmentId,
-    input: { threadId: step.send },
-  });
+  void runAtomCommand(
+    appAtomRegistry,
+    sandboxEnvironment.viewing,
+    { environmentId: threadRef.environmentId, input: { threadId: step.send } },
+    { reportFailure: false },
+  );
 }
 
 function mountViewerLease(threadRef: ScopedThreadRef, cloud: boolean): () => void {

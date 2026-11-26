@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProjectId,
   ProviderDriverKind,
   type ModelSelection,
@@ -605,10 +606,10 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         {
           output: JSON.stringify({ title: "Remove default shapes" }),
           launchArgs:
-            "--config features.plugins=true --config features.apps=true --config features.shell_tool=true",
+            "--config features.plugins=true --config features.apps=true --config features.connectors=true --config features.shell_tool=true",
           requireArg: cloudOnly
             ? "--config features.apps=false --config features.shell_tool=false --config features.unified_exec=false --config features.view_image=false --ephemeral"
-            : "--config features.plugins=true --config features.apps=true --config features.shell_tool=true --config features.plugins=false --config features.apps=false --ephemeral",
+            : "--config features.plugins=true --config features.apps=true --config features.connectors=true --config features.shell_tool=true --config features.connectors=false --config features.plugins=false --config features.apps=false --ephemeral",
           ...(cloudOnly ? {} : { forbidArg: "features.shell_tool=false" }),
         },
         (textGeneration) =>
@@ -804,6 +805,25 @@ const PREFLIGHT_ROWS = [
   { state: "signed out, fallback failed", cloudOnly: false, memberOwned: false, fallsBack: false },
   { state: "cannot generate text", cloudOnly: false, memberOwned: false, fallsBack: true },
   { state: "model cannot generate text", cloudOnly: false, memberOwned: false, fallsBack: true },
+  {
+    state: "not installed, fallback model cannot generate text",
+    cloudOnly: false,
+    memberOwned: false,
+    fallsBack: true,
+  },
+  { state: "disabled", cloudOnly: false, memberOwned: false, fallsBack: true },
+  {
+    state: "disabled, thread default model cannot generate text",
+    cloudOnly: false,
+    memberOwned: false,
+    fallsBack: true,
+  },
+  {
+    state: "disabled, fallback disabled for project",
+    cloudOnly: false,
+    memberOwned: false,
+    fallsBack: false,
+  },
   // Cloud-only falls back from any primary that can't generate, but never to a member's account.
   { state: "pending", cloudOnly: true, memberOwned: false, fallsBack: true },
   { state: "signed out", cloudOnly: true, memberOwned: true, fallsBack: false },
@@ -869,6 +889,24 @@ it.effect.each(PREFLIGHT_ROWS)(
                 ],
               }
             : {}),
+          ...((primaryState === "not installed, fallback model cannot generate text" ||
+            primaryState === "disabled, thread default model cannot generate text") &&
+          instanceId === fallback
+            ? {
+                models: [
+                  {
+                    slug: threadDefault.model,
+                    name: threadDefault.model,
+                    isCustom: true,
+                    supportsTextGeneration: false,
+                    capabilities: null,
+                  },
+                ],
+              }
+            : {}),
+          ...(primaryState.startsWith("disabled") && instanceId === primary
+            ? { enabled: false, status: "disabled" }
+            : {}),
           ...(primaryState === "exhausted" && instanceId === primary
             ? {
                 usageLimits: {
@@ -917,7 +955,7 @@ it.effect.each(PREFLIGHT_ROWS)(
                 },
               },
               defaultModelSelection: threadDefault,
-              ...(primaryState === "not installed, fallback disabled for project"
+              ...(primaryState.endsWith("fallback disabled for project")
                 ? {
                     projectSettingsOverrides: {
                       [projectId]: { providerInstances: { [fallback]: { enabled: false } } },
@@ -934,16 +972,36 @@ it.effect.each(PREFLIGHT_ROWS)(
         ),
         Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
       );
-      expect(
-        yield* service.generateThreadTitle({
+      const generated = yield* service
+        .generateThreadTitle({
           cwd: "/tmp",
           message: "hello",
           linkedContext: "",
-          modelSelection: selection,
+          modelSelection:
+            primaryState === "disabled, thread default model cannot generate text"
+              ? threadDefault
+              : selection,
           projectId,
-        }),
-      ).toEqual({ title: "Generated title" });
-      expect(calls).toEqual([fallsBack ? threadDefault : selection]);
+        })
+        .pipe(Effect.exit);
+      if (primaryState === "disabled, fallback disabled for project") {
+        expect(Exit.isFailure(generated)).toBe(true);
+        expect(calls).toEqual([]);
+        return;
+      }
+      expect(generated).toEqual(Exit.succeed({ title: "Generated title" }));
+      expect(calls).toEqual([
+        !fallsBack
+          ? selection
+          : primaryState === "not installed, fallback model cannot generate text" ||
+              primaryState === "disabled, thread default model cannot generate text"
+            ? {
+                instanceId: fallback,
+                model:
+                  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
+              }
+            : threadDefault,
+      ]);
     }).pipe(Effect.provide(layerCodexTextGenerationTest)),
 );
 

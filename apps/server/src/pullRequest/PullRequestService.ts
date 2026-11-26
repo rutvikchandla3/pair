@@ -288,6 +288,10 @@ export class PullRequestService extends Context.Service<
     readonly changes: (input: PullRequestRef) => Stream.Stream<void>;
     /** Whether the project's checkout is on a forge T3 reads change requests from. */
     readonly servesProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /** The project as `servesProject` sees it: identity resolved, its forge refined. */
+    readonly addressedProject: (
+      projectId: ProjectId,
+    ) => Effect.Effect<OrchestrationProjectShell | undefined, PullRequestError>;
     readonly threadComments: (
       input: PullRequestThreadCommentsInput,
     ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
@@ -388,6 +392,7 @@ export interface SupportedProject {
   readonly cursorKey: string;
   readonly project: OrchestrationProjectShell;
   readonly api: PullRequestProviderApi;
+  readonly kind: SourceControlProviderKind;
   readonly repository: string;
   readonly host: string;
   /** Unlike Azure repository names, remotes are unique across an organization. */
@@ -396,6 +401,8 @@ export interface SupportedProject {
 }
 
 interface WorkspaceProjects {
+  /** Every project read, with its repository identity resolved. */
+  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly supported: ReadonlyArray<SupportedProject>;
   readonly unimplemented: ReadonlyMap<
     string,
@@ -783,6 +790,12 @@ function httpRemoteHost(remoteUrl: string): string | null {
   }
 }
 
+/** Whether `expected` names `head`: the full SHA, or a hex prefix of at least 7 characters. */
+export const isHeadSha = (head: string, expected: string) => {
+  const wanted = expected.toLowerCase();
+  return /^[0-9a-f]{7,}$/.test(wanted) ? head.toLowerCase().startsWith(wanted) : head === expected;
+};
+
 // Capture before the provider read so a slow response keeps its original freshness through caches.
 const observeRead = Effect.fnUntraced(function* <A, E, R>(read: Effect.Effect<A, E, R>) {
   const observedAt = yield* Clock.currentTimeMillis;
@@ -1056,6 +1069,7 @@ export const make = Effect.gen(function* () {
               { host, repository },
               appTokens,
             ),
+            kind,
             repository,
             host,
             remote:
@@ -1067,7 +1081,7 @@ export const make = Effect.gen(function* () {
                 : sourceControlDefinitions.canonicalRepositoryKey(repositoryKey.toLowerCase()),
           });
         }
-        return { supported, unimplemented, viewerRoots, refinedProjectIdsByHost };
+        return { projects, supported, unimplemented, viewerRoots, refinedProjectIdsByHost };
       }),
     );
 
@@ -1117,7 +1131,7 @@ export const make = Effect.gen(function* () {
               return Effect.gen(function* () {
                 const publicHost = sourceControlDefinitions.findByPublicHost(host);
                 const api = publicHost === undefined ? null : registry.get(publicHost.kind);
-                if (api?.readsPublicHostWithoutCheckout) {
+                if (publicHost !== undefined && api?.readsPublicHostWithoutCheckout) {
                   const selected = yield* projects.getShell(ref.projectId).pipe(
                     Effect.mapError(
                       (cause) =>
@@ -1137,6 +1151,7 @@ export const make = Effect.gen(function* () {
                         { host, repository },
                         appTokens,
                       ),
+                      kind: publicHost.kind,
                       repository,
                       host,
                       remote: sourceControlDefinitions.repositoryKeyFromRemote(
@@ -1198,6 +1213,18 @@ export const make = Effect.gen(function* () {
     listWorkspaceProjects({ projectId }).pipe(
       Effect.map(({ supported }) => supported.length > 0),
       Effect.orElseSucceed(() => true),
+    );
+
+  const addressedProject: PullRequestService["Service"]["addressedProject"] = (projectId) =>
+    listWorkspaceProjects({ projectId }).pipe(
+      Effect.map(({ projects, supported }) => {
+        const own = supported[0];
+        if (own === undefined) return projects.find((project) => project.id === projectId);
+        const identity = own.project.repositoryIdentity;
+        return identity == null || identity.provider === own.kind
+          ? own.project
+          : { ...own.project, repositoryIdentity: { ...identity, provider: own.kind } };
+      }),
     );
 
   const changes: PullRequestService["Service"]["changes"] = (input) =>
@@ -1428,6 +1455,7 @@ export const make = Effect.gen(function* () {
       ...(input.item.checksState === undefined || input.item.checksState === null
         ? {}
         : { checksState: input.item.checksState }),
+      ...(input.item.visibility === undefined ? {} : { visibility: input.item.visibility }),
       viewerReviewRequested:
         input.item.author?.login.toLowerCase() !== viewer &&
         input.item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer),
@@ -2079,6 +2107,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.mergeQueueRemoval === undefined
               ? {}
               : { mergeQueueRemoval: changeRequest.mergeQueueRemoval }),
+            ...(changeRequest.visibility === undefined
+              ? {}
+              : { visibility: changeRequest.visibility }),
           })),
         ),
       ),
@@ -2377,9 +2408,10 @@ export const make = Effect.gen(function* () {
                   )
                 : Effect.succeed(false);
             // Hosts that cannot pin a merge to a commit still refuse a head that already moved.
-            const headPinned =
-              input.expectedHeadSha === undefined
-                ? Effect.void
+            const expected = input.expectedHeadSha;
+            const headPinned: Effect.Effect<string | undefined, PullRequestError> =
+              expected === undefined
+                ? Effect.undefined
                 : project.api
                     .getChangeRequest({
                       cwd: project.project.workspaceRoot,
@@ -2390,19 +2422,24 @@ export const make = Effect.gen(function* () {
                     .pipe(
                       Effect.mapError(toPullRequestError("runAction")),
                       Effect.flatMap((current) =>
-                        current.headSha === input.expectedHeadSha
-                          ? Effect.void
+                        typeof current.headSha === "string" && isHeadSha(current.headSha, expected)
+                          ? Effect.succeed(current.headSha)
                           : Effect.fail(
                               new PullRequestOperationError({
                                 operation: "runAction",
-                                detail: `The head is now ${current.headSha ?? "unknown"}, not ${input.expectedHeadSha}. Review the new commits first.`,
+                                detail: `The head is now ${current.headSha ?? "unknown"}, not ${expected}. Review the new commits first.`,
                               }),
                             ),
                       ),
                     );
             return headPinned.pipe(
-              Effect.andThen(mergeSettings),
-              Effect.flatMap((removeAgentCreditsOnMerge) =>
+              Effect.flatMap((expectedHeadSha) =>
+                Effect.map(mergeSettings, (removeAgentCreditsOnMerge) => ({
+                  expectedHeadSha,
+                  removeAgentCreditsOnMerge,
+                })),
+              ),
+              Effect.flatMap(({ expectedHeadSha, removeAgentCreditsOnMerge }) =>
                 project.api
                   .runAction({
                     cwd: project.project.workspaceRoot,
@@ -2415,9 +2452,7 @@ export const make = Effect.gen(function* () {
                     ...(input.expectedStackHeads === undefined
                       ? {}
                       : { expectedStackHeads: input.expectedStackHeads }),
-                    ...(input.expectedHeadSha === undefined
-                      ? {}
-                      : { expectedHeadSha: input.expectedHeadSha }),
+                    ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
                     ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                     ...(input.updateMethod === undefined
                       ? {}
@@ -4046,8 +4081,16 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const ref = yield* canonicalRef(input);
     yield* readCache.invalidate(refScope(ref));
+    // A refusal (e.g. a merge conflict) means readers hold stale state, so refresh them too.
     const { repository, summary } = yield* runAction(input).pipe(
       Effect.ensuring(readCache.invalidate(refScope(ref))),
+      Effect.tapError(() =>
+        Effect.suspend(() => {
+          bumpRefEpoch(ref);
+          listingsEpoch = ++epochCounter;
+          return SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
+        }),
+      ),
     );
     bumpRefEpoch({ ...ref, repository });
     listingsEpoch = ++epochCounter;
@@ -4235,6 +4278,7 @@ export const make = Effect.gen(function* () {
     activity: credentialCached(activity),
     changes,
     servesProject,
+    addressedProject,
     preview: credentialCached(preview),
     threadComments,
     diff: credentialCached(diff),

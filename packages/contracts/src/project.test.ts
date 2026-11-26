@@ -21,6 +21,8 @@ import {
   ProjectFileFailure,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
+  refusesTrackedFolders,
+  trackedFoldersRefusal,
 } from "./project.ts";
 import { SandboxAsleep, SandboxId } from "./sandbox.ts";
 
@@ -261,3 +263,13 @@ effectIt.effect("an icon kind from a newer server shows the default icon", () =>
     assert.strictEqual(broken._tag, "Failure");
   }),
 );
+
+it("refuses tracked folders on a workspace first, then on cloud-only servers and sandbox paths", () => {
+  const workspace = { roots: [{ projectId: "root-1", name: "api" }] };
+  expect(refusesTrackedFolders({}, "local")).toBe(false);
+  expect(refusesTrackedFolders({ roots: [] }, "local")).toBe(false);
+  expect(refusesTrackedFolders(workspace, "local")).toBe(true);
+  expect(refusesTrackedFolders({}, "cloud-only")).toBe(true);
+  expect(refusesTrackedFolders({}, "sandbox")).toBe(true);
+  expect(trackedFoldersRefusal(workspace, "cloud-only")).toContain("Workspace settings");
+});

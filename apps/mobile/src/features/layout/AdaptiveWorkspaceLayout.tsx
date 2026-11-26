@@ -71,7 +71,6 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { isPageTab } from "./workspace/navigation-tab-order";
 import { useEnabledNavigationTabs } from "./workspace/navigation-tabs";
 import { FLOATING_TABS, floatingTabsMetrics } from "./workspace/floating-workspace-tabs";
 import {
@@ -117,7 +116,11 @@ import {
   workspaceTabColumns,
   workspaceTabNavigationState,
 } from "./workspace/workspace-tab-navigation";
-import { workspaceTabOf, type WorkspaceTab } from "./workspace/workspace-tabs-state";
+import {
+  workspaceTabOf,
+  workspaceUsesColumns,
+  type WorkspaceTab,
+} from "./workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
@@ -274,7 +277,10 @@ function AdaptiveWorkspaceLayoutContent(
   const safeAreaInsets = useSafeAreaInsets();
   const workspacePage =
     Platform.OS === "android" &&
-    (androidSettingsOpen || (workspace ? isPageTab(workspace.state.selectedTab) : false));
+    (androidSettingsOpen ||
+      (workspace !== null &&
+        workspace !== undefined &&
+        !workspaceUsesColumns(workspace.state.selectedTab)));
   const navigation = useNavigation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);

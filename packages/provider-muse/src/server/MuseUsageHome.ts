@@ -66,7 +66,12 @@ const make = Effect.gen(function* () {
       if (Option.isSome(settled)) return settled;
       // Spawn failures surface asynchronously; without this a missing CLI would report as pending.
       const resolveExecutable = yield* SpawnExecutableResolution;
-      if (resolveExecutable(binaryPath, yield* HostProcess.Platform, environment) === undefined) {
+      // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: Muse's usage home is read from this server's own disk
+      const platform = yield* HostProcess.Platform;
+      const resolved = yield* Effect.promise(async () =>
+        resolveExecutable(binaryPath, platform, environment),
+      );
+      if (resolved === undefined) {
         return Option.some(undefined);
       }
       if (awaitRefresh) return Option.some(yield* Cache.get(cache, key));

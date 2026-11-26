@@ -13,6 +13,7 @@ import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { vcsEnvironment } from "../../../state/vcs";
+import { useRefreshBranchesOnFocus } from "../use-refresh-branches-on-focus";
 import { SheetActionButton } from "./gitSheetComponents";
 
 type GitBranchesSheetProps = StaticScreenProps<{
@@ -27,6 +28,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canChangeThreadBranch, canSwitchBranch, gitCwd, workspace } = gitActions;
+  useRefreshBranchesOnFocus(selectedThread?.environmentId, gitCwd);
   // A workspace repository switches and creates branches only inside its own worktree.
   const repository = workspace?.selected ?? null;
   const title = repository === null ? gt("Branches & worktrees") : `Branches in ${repository.name}`;
@@ -83,7 +85,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             const branch = sanitizeFeatureBranchName(newBranchName.trim());
             if (branch.length === 0) return;
             void gitActions.onCreateSelectedThreadBranch(branch).then((result) => {
-              if (result === null) return;
+              if (result === null || !navigation.isFocused()) return;
               setNewBranchName("");
               navigation.goBack();
             });
@@ -124,7 +126,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               void gitActions
                 .onCreateSelectedThreadWorktree({ baseBranch, newBranch })
                 .then((result) => {
-                  if (result === null) return;
+                  if (result === null || !navigation.isFocused()) return;
                   setWorktreeBranchName("");
                   navigation.goBack();
                 });
@@ -163,7 +165,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               disabled={!canSwitchBranch || busy || disabled}
               onPress={() => {
                 void gitActions.onCheckoutSelectedThreadBranch(branch.name).then((result) => {
-                  if (result === null) return;
+                  if (result === null || !navigation.isFocused()) return;
                   navigation.goBack();
                 });
               }}

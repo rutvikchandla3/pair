@@ -55,7 +55,7 @@ import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   revealSettingsSearchTarget,
-  SETTINGS_NAV_GROUPS,
+  settingsNavGroups,
   SETTINGS_NAV_LABELS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
@@ -64,7 +64,10 @@ import {
 import { useEnvironments } from "~/state/environments";
 import { useTeamSettingsVisible } from "~/state/team";
 import { cloudSettingsVisible } from "./CloudSettings.logic";
-import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import {
+  useAvailableSettingsSearchItems,
+  useHasSecretProvidersEnvironment,
+} from "./useAvailableSettingsSearchItems";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 
@@ -148,7 +151,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const cloudVisible = useEnvironments().environments.some((environment) =>
     cloudSettingsVisible(environment.serverConfig),
   );
-  const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
+  const navGroups = settingsNavGroups(useHasSecretProvidersEnvironment()).map((group) => ({
     ...group,
     paths: group.paths.filter(
       (to) =>

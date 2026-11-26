@@ -359,7 +359,7 @@ kept disk, beside the checkout, so the adapter's normal `resume`
 after any sleep. When the disk is lost, M2 rebuilds the checkout from the mirror (07), and the
 conversation falls back to
 [ContextHandoffService](../../../apps/server/src/orchestration-v2/ContextHandoffService.ts), which
-keeps a 240-character prefix of each item ([context handoffs](../../internals/context-handoffs.md)).
+keeps a 240-character prefix of each item ([context handoffs](../../internals/01_architecture.md#pair-cloud-and-workspace-hosts)).
 Mirroring provider session files would avoid that loss; it is Later.
 
 ## 4. Caps, quotas and usage
@@ -779,7 +779,7 @@ backend and decides when and how it answers.
 [RunnerHubTesting.ts](../../../apps/server/src/sandbox/runnerHub/RunnerHubTesting.ts) stands in for
 runners. Tests drain the effect worker or await a stored `sandbox.updated`; deadlines and idle timers
 run under `it.effect` with `TestClock.adjust`. No sleeps or polling
-([testing](../../internals/testing.md)). Cases, each at the lowest layer that fails without the
+([testing](../../internals/15_testing.md)). Cases, each at the lowest layer that fails without the
 change:
 
 - Launch: a hello releases the `preparing` run. A prompt to a sleeping sandbox wakes it.

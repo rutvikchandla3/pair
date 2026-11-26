@@ -13,6 +13,7 @@ import {
   type PresenceState,
   type PresentMember,
 } from "@t3tools/client-runtime/state/presence";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -89,7 +90,7 @@ export function dispatchPresence(environmentId: EnvironmentId, signal: PresenceR
   const step = stepPresenceReporter(reporter.state, signal, Date.now());
   reporter.state = step.state;
   if (step.report === undefined) return;
-  void presenceEnvironment.reportPresence.run(appAtomRegistry, {
+  void runAtomCommand(appAtomRegistry, presenceEnvironment.reportPresence, {
     environmentId,
     input: step.report,
   });

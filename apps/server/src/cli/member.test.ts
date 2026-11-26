@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths and a local server.
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
@@ -34,7 +35,12 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer);
+const layerCliRuntime = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  FeatureFlags.layerTest(),
+  NetService.layer,
+);
 
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(Effect.provide(layerCliRuntime));

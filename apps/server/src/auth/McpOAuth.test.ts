@@ -1,3 +1,4 @@
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -96,11 +97,13 @@ const makeLayerRoutes = (
     Layer.provide(layerConfig),
     Layer.provideMerge(
       HttpPlatform.layer.pipe(
-        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        Layer.provideMerge(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest()),
+        ),
         Layer.provideMerge(Etag.layerWeak),
       ),
     ),
-    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest())),
   );
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -147,7 +150,9 @@ const withRoutes = <A, E>(
         }),
       (web) => Effect.promise(() => web.dispose()),
     );
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+  }).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FeatureFlags.layerTest())),
+  );
 
 const json = <A>(response: Response) => Effect.promise(() => response.json() as Promise<A>);
 
@@ -228,6 +233,7 @@ it.effect("derives discovery metadata from the origin the client reached", () =>
         authorization_endpoint: `${ORIGIN}/oauth/mcp/authorize`,
         token_endpoint: `${ORIGIN}/oauth/mcp/token`,
         registration_endpoint: `${ORIGIN}/oauth/mcp/register`,
+        revocation_endpoint: `${ORIGIN}/oauth/mcp/revoke`,
         code_challenge_methods_supported: ["S256"],
       });
     }),
@@ -415,6 +421,22 @@ it.live("signs in with a pairing code and issues a token only /mcp accepts", () 
         }),
       );
       expect(ticket.status).toBe(401);
+
+      // Revocation ends only an MCP client's own session; any other token is answered alike and kept.
+      const owner = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        (yield* auth.issuePairingCredential()).credential,
+        undefined,
+        { deviceType: "desktop" },
+      );
+      const bearer = (token: string) =>
+        HttpServerRequest.fromWeb(at("/api", { headers: { authorization: `Bearer ${token}` } }));
+      for (const other of ["not-a-token", owner.access_token]) {
+        expect((yield* handler(at("/oauth/mcp/revoke", form({ token: other })))).status).toBe(200);
+      }
+      yield* auth.authenticateHttpRequest(bearer(owner.access_token));
+      const revoked = yield* handler(at("/oauth/mcp/revoke", form({ token: token.access_token })));
+      expect(revoked.status).toBe(200);
+      yield* auth.authenticateMcpClient(bearer(token.access_token)).pipe(Effect.flip);
     }),
   ),
 );

@@ -337,7 +337,7 @@ Paged reads filter in SQL with `threadAllowsSql` (`team/threadAccessSql.ts`), th
 ## 4. Where the server enforces it
 
 One service owns the question, and transports stay thin
-([Effect services](../../internals/effect-services.md)):
+([Effect services](../../internals/02_effect-services.md)):
 
 ```ts
 // apps/server/src/team/ThreadAccess.ts
