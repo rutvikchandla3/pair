@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -81,6 +83,26 @@ function routedKind(kind: PresentedKind, status: SidebarThreadStatus): RoutedNot
     status === "request"
     ? status
     : "input";
+}
+
+/** Upstream's titles in the active language; Pair's own kinds keep the shared English title. */
+function notificationTitle(kind: RoutedNotificationKind, archiverName: string | null): string {
+  switch (kind) {
+    case "completion":
+      return m(msg("Thread completed"));
+    case "approval":
+      return m(msg("Approval needed"));
+    case "limited":
+      return m(msg("Usage limit reached"));
+    case "failed":
+      return m(msg("Thread failed"));
+    case "request":
+      return m(msg("Guest request"));
+    case "input":
+      return m(msg("Input needed"));
+    default:
+      return threadNotificationTitle(kind, archiverName);
+  }
 }
 
 type ToastId = ReturnType<typeof toastManager.add>;
@@ -212,7 +234,7 @@ export function startThreadNotifications(
         ? (registry.get(teamEnvironment.membersValueAtom(environmentId)).get(state.archivedBy)
             ?.name ?? "Former member")
         : null;
-    const title = threadNotificationTitle(routedKind(kind, status), archiverName);
+    const title = notificationTitle(routedKind(kind, status), archiverName);
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind === "completion" ? "completion" : "input", () =>
         hasNotificationSound(getClientSettings().notificationMode),
@@ -276,7 +298,11 @@ export function startThreadNotifications(
             ),
         },
         actionProps: {
-          children: kind === "archived" ? "Open archive" : "Open thread",
+          children:
+            kind === "archived"
+              ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                "Open archive"
+              : m(msg("Open thread")),
           onClick: () => {
             toastManager.close(toastId);
             void open();

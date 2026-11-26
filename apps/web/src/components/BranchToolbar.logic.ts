@@ -30,11 +30,13 @@ import type {
   ThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/shell";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import { cloneUrlForProtocol } from "@t3tools/shared/cloneUrl";
 import { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { AddProjectToMachineInput } from "../lib/addProjectToMachine";
+import { m, type MessageResolver } from "../i18n/messages";
 import { deriveCanInterruptRunningThread } from "../session-logic";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 
@@ -166,12 +168,15 @@ function normalizeDisplayLabel(value: string | null | undefined): string | null 
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
-export function resolveEnvironmentOptionLabel(input: {
-  isPrimary: boolean;
-  environmentId: EnvironmentId;
-  runtimeLabel?: string | null;
-  savedLabel?: string | null;
-}): string {
+export function resolveEnvironmentOptionLabel(
+  input: {
+    isPrimary: boolean;
+    environmentId: EnvironmentId;
+    runtimeLabel?: string | null;
+    savedLabel?: string | null;
+  },
+  resolve: MessageResolver = m,
+): string {
   const runtimeLabel = normalizeDisplayLabel(input.runtimeLabel);
   const savedLabel = normalizeDisplayLabel(input.savedLabel);
 
@@ -180,7 +185,7 @@ export function resolveEnvironmentOptionLabel(input: {
       if (!label) return false;
       return !GENERIC_LOCAL_ENVIRONMENT_LABELS.has(label.toLowerCase());
     });
-    return preferredLocalLabel ?? "This device";
+    return preferredLocalLabel ?? resolve(msg("This device"));
   }
 
   return runtimeLabel ?? savedLabel ?? input.environmentId;
@@ -222,9 +227,10 @@ export function resolveContextStripLabelsCompact(input: {
     : input.neededWidth > input.availableWidth;
 }
 
-export function resolveEnvModeLabel(mode: EnvMode): string {
+export function resolveEnvModeLabel(mode: EnvMode, resolve: MessageResolver = m): string {
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
   if (mode === "cloud") return "Cloud";
-  return mode === "worktree" ? "New worktree" : "Current checkout";
+  return mode === "worktree" ? resolve(msg("New worktree")) : resolve(msg("Current checkout"));
 }
 
 export interface CloudLaunchTarget {
@@ -286,7 +292,6 @@ export interface CloudEnvModeItem {
   readonly value: string;
 }
 
-export const MULTI_MODEL_WORKTREE_REASON = "Each model starts in its own worktree.";
 export const WORKSPACE_WORKTREE_REASON =
   "A workspace thread starts in a new worktree of each of its repositories.";
 
@@ -350,6 +355,7 @@ export function resolveCloudEnvModeItem(input: {
     if (target.projectId === null && target.createWorkspace !== undefined) {
       return {
         value: `create:${target.environmentId}`,
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
         label: several ? `Create on ${target.label}` : "Create on Pair Cloud",
         action: {
           kind: "create",
@@ -366,6 +372,7 @@ export function resolveCloudEnvModeItem(input: {
     if (target.projectId === null && !workspace) {
       return {
         value: `add:${target.environmentId}`,
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
         label: several ? `Add to ${target.label}` : "Add to Pair Cloud",
         action: { kind: "add", environmentId: target.environmentId, label: target.label },
         disabled: target.disabledReason !== null,
@@ -377,6 +384,7 @@ export function resolveCloudEnvModeItem(input: {
       (target.projectId === null ? notThereReason(target) : target.disabledReason);
     return {
       value: several ? `cloud:${target.environmentId}` : "cloud",
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
       label: several ? `Cloud on ${target.label}` : resolveEnvModeLabel("cloud"),
       action: { kind: "launch", environmentId: several ? target.environmentId : null },
       disabled: reason !== null,
@@ -428,22 +436,31 @@ export function pairCloudAddInput(input: {
 export const TEAM_DEFAULT_ENV_MODE_LABEL = "New worktree (team default)";
 
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
-  recursive: "Recursive",
-  "top-level": "Top level only",
-  none: "Skip",
+  recursive: msg("Recursive"),
+  "top-level": msg("Top level only"),
+  none: msg("Skip"),
 };
 
-export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
+export function resolveCurrentWorkspaceLabel(
+  activeWorktreePath: string | null,
+  resolve: MessageResolver = m,
+): string {
+  return activeWorktreePath
+    ? resolve(msg("Current worktree"))
+    : resolveEnvModeLabel("local", resolve);
 }
 
 export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
   effectiveEnvMode: EnvMode,
+  resolve: MessageResolver = m,
 ): string {
-  if (effectiveEnvMode === "cloud") return resolveEnvModeLabel("cloud");
-  if (activeWorktreePath) return activeWorktreePath.split(/[\\/]/).findLast(Boolean) ?? "Worktree";
-  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
+  if (effectiveEnvMode === "cloud") return resolveEnvModeLabel("cloud", resolve);
+  if (activeWorktreePath)
+    return activeWorktreePath.split(/[\\/]/).findLast(Boolean) ?? resolve(msg("Worktree"));
+  return effectiveEnvMode === "worktree"
+    ? resolveEnvModeLabel("worktree", resolve)
+    : resolve(msg("Local checkout"));
 }
 
 export interface PreviousWorktreeSeed {
@@ -487,8 +504,13 @@ export function resolvePreviousWorktreeSeed(input: {
   return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
 }
 
-export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
-  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
+export function resolvePreviousWorktreeLabel(
+  seed: PreviousWorktreeSeed,
+  resolve: MessageResolver = m,
+): string {
+  return seed.branch
+    ? resolve(msg("Previous worktree ({branch})", { branch: seed.branch }))
+    : resolve(msg("Previous worktree"));
 }
 
 export function resolveEffectiveEnvMode(input: {
@@ -595,13 +617,16 @@ export function resolveDefaultWorktreeBaseBranch(
   return (refs.find((ref) => ref.isDefault) ?? refs.find((ref) => ref.current))?.name ?? null;
 }
 
-export function resolveBranchTriggerLabel(input: {
-  activeWorktreePath: string | null;
-  effectiveEnvMode: EnvMode;
-  resolvedActiveBranch: string | null;
-  resolvedActiveBranchIsRemote: boolean | null;
-  startFromOrigin: boolean;
-}): string {
+export function resolveBranchTriggerLabel(
+  input: {
+    activeWorktreePath: string | null;
+    effectiveEnvMode: EnvMode;
+    resolvedActiveBranch: string | null;
+    resolvedActiveBranchIsRemote: boolean | null;
+    startFromOrigin: boolean;
+  },
+  resolve: MessageResolver = m,
+): string {
   const {
     activeWorktreePath,
     effectiveEnvMode,
@@ -610,15 +635,15 @@ export function resolveBranchTriggerLabel(input: {
     startFromOrigin,
   } = input;
   if (!resolvedActiveBranch) {
-    return "Select ref";
+    return resolve(msg("Select ref"));
   }
   if (effectiveEnvMode !== "local" && !activeWorktreePath) {
     // Only the server can determine a local branch's configured remote.
     return effectiveEnvMode === "worktree" &&
       startFromOrigin &&
       resolvedActiveBranchIsRemote === false
-      ? `From ${resolvedActiveBranch} (remote)`
-      : `From ${resolvedActiveBranch}`;
+      ? resolve(msg("From {branch} (remote)", { branch: resolvedActiveBranch }))
+      : resolve(msg("From {branch}", { branch: resolvedActiveBranch }));
   }
   return resolvedActiveBranch;
 }
@@ -644,6 +669,20 @@ export function resolveLocalCheckoutBranchMismatch(input: {
     return null;
   }
   return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
+}
+
+/**
+ * Keeps a picked ref's worktree claim only when a read in that worktree finds it checked out.
+ * `freshRead` is `null` when the read failed.
+ */
+export function resolveConfirmedSelectedRef(
+  listedRef: VcsRef,
+  freshRead: { readonly refs: ReadonlyArray<VcsRef> } | null,
+): VcsRef {
+  const checkedOut =
+    freshRead?.refs.some((ref) => ref.name === listedRef.name && !ref.isRemote && ref.current) ??
+    false;
+  return checkedOut ? listedRef : { ...listedRef, worktreePath: null };
 }
 
 export function resolveBranchSelectionTarget(input: {

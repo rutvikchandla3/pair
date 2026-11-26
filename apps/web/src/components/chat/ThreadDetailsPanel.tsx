@@ -24,6 +24,7 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
+import { T, useGT } from "gt-react";
 import { memo, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
@@ -108,6 +109,7 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const gt = useGT();
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
@@ -214,7 +216,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {show.environment || show.openIn || show.scripts ? (
                 <ThreadDetailsSection
                   headingId="thread-details-workspace-heading"
-                  title="Workspace"
+                  title={gt("Workspace")}
                   separated={false}
                   showHeading={false}
                 >
@@ -264,6 +266,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {workspace !== null && (visible.branch || visible.gitActions) ? (
                 <ThreadDetailsSection
                   headingId="thread-details-repositories-heading"
+                  // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
                   title="Repositories"
                   separated={density === "full"}
                 >
@@ -282,7 +285,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {show.branch || show.pullRequests || show.git ? (
                 <ThreadDetailsSection
                   headingId="thread-details-version-control-heading"
-                  title={selectedRepository?.name ?? "Version Control"}
+                  title={selectedRepository?.name ?? gt("Version Control")}
                   showHeading={selectedRepository !== null}
                   separated={density === "full" || selectedRepository !== null}
                 >
@@ -362,7 +365,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 >
                   <SlidersHorizontalIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
                   <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                    Choose what to show
+                    <T>Choose what to show</T>
                   </span>
                 </ThreadDetailsControl>
               </div>
@@ -398,7 +401,9 @@ function WorkspaceRepositories({ workspace }: { workspace: WorkspaceRepositories
   if (workspace.repositories.length === 0) {
     return (
       <p className="px-2.5 py-1 text-muted-foreground text-xs">
+        {/* oxlint-disable t3code/no-untranslated-copy -- Pair copy stays English */}
         Each repository gets its own worktree when the thread starts.
+        {/* oxlint-enable t3code/no-untranslated-copy */}
       </p>
     );
   }

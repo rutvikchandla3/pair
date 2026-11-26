@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
+import { Effect } from "effect";
 import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -38,6 +39,7 @@ import {
   releasePendingAttachmentUploads,
 } from "../../lib/attachmentUpload";
 import { cn } from "../../lib/cn";
+import { uploadComposerAttachmentShared } from "../../state/composer-attachment-uploads";
 import {
   type DraftComposerAttachment,
   convertPastedImagesToAttachments,
@@ -163,17 +165,25 @@ export function SpaceComposer(props: {
     let pending: ReadonlyArray<string> = [];
     if (sentAttachments.length > 0) {
       setSending(true);
-      const prepared = await prepareTurnAttachments({
-        environmentId: props.environmentId,
-        attachments: sentAttachments,
-        supportsImageUploads: true,
-      }).catch((error: unknown) => {
-        Dialog.alert(
-          "Could not upload attachments",
-          error instanceof Error && error.message.trim() !== "" ? error.message : "Try again.",
-        );
-        return null;
-      });
+      const prepared = await Effect.runPromise(
+        prepareTurnAttachments({
+          environmentId: props.environmentId,
+          attachments: sentAttachments,
+          supportsImageUploads: true,
+          uploadAttachment: (attachment) =>
+            uploadComposerAttachmentShared(props.environmentId, attachment),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              Dialog.alert(
+                "Could not upload attachments",
+                error.message.trim() !== "" ? error.message : "Try again.",
+              );
+              return null;
+            }),
+          ),
+        ),
+      );
       setSending(false);
       if (prepared === null || prepared.status !== "ready") return;
       uploaded = prepared.attachments.filter(

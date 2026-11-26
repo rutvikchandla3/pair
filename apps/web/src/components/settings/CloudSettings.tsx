@@ -103,7 +103,7 @@ import { RetentionControl } from "./RetentionControl";
 import { useSecretSources } from "./SecretSourceInput";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { formatDayAwareTimestamp } from "../../timestampFormat";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { SettingsEnvironmentPicker } from "./SettingsEnvironmentPicker";
 import { TeamImageSettings } from "./TeamImageSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
@@ -130,6 +130,7 @@ function formatDuration(ms: number): string {
 }
 
 export function CloudSettings() {
+  const searchableSetting = useSearchableSetting();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const scope = useOptionalSettingsScope();
@@ -268,6 +269,7 @@ function CloudEnvironmentSettings({
   readonly environmentId: EnvironmentId;
   readonly serverConfig: EnvironmentServerConfig;
 }) {
+  const searchableSetting = useSearchableSetting();
   const sandbox = serverConfig.settings.sandbox;
   const drivers = sandbox?.drivers ?? [];
   const diskRetention = sandbox?.diskRetention ?? DEFAULT_DISK_RETENTION;

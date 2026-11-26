@@ -100,6 +100,8 @@ export const RPC_THREAD_TARGETS: {
       // An attachment id is unguessable, and a member learns one only from a thread they can read.
       case "attachment":
       case "native-app-icon":
+      // The environment's theme image, shown to everyone signed in.
+      case "environment-theme-background":
         return [];
     }
   },
@@ -313,6 +315,10 @@ export const RPC_OUTPUT_FILTERED: { readonly [M in WsMethod]?: string } = {
     "lineage/BranchLineageService.ts: the source's holder only, who may open the source",
   [WS_METHODS.offerDiff]:
     "lineage/BranchLineageService.ts offerDiff: whoever may open the offer's source or branch",
+  [WS_METHODS.pullRequestsLinkedThreads]:
+    "pullRequest/linkedThreads.ts listLinkedPullRequestThreads: only threads the caller may open",
+  [WS_METHODS.issuesLinkedThreads]:
+    "orchestration-v2/ThreadIssueService.ts linkedThreads: only threads the caller may open",
 };
 
 const ownBinary = "`executablePath` is the server's own binary, not a machine's.";

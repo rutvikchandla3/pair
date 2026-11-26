@@ -35,6 +35,7 @@ import {
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
+  foldedMessageSearchText,
   indexedMessageCondition,
   messageSearchText,
   nonPlaceholderMessageCondition,
@@ -365,7 +366,7 @@ export const messageHitsQuery = (
       )
       AND NOT EXISTS (
         -- The text read once, not once per check.
-        SELECT 1 FROM (SELECT ${messageSearchText(sql)} AS text) AS message,
+        SELECT 1 FROM (SELECT ${foldedMessageSearchText(sql)} AS text) AS message,
           json_each(${substrings}) AS substring
         WHERE instr(lower(message.text), json_extract(substring.value, '$.token')) = 0
           AND NOT (
@@ -377,7 +378,7 @@ export const messageHitsQuery = (
         SELECT 1 FROM json_each(${shortSpellings}) AS token
         WHERE NOT EXISTS (
           SELECT 1 FROM json_each(token.value) AS spelling
-          WHERE instr(${messageSearchText(sql)}, spelling.value) > 0
+          WHERE instr(${foldedMessageSearchText(sql)}, spelling.value) > 0
         )
       )
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
@@ -616,7 +617,7 @@ export const make = Effect.gen(function* () {
       INNER JOIN projection_projects AS projects
         ON projects.project_id = threads.project_id
       WHERE threads.deleted_at IS NULL
-        AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
+        AND threads.archived_at IS NULL
         AND projects.deleted_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
@@ -643,7 +644,7 @@ export const make = Effect.gen(function* () {
       FROM orchestration_v2_projection_threads AS threads
       WHERE threads.thread_id IN (SELECT value FROM json_each(${threadIds}))
         AND threads.deleted_at IS NULL
-        AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
+        AND threads.archived_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1

@@ -16,7 +16,7 @@ import { isLoopbackHost } from "@t3tools/shared/preview";
 import { KeyRoundIcon } from "lucide-react";
 import { useId, useState } from "react";
 
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { authEnvironment } from "~/state/auth";
 import { useEnvironment, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { readEnvironmentScope, usePreparedConnection } from "~/state/session";
@@ -215,7 +215,7 @@ function CreatedApiToken({
   const sniffable =
     mcpOrigin !== null && mcpOrigin.protocol === "http:" && !isLoopbackHost(mcpOrigin.hostname);
   const { copyToClipboard } = useCopyToClipboard<{ what: string }>({
-    target: "API token",
+    target: namedClipboardTarget("API token"),
     onCopy: ({ what }) => toastManager.add({ type: "success", title: `${what} copied` }),
     onError: (error, { what }) =>
       toastManager.add(

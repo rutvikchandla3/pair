@@ -1,5 +1,6 @@
 import type { ScheduledTaskWebhookEndpoint } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
+import type { MFunctionType } from "gt-i18n/types";
 
 import { resolveEnvironmentUrl } from "./environment/endpoint.ts";
 
@@ -12,6 +13,7 @@ export interface WebhookAddress {
 export function webhookAddress(
   endpoint: ScheduledTaskWebhookEndpoint,
   httpBaseUrl: string | null,
+  _resolve?: MFunctionType,
 ): WebhookAddress {
   if (endpoint.url !== null) {
     return { address: endpoint.url, copyable: true, note: null };

@@ -2,6 +2,9 @@ import {
   alternateComposerDispatchAction,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 
@@ -23,23 +26,26 @@ export interface ComposerSendPresentation {
 }
 
 const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
-  queue: "Queue",
-  steer: "Steer",
-  restart: "Restart",
+  queue: msg("Queue", { $context: "verb, sends the message after the current turn" }),
+  steer: msg("Steer", { $context: "verb, sends the message into the running turn" }),
+  restart: msg("Restart", { $context: "verb, restarts the turn with the message" }),
 };
 
-export function resolveComposerSendPresentation(input: {
-  readonly editingQueuedMessage: boolean;
-  readonly running: boolean;
-  readonly canSteer: boolean;
-  readonly followUpBehavior: FollowUpBehavior;
-  readonly deliveryDeferred: boolean;
-  /** Who started the running turn, when it is another member's. */
-  readonly othersTurnName: string | null;
-}): ComposerSendPresentation {
+export function resolveComposerSendPresentation(
+  input: {
+    readonly editingQueuedMessage: boolean;
+    readonly running: boolean;
+    readonly canSteer: boolean;
+    readonly followUpBehavior: FollowUpBehavior;
+    readonly deliveryDeferred: boolean;
+    /** Who started the running turn, when it is another member's. */
+    readonly othersTurnName?: string | null;
+  },
+  resolve: MessageResolver = m,
+): ComposerSendPresentation {
   if (input.editingQueuedMessage) {
     return {
-      label: "Update queued message",
+      label: resolve(msg("Update queued message")),
       icon: "checkmark",
       action: null,
       alternate: null,
@@ -50,7 +56,9 @@ export function resolveComposerSendPresentation(input: {
   }
   if (!input.running) {
     return {
-      label: input.deliveryDeferred ? "Queue" : "Send",
+      label: input.deliveryDeferred
+        ? resolve(ACTION_LABEL.queue)
+        : resolve(msg("Send", { $context: "verb, sends the message" })),
       icon: input.deliveryDeferred ? "tray.and.arrow.up" : "arrow.up",
       action: null,
       alternate: null,
@@ -59,13 +67,13 @@ export function resolveComposerSendPresentation(input: {
       steerSubtitle: null,
     };
   }
-  const othersTurn = input.othersTurnName;
+  const othersTurn = input.othersTurnName ?? null;
   // Another member's turn queues whatever the setting; steering it is the explicit alternate.
   const action: ActiveTurnComposerAction =
     input.canSteer && othersTurn === null ? input.followUpBehavior : "queue";
   const alternate = alternateComposerDispatchAction(action);
   return {
-    label: ACTION_LABEL[action],
+    label: resolve(ACTION_LABEL[action]),
     icon: action === "steer" ? "arrow.turn.left.up" : "list.number",
     action,
     alternate: input.canSteer ? alternate : null,
@@ -74,8 +82,10 @@ export function resolveComposerSendPresentation(input: {
       othersTurn === null
         ? null
         : input.canSteer
-          ? `Queues after ${othersTurn}'s turn. Hold Send to steer now.`
-          : `Queues after ${othersTurn}'s turn.`,
+          ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+            `Queues after ${othersTurn}'s turn. Hold Send to steer now.`
+          : // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+            `Queues after ${othersTurn}'s turn.`,
     steerSubtitle: othersTurn === null ? null : `Interrupt ${othersTurn}'s turn`,
   };
 }

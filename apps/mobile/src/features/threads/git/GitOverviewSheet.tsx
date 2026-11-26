@@ -9,12 +9,14 @@ import {
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { workspaceRepositoryForPullRequest } from "@t3tools/client-runtime/state/workspaces";
+import { changeRequestTermKind } from "../../../lib/changeRequestTerm";
 import {
   CommonActions,
   StackActions,
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import { useGT, useMessages } from "gt-react-native";
 import { use, useEffect, useState } from "react";
 import { View } from "react-native";
 import { RefreshControl } from "../../../components/ui/RefreshControl";
@@ -71,6 +73,8 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 }
 
 function GitOverviewSheetContent(props: GitOverviewSheetProps) {
+  const gt = useGT();
+  const m = useMessages();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
@@ -127,11 +131,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       ? (selectedThread?.branch ?? "Workspace")
       : (gitStatus.data?.refName ??
         (workspace === null ? selectedThread?.branch : undefined) ??
-        "Detached HEAD");
+        gt("Detached HEAD"));
   const currentStatusSummary =
     repository === null
-      ? statusSummary(gitStatus.data)
-      : [repository.name, statusSummary(gitStatus.data)].filter(Boolean).join(" · ");
+      ? statusSummary(gitStatus.data, m)
+      : [repository.name, statusSummary(gitStatus.data, m)].filter(Boolean).join(" · ");
   const currentWorktreePath = workspace === null ? selectedThreadWorktreePath : gitCwd;
   const workspacePlan = workspace === null ? null : workspaceGitPlan(workspace);
   const gitOperationLabel = gitState.gitOperationLabel;
@@ -140,7 +144,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
-  const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
+  const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote, m) : [];
 
   const sheetMenuItems = menuItems.map((item) => ({
     item: {
@@ -149,27 +153,47 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     },
     disabledReason:
       !canWriteSourceControl && item.kind !== "open_pr"
-        ? "This connection cannot change source control."
-        : getGitActionDisabledReason({
-            item,
-            gitStatus: gitStatus.data,
-            isBusy: busy,
-            hasOriginRemote: hasPrimaryRemote,
-          }),
+        ? gt("This connection cannot change source control.")
+        : getGitActionDisabledReason(
+            {
+              item,
+              gitStatus: gitStatus.data,
+              isBusy: busy,
+              hasOriginRemote: hasPrimaryRemote,
+            },
+            m,
+          ),
   }));
 
-  const { shortLabel, singular } = sourceControlClients.get(
-    gitStatus.data?.sourceControlProvider?.kind,
-  ).changeRequest;
+  const term = changeRequestTermKind(
+    sourceControlClients.get(gitStatus.data?.sourceControlProvider?.kind).changeRequest,
+  );
 
   const openExistingPr = async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
-      Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);
+      Dialog.alert(
+        gt("{term, select, mr {No open MR} cr {No open change request} other {No open PR}}", {
+          term,
+        }),
+        gt(
+          "{term, select, mr {This branch does not have an open merge request.} cr {This branch does not have an open change request.} other {This branch does not have an open pull request.}}",
+          { term },
+        ),
+      );
       return;
     }
     if (!(await openPullRequest(prUrl))) {
-      Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
+      Dialog.alert(
+        gt(
+          "{term, select, mr {Unable to open MR} cr {Unable to open change request} other {Unable to open PR}}",
+          { term },
+        ),
+        gt(
+          "{term, select, mr {The merge request could not be opened.} cr {The change request could not be opened.} other {The pull request could not be opened.}}",
+          { term },
+        ),
+      );
     }
   };
 
@@ -241,14 +265,25 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     }
     if (item.dialogAction === "commit" && status.hasWorkingTreeChanges) {
       const fileCount = status.workingTree?.files.length ?? 0;
-      return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
+      return gt("{count, plural, one {{count} file changed} other {{count} files changed}}", {
+        count: fileCount,
+      });
     }
     if (item.dialogAction === "push" && (status.aheadCount ?? 0) > 0) {
       const ahead = status.aheadCount ?? 0;
-      return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
+      return gt("{count, plural, one {{count} commit ahead} other {{count} commits ahead}}", {
+        count: ahead,
+      });
     }
     if (item.kind === "open_pr" && status.pr?.number != null) {
-      return `${shortLabel} #${status.pr.number} ${status.pr.state ?? "open"}`;
+      return gt(
+        "{term, select, mr {MR #{number} {state, select, open {open} closed {closed} merged {merged} other {{state}}}} cr {change request #{number} {state, select, open {open} closed {closed} merged {merged} other {{state}}}} other {PR #{number} {state, select, open {open} closed {closed} merged {merged} other {{state}}}}}",
+        {
+          term,
+          number: status.pr.number,
+          state: status.pr.state ?? "open",
+        },
+      );
     }
     return undefined;
   };
@@ -279,8 +314,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       className="flex-1 bg-screen"
       contentInsetAdjustmentBehavior="automatic"
       showsVerticalScrollIndicator={false}
-      contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-      contentContainerStyle={{ ...groupedListInsets(isInspector), paddingTop: 8 }}
+      contentContainerStyle={{
+        ...groupedListInsets(isInspector),
+        paddingTop: 8,
+        paddingBottom: Math.max(insets.bottom, 18) + 18,
+      }}
       refreshControl={
         gitCwd !== null ? (
           <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
@@ -292,11 +330,13 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           <ListSection>
             <ListRow
               icon="text.bubble"
-              label="Review changes"
+              label={gt("Review changes")}
+              // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
               description="Inspect turn diffs"
               onPress={openReview}
             />
           </ListSection>
+          {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
           <ListSection title="Repositories">
             {workspaceRepositoryRows(workspace).map((row) => (
               <WorkspaceRepositoryRowView
@@ -308,11 +348,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             {workspace.repositories.length > 0 ? (
               <ListRow
                 icon="square.stack.3d.up"
+                // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
                 label="All changed repositories"
                 description={
                   workspacePlan.steps.length > 0
-                    ? "Commit, push and open pull requests"
-                    : "No changes to run"
+                    ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                      "Commit, push and open pull requests"
+                    : // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                      "No changes to run"
                 }
                 disabled={!canWriteSourceControl || busy || workspacePlan.steps.length === 0}
                 onPress={() =>
@@ -345,11 +388,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           {behindCount > 0 ? (
             <ListRow
               icon="arrow.down.circle"
-              label="Pull latest"
+              label={gt("Pull latest")}
               description={
                 canWriteSourceControl
-                  ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
-                  : "This connection cannot change source control."
+                  ? gt(
+                      "{count, plural, one {{count} commit behind upstream} other {{count} commits behind upstream}}",
+                      { count: behindCount },
+                    )
+                  : gt("This connection cannot change source control.")
               }
               disabled={!canWriteSourceControl || busy || !isRepo}
               onPress={() => void gitActions.onPullSelectedThreadBranch()}
@@ -358,23 +404,30 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           {workspace === null ? (
             <ListRow
               icon="text.bubble"
-              label="Review changes"
-              description="Inspect changes, uncommitted edits, and turn diffs"
+              label={gt("Review changes")}
+              description={gt("Inspect changes, uncommitted edits, and turn diffs")}
               disabled={busy || !isRepo}
               onPress={openReview}
             />
           ) : null}
           <ListRow
             icon="point.topleft.down.curvedto.point.bottomright.up"
-            label={workspace === null ? "Branches & worktrees" : "Branches"}
+            label={
+              workspace === null
+                ? gt("Branches & worktrees")
+                : // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                  "Branches"
+            }
             description={
               workspace !== null
                 ? canSwitchBranch
-                  ? "Switch or create a branch"
-                  : "View branches"
+                  ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                    "Switch or create a branch"
+                  : // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                    "View branches"
                 : canSwitchBranch
-                  ? "Switch branch, create branch, or move to a worktree"
-                  : "View branches and worktrees"
+                  ? gt("Switch branch, create branch, or move to a worktree")
+                  : gt("View branches and worktrees")
             }
             disabled={busy || !isRepo}
             onPress={() =>
@@ -389,8 +442,18 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           {linkedPrActions.canLink && workspace === null ? (
             <ListRow
               icon="link"
-              label={`Link ${linkedPrActions.terminology.singular}`}
-              description={`Attach a ${linkedPrActions.terminology.singular} by URL or number`}
+              label={gt(
+                "{term, select, mr {Link merge request} cr {Link change request} other {Link pull request}}",
+                {
+                  term: changeRequestTermKind(linkedPrActions.terminology),
+                },
+              )}
+              description={gt(
+                "{term, select, mr {Attach a merge request by URL or number} cr {Attach a change request by URL or number} other {Attach a pull request by URL or number}}",
+                {
+                  term: changeRequestTermKind(linkedPrActions.terminology),
+                },
+              )}
               onPress={linkedPrActions.promptLink}
             />
           ) : null}
@@ -398,7 +461,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       ) : null}
 
       {showsRepositoryActions && linkedPrLines.length > 0 ? (
-        <ListSection title={`Linked ${linkedPrActions.terminology.plural}`}>
+        <ListSection title={gt("Linked {terms}", { terms: linkedPrActions.terminology.plural })}>
           {linkedPrLines.map((line, index) => (
             <LinkedPullRequestRow
               key={linkedPullRequestKey(line)}
@@ -413,7 +476,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       ) : null}
 
       {currentWorktreePath ? (
-        <ListSection title="Worktree">
+        <ListSection title={gt("Worktree")}>
           <Text selectable textRole="footnote" className="p-4 text-foreground-muted">
             {currentWorktreePath}
           </Text>
@@ -423,7 +486,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   );
 
   const refresh = {
-    accessibilityLabel: "Refresh repository status",
+    accessibilityLabel: gt("Refresh repository status"),
     disabled: busy || isRefreshing || gitCwd === null,
     onPress: () => void handleRefresh(),
   };

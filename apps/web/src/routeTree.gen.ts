@@ -24,6 +24,7 @@ import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatMyTasksRouteImport } from './routes/_chat.my-tasks'
+import { Route as ChatIssuesRouteImport } from './routes/_chat.issues'
 import { Route as ChatInboxRouteImport } from './routes/_chat.inbox'
 import { Route as ChatBotsRouteImport } from './routes/_chat.bots'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
@@ -135,6 +136,11 @@ const ChatNewRoute = ChatNewRouteImport.update({
 const ChatMyTasksRoute = ChatMyTasksRouteImport.update({
   id: '/my-tasks',
   path: '/my-tasks',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatIssuesRoute = ChatIssuesRouteImport.update({
+  id: '/issues',
+  path: '/issues',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatInboxRoute = ChatInboxRouteImport.update({
@@ -348,6 +354,7 @@ export interface FileRoutesByFullPath {
   '/welcome': typeof WelcomeRoute
   '/bots': typeof ChatBotsRouteWithChildren
   '/inbox': typeof ChatInboxRoute
+  '/issues': typeof ChatIssuesRoute
   '/my-tasks': typeof ChatMyTasksRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
@@ -401,6 +408,7 @@ export interface FileRoutesByTo {
   '/welcome': typeof WelcomeRoute
   '/bots': typeof ChatBotsRouteWithChildren
   '/inbox': typeof ChatInboxRoute
+  '/issues': typeof ChatIssuesRoute
   '/my-tasks': typeof ChatMyTasksRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
@@ -457,6 +465,7 @@ export interface FileRoutesById {
   '/welcome': typeof WelcomeRoute
   '/_chat/bots': typeof ChatBotsRouteWithChildren
   '/_chat/inbox': typeof ChatInboxRoute
+  '/_chat/issues': typeof ChatIssuesRoute
   '/_chat/my-tasks': typeof ChatMyTasksRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
@@ -514,6 +523,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/bots'
     | '/inbox'
+    | '/issues'
     | '/my-tasks'
     | '/new'
     | '/pull-requests'
@@ -567,6 +577,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/bots'
     | '/inbox'
+    | '/issues'
     | '/my-tasks'
     | '/new'
     | '/pull-requests'
@@ -622,6 +633,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/_chat/bots'
     | '/_chat/inbox'
+    | '/_chat/issues'
     | '/_chat/my-tasks'
     | '/_chat/new'
     | '/_chat/pull-requests'
@@ -785,6 +797,13 @@ declare module '@tanstack/react-router' {
       path: '/my-tasks'
       fullPath: '/my-tasks'
       preLoaderRoute: typeof ChatMyTasksRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/issues': {
+      id: '/_chat/issues'
+      path: '/issues'
+      fullPath: '/issues'
+      preLoaderRoute: typeof ChatIssuesRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/inbox': {
@@ -1139,6 +1158,7 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 interface ChatRouteChildren {
   ChatBotsRoute: typeof ChatBotsRouteWithChildren
   ChatInboxRoute: typeof ChatInboxRoute
+  ChatIssuesRoute: typeof ChatIssuesRoute
   ChatMyTasksRoute: typeof ChatMyTasksRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
@@ -1156,6 +1176,7 @@ interface ChatRouteChildren {
 const ChatRouteChildren: ChatRouteChildren = {
   ChatBotsRoute: ChatBotsRouteWithChildren,
   ChatInboxRoute: ChatInboxRoute,
+  ChatIssuesRoute: ChatIssuesRoute,
   ChatMyTasksRoute: ChatMyTasksRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,

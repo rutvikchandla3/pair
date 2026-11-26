@@ -3,6 +3,7 @@ import type { ThreadContextRecord, ProjectId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 import type * as React from "react";
+import { useGT } from "gt-react";
 
 import { useProject, useThreadShell } from "~/state/entities";
 import { orchestrationEnvironment } from "~/state/orchestration";
@@ -19,6 +20,7 @@ export function ThreadContextChip(props: {
   /** A live-state glyph before the icon, e.g. a bot thread link's working spinner. */
   leading?: React.ReactNode;
 }) {
+  const gt = useGT();
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
   const lookup = useEnvironmentQuery(
@@ -40,8 +42,14 @@ export function ThreadContextChip(props: {
           <ContextChip
             kind="thread"
             {...(props.unreadable ? { state: "invalid" as const } : {})}
-            render={<Link to="/$environmentId/$threadId" params={{ environmentId, threadId }} />}
-            aria-label={`Thread, ${title}`}
+            render={
+              <Link
+                to="/$environmentId/$threadId"
+                params={{ environmentId, threadId }}
+                draggable={false}
+              />
+            }
+            aria-label={gt("Thread, {title}", { title })}
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
@@ -57,8 +65,10 @@ export function ThreadContextChip(props: {
       />
       <TooltipPopup side="top">
         {props.unreadable
-          ? "On another machine, so this machine's agent can't read it. Remove it or switch back to send."
-          : "Open thread"}
+          ? gt(
+              "On another machine, so this machine's agent can't read it. Remove it or switch back to send.",
+            )
+          : gt("Open thread")}
       </TooltipPopup>
     </Tooltip>
   );

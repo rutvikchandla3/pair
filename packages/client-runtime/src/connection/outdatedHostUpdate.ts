@@ -1,3 +1,4 @@
+import { MarkedText } from "../errors/translatable.ts";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
   type EnvironmentId,
@@ -43,6 +44,7 @@ export class OutdatedHostUpdateError extends Schema.TaggedError<OutdatedHostUpda
   {
     environmentId: Schema.String,
     message: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
   },
 ) {}
 

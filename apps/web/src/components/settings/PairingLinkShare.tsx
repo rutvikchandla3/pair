@@ -1,9 +1,9 @@
 import type { AdvertisedEndpoint } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
-import { isLoopbackHostname } from "~/environments/primary";
 import { Button } from "../ui/button";
 import { QRCodeSvg } from "../ui/qr-code";
 import { Textarea } from "../ui/textarea";
@@ -42,6 +42,8 @@ export function usePairingLinkShare(
   }: PairingLinkShareSource,
   onCopyFailed?: () => void,
 ) {
+  const gt = useGT();
+  const m = useMessages();
   const [qrEndpointId, setQrEndpointId] = useState<string | null>(null);
   const [failedCopyValue, setFailedCopyValue] = useState<string | null>(null);
   const [copiedKind, setCopiedKind] = useState<"code" | "link" | null>(null);
@@ -77,7 +79,7 @@ export function usePairingLinkShare(
         preferenceKey: endpointDefaultPreferenceKey(endpoint),
         label: endpoint.label,
         url,
-        detail: endpointShareHint(endpoint, url),
+        detail: endpointShareHint(endpoint, url, m),
         qrShareable: isQrShareableEndpoint(endpoint),
       });
     }
@@ -87,9 +89,9 @@ export function usePairingLinkShare(
     endpointPairingUrl ??
     (credential && endpointUrl != null && endpointUrl !== ""
       ? (hostedPairingUrl ?? resolveDesktopPairingUrl(endpointUrl, credential))
-      : !servedByEnvironment || isLoopbackHostname(window.location.hostname)
-        ? null
-        : currentOriginPairingUrl);
+      : servedByEnvironment
+        ? currentOriginPairingUrl
+        : null);
   const revealValue = failedCopyValue ?? shareablePairingUrl ?? credential ?? "";
   const isRevealValueUrl = revealValue !== credential;
   const isRevealValueHostedAppPairingUrl = isRevealValueUrl && isHostedAppPairingUrl(revealValue);
@@ -112,12 +114,12 @@ export function usePairingLinkShare(
           type: "error",
           title: canCopyToClipboard
             ? kind === "hosted-link"
-              ? "Could not copy hosted app link"
+              ? gt("Could not copy hosted app link")
               : kind === "link"
                 ? "Couldn't copy sign-in link"
                 : "Couldn't copy sign-in code"
-            : "Clipboard copy unavailable",
-          description: canCopyToClipboard ? error.message : "Showing the full value instead.",
+            : gt("Clipboard copy unavailable"),
+          description: canCopyToClipboard ? error.message : gt("Showing the full value instead."),
         }),
       );
     },
@@ -166,6 +168,7 @@ export function PairingLinkShare({
   readonly className?: string;
   readonly id?: string;
 }) {
+  const gt = useGT();
   const { qrPairingUrl, selectedQrOption, endpointCopyOptions, canCopyToClipboard } = share;
   if (qrPairingUrl === null) return null;
   return (
@@ -180,7 +183,9 @@ export function PairingLinkShare({
             role="radiogroup"
             aria-label="Endpoint the sign-in QR code and link use"
           >
-            <p className="text-2xs text-muted-foreground/70">Reach this machine via</p>
+            <p className="text-2xs text-muted-foreground/70">
+              <T>Reach this machine via</T>
+            </p>
             {endpointCopyOptions.map((option) => {
               const isSelected = option.id === selectedQrOption?.id;
               return (
@@ -232,11 +237,11 @@ export function PairingLinkShare({
                 className="shrink-0"
                 onClick={() => share.copyLink(qrPairingUrl)}
               >
-                {share.copied === "link" ? "Copied" : "Copy link"}
+                {share.copied === "link" ? gt("Copied") : <T>Copy link</T>}
               </Button>
             </div>
             <Button size="xs" variant="ghost" onClick={share.copyCode}>
-              {share.copied === "code" ? "Copied" : "Copy code only"}
+              {share.copied === "code" ? gt("Copied") : <T>Copy code only</T>}
             </Button>
           </>
         ) : (
@@ -263,8 +268,10 @@ export function PairingLinkShare({
       ) : (
         <div className="flex size-[192px] shrink-0 items-center justify-center self-center rounded-xl border border-border/50 p-4 sm:self-start">
           <p className="text-center text-2xs text-muted-foreground/70">
-            No QR for this endpoint. Another device scanning a loopback link would dial itself; copy
-            the URL for use on this machine instead.
+            <T>
+              No QR for this endpoint. Another device scanning a loopback link would dial itself;
+              copy the URL for use on this machine instead.
+            </T>
           </p>
         </div>
       )}

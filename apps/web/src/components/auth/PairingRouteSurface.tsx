@@ -1,6 +1,7 @@
 import { Alert, AlertDescription } from "../ui/alert";
 import type { AuthGitHubSignInStarted, AuthSessionState } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import React, { startTransition, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { connectPairing } from "../../connection/onboarding";
@@ -18,12 +19,15 @@ import { Input } from "../ui/input";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { appHref } from "../../env";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export function PairingPendingSurface() {
   return (
     <StandalonePage>
       <StandalonePageHeader
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
         title="Signing in to this environment"
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
         description="Checking your sign-in link and preparing your session."
       />
     </StandalonePage>
@@ -42,6 +46,8 @@ export function PairingRouteSurface({
   hasReturnPath?: boolean;
   onAuthenticated: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [autoPairToken] = useState(peekPairingTokenFromUrl);
   const [credential, setCredential] = useState(autoPairToken ?? "");
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
@@ -92,12 +98,14 @@ export function PairingRouteSurface({
   return (
     <StandalonePage>
       <StandalonePageHeader
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
         title="Sign in to this environment"
         description={describeAuthGate(auth.bootstrapMethods)}
       />
 
       {hasReturnPath && !autoPairToken ? (
         <p className="mt-4 text-sm text-foreground">
+          {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
           Ask an admin for an invite, or open your sign-in link.
         </p>
       ) : null}
@@ -109,6 +117,7 @@ export function PairingRouteSurface({
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor="pairing-token">
+            {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
             Sign-in code
           </label>
           <Input
@@ -119,6 +128,7 @@ export function PairingRouteSurface({
             disabled={isSubmitting}
             nativeInput
             onChange={(event) => setCredential(event.currentTarget.value)}
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
             placeholder="Paste a one-time sign-in code"
             spellCheck={false}
             value={credential}
@@ -133,7 +143,10 @@ export function PairingRouteSurface({
 
         <div className="flex flex-wrap gap-2">
           <Button disabled={isSubmitting} size="sm" type="submit">
-            {isSubmitting ? "Signing in…" : "Continue"}
+            {isSubmitting
+              ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                "Signing in…"
+              : gt("Continue")}
           </Button>
           <Button
             disabled={isSubmitting}
@@ -141,13 +154,13 @@ export function PairingRouteSurface({
             size="sm"
             variant="outline"
           >
-            Reload app
+            <T>Reload app</T>
           </Button>
         </div>
       </form>
 
       <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-        {describeSupportedMethods(auth.bootstrapMethods)}
+        {describeSupportedMethods(auth.bootstrapMethods, messages)}
       </div>
     </StandalonePage>
   );
@@ -170,6 +183,7 @@ function GitHubSignIn({
   readonly disabled: boolean;
   readonly onCredential: (credential: string) => Promise<void>;
 }) {
+  const gt = useGT();
   const [state, setState] = useState<GitHubSignInState>({ status: "idle" });
   // The attempt still being polled; clearing it stops the loop.
   const attemptRef = useRef<string | null>(null);
@@ -220,10 +234,11 @@ function GitHubSignIn({
         <div className="overflow-hidden rounded-lg border border-border">
           <div className="flex items-center gap-3 px-3 py-2">
             <p className="min-w-0 flex-1 text-sm text-foreground">
+              {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
               Enter this code on GitHub to sign in.
             </p>
             <Button size="xs" variant="ghost" onClick={cancel}>
-              Cancel
+              <T>Cancel</T>
             </Button>
           </div>
           <DeviceCodePrompt prompt={state.prompt} />
@@ -235,7 +250,8 @@ function GitHubSignIn({
           size="sm"
           variant="outline"
         >
-          {state.status === "starting" ? "Starting…" : "Sign in with GitHub"}
+          {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
+          {state.status === "starting" ? "Starting…" : gt("Sign in with GitHub")}
         </Button>
       )}
       {state.status === "failed" ? (
@@ -252,12 +268,13 @@ export function HostedPairingRouteSurface() {
     reportFailure: false,
   });
   const [request] = useState(readHostedPairingRequest);
+  const gt = useGT();
   const [status, setStatus] = useState<"pairing" | "paired" | "error">(
     request ? "pairing" : "error",
   );
-  const [message, setMessage] = useState(
+  const [message, setMessage] = useState(() =>
     request
-      ? "Connecting to this backend."
+      ? m(msg("Connecting to this backend."))
       : "This sign-in link is missing its server address or code.",
   );
   const [canRetry, setCanRetry] = useState(false);
@@ -267,6 +284,7 @@ export function HostedPairingRouteSurface() {
   const submitHostedPairingRequest = async () => {
     if (!request) {
       setStatus("error");
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
       setMessage("This sign-in link is missing its server address or code.");
       setCanRetry(false);
       return;
@@ -274,13 +292,14 @@ export function HostedPairingRouteSurface() {
 
     if (tokenSubmittedRef.current) {
       setStatus("error");
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
       setMessage("This sign-in code was already used. Ask for a new sign-in link.");
       setCanRetry(false);
       return;
     }
 
     setStatus("pairing");
-    setMessage("Connecting to this backend.");
+    setMessage(gt("Connecting to this backend."));
     setCanRetry(false);
     tokenSubmittedRef.current = true;
 
@@ -290,7 +309,11 @@ export function HostedPairingRouteSurface() {
     });
     if (result._tag === "Success") {
       setStatus("paired");
-      setMessage(`${request.label || "The environment"} is saved in this browser.`);
+      setMessage(
+        request.label
+          ? gt("{environment} is saved in this browser.", { environment: request.label })
+          : gt("The environment is saved in this browser."),
+      );
       return;
     }
 
@@ -298,6 +321,7 @@ export function HostedPairingRouteSurface() {
     setStatus("error");
     setCanRetry(true);
     setMessage(
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
       `${errorMessageFromUnknown(squashAtomCommandFailure(result))} If the server accepted this one-time code, ask for a new sign-in link before retrying.`,
     );
   };
@@ -321,6 +345,7 @@ export function HostedPairingRouteSurface() {
     <StandalonePage>
       <StandalonePageHeader
         title={
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
           status === "paired" ? "Connected" : status === "error" ? "Couldn't connect" : "Connecting"
         }
         description={message}
@@ -328,15 +353,22 @@ export function HostedPairingRouteSurface() {
 
       {request ? (
         <div className="mt-5 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-          Host: <span className="font-mono text-foreground/80">{request.host}</span>
+          <T>
+            Host:{" "}
+            <span className="font-mono text-foreground/80">
+              <Var>{request.host}</Var>
+            </span>
+          </T>
         </div>
       ) : null}
 
       {status === "error" ? (
         <Alert variant="error" className="mt-5">
           <AlertDescription>
-            Verify the backend is reachable from this browser, supports CORS for hosted clients, and
-            is served over HTTPS when opening this page from HTTPS.
+            <T>
+              Verify the backend is reachable from this browser, supports CORS for hosted clients,
+              and is served over HTTPS when opening this page from HTTPS.
+            </T>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -344,16 +376,17 @@ export function HostedPairingRouteSurface() {
       <div className="mt-6 flex flex-wrap gap-2">
         {status === "pairing" ? (
           <Button disabled size="sm">
+            {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
             Connecting…
           </Button>
         ) : canRetry ? (
           <Button size="sm" onClick={() => void submitHostedPairingRequest()}>
-            Try again
+            <T>Try again</T>
           </Button>
         ) : null}
         {status === "paired" ? (
           <Button size="sm" variant="outline" onClick={() => (window.location.href = appHref("/"))}>
-            Open app
+            <T>Open app</T>
           </Button>
         ) : null}
       </div>
@@ -370,28 +403,39 @@ function errorMessageFromUnknown(error: unknown): string {
     return error;
   }
 
-  return "Authentication failed.";
+  return m(msg("Authentication failed."));
 }
 
 function describeAuthGate(bootstrapMethods: ReadonlyArray<string>): string {
   if (bootstrapMethods.includes("desktop-bootstrap")) {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
     return "This environment needs a sign-in code before the app can connect.";
   }
 
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
   return "Enter a sign-in code to start a session with this environment.";
 }
 
-function describeSupportedMethods(bootstrapMethods: ReadonlyArray<string>): string {
+function describeSupportedMethods(
+  bootstrapMethods: ReadonlyArray<string>,
+  resolve: MessageResolver,
+): string {
   if (
     bootstrapMethods.includes("desktop-bootstrap") &&
     bootstrapMethods.includes("one-time-token")
   ) {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
     return "This environment accepts desktop sign-in and one-time sign-in codes.";
   }
 
   if (bootstrapMethods.includes("desktop-bootstrap")) {
-    return "This environment is desktop-managed. Open it from the desktop app or paste a bootstrap credential if one was issued explicitly.";
+    return resolve(
+      msg(
+        "This environment is desktop-managed. Open it from the desktop app or paste a bootstrap credential if one was issued explicitly.",
+      ),
+    );
   }
 
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
   return "This environment accepts one-time sign-in codes. A sign-in link opens this page directly, or you can paste the code here.";
 }

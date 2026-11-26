@@ -5,6 +5,7 @@ import {
   moveNavigationTab,
   overflowNavigationTabs,
   enabledNavigationTabs,
+  sharedSlotAbsentee,
   toggleNavigationTabVisibility,
   resolveSelectedNavigationTab,
   resolveNavigationTabOrder,
@@ -23,9 +24,16 @@ describe("navigation tab order", () => {
 
   it("fills missing sections and drops removed placeholders, duplicates, and Settings", () => {
     expect(
-      resolveNavigationTabOrder(["usage", "home", "issues", "settings", "usage", null]),
-    ).toEqual(["usage", "threads", "pullRequests", "bots"]);
+      resolveNavigationTabOrder(["usage", "home", "inbox", "settings", "usage", null]),
+    ).toEqual(["usage", "threads", "pullRequests", "issues", "bots"]);
     expect(resolveNavigationTabOrder()).toEqual(NAVIGATION_TAB_ORDER);
+  });
+
+  it("gives the shared slot to the open list, or else the one opened last", () => {
+    expect(sharedSlotAbsentee("issues", "pullRequests")).toBe("pullRequests");
+    expect(sharedSlotAbsentee("pullRequests", "issues")).toBe("issues");
+    expect(sharedSlotAbsentee("threads", "issues")).toBe("pullRequests");
+    expect(sharedSlotAbsentee("usage", undefined)).toBe("issues");
   });
 
   it("moves a section without changing the relative order of the others", () => {
@@ -41,20 +49,27 @@ describe("navigation tab order", () => {
   });
 
   it("shows every real section without overflow and keeps Settings selected during editing", () => {
-    expect(visibleNavigationTabs()).toEqual(NAVIGATION_TAB_ORDER);
-    expect(overflowNavigationTabs()).toEqual([]);
+    const shared = [sharedSlotAbsentee("threads", undefined)];
+    const real = NAVIGATION_TAB_ORDER.filter((tab) => tab !== shared[0]);
+    expect(visibleNavigationTabs(undefined, shared)).toEqual(real);
+    expect(overflowNavigationTabs(undefined, shared)).toEqual([]);
     expect(selectedNavigationTab(undefined, "threads", true)).toBe("settings");
-    expect(selectedNavigationTab(undefined, "usage", false)).toBe("usage");
-    expect(selectedNavigationTab(undefined, "usage", false, [], 2)).toBe("settings");
+    expect(selectedNavigationTab(undefined, "usage", false, shared)).toBe("usage");
+    expect(selectedNavigationTab(undefined, "usage", false, shared, 2)).toBe("settings");
   });
 
   it("removes hidden sections from navigation and restores their saved positions", () => {
     const order = moveNavigationTab(undefined, "usage", 0);
     const hidden = toggleNavigationTabVisibility([], "usage");
-    expect(enabledNavigationTabs(order, hidden)).toEqual(["threads", "pullRequests", "bots"]);
+    expect(enabledNavigationTabs(order, hidden)).toEqual([
+      "threads",
+      "pullRequests",
+      "issues",
+      "bots",
+    ]);
     expect(toggleNavigationTabVisibility(hidden, "usage")).toEqual([]);
     expect(visibleNavigationTabs(order, [], 5)).toEqual(order);
-    expect(enabledNavigationTabs(undefined, ["home", "issues", "settings"])).toEqual(
+    expect(enabledNavigationTabs(undefined, ["home", "inbox", "settings"])).toEqual(
       NAVIGATION_TAB_ORDER,
     );
   });

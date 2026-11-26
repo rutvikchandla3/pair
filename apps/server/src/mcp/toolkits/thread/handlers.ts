@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
+import { topOfPinnedRunOrderKey } from "@t3tools/shared/pinOrderKey";
 
 import * as CloudMoves from "../../../cloudMove/CloudMoves.ts";
 import * as SandboxFork from "../../../sandbox/lifecycle/SandboxFork.ts";
@@ -25,6 +26,7 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import * as TeamState from "../../../team/TeamState.ts";
+import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -54,6 +56,20 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
     .dispatch(command({ commandId: yield* newCommandId(), threadId: projection.thread.id }))
     .pipe(Effect.mapError(dispatchFailure));
   return { sequence: result.sequence };
+});
+
+/**
+ * Places an agent pin at the top of the Pinned section, as a client pin is placed.
+ * Without a key the sidebar sorts the pin below every keyed pin. Ordering is
+ * best effort: if the index cannot be read, the pin still lands, keyless.
+ */
+const topOfPinnedRunKey = Effect.fn("mcp.topOfPinnedRunKey")(function* (
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "listActiveShellIndex">,
+) {
+  const index = yield* threads.listActiveShellIndex().pipe(Effect.orElseSucceed(() => null));
+  if (index === null) return undefined;
+  const pinnedKeys = index.flatMap((entry) => (entry.pinnedAt == null ? [] : [entry.pinOrderKey]));
+  return topOfPinnedRunOrderKey(pinnedKeys) ?? undefined;
 });
 
 const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
@@ -166,6 +182,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               link: McpInvocationContext.threadLinkFor(scope, threadId),
             }),
         lastRunStatus: task.lastRunStatus,
+        lastRunError: task.lastRunError,
         runCount: task.runCount,
         nextRunAt: task.nextRunAt,
       };
@@ -475,10 +492,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         case "archive":
           command = { ...personal, type: "thread.archive" };
           break;
-        case "pin":
-        case "unpin":
-          command = { ...personal, type: `thread.${input.action}` };
+        case "pin": {
+          // Always send a key, as the client does: the reducer ignores it for a
+          // thread that is already pinned, and a projection read before this
+          // command can be stale if an unpin commits in between.
+          const orderKey = yield* topOfPinnedRunKey(threads);
+          command = { ...personal, type: "thread.pin", ...(orderKey ? { orderKey } : {}) };
           break;
+        }
         default:
           command = { ...personal, type: `thread.${input.action}` };
       }

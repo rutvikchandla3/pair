@@ -2,14 +2,15 @@ import * as Schema from "effect/Schema";
 
 import {
   AuthAccessWriteScope,
+  AuthAdministrativeClientScopes,
   AuthEnvironmentMaintainScope,
   type AuthGrantScope,
   AuthPairingCredentialResult,
   AuthProvidersManageScope,
+  AuthRelayConfigureScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthSettingsWriteScope,
-  AuthStandardClientScopes,
 } from "./auth.ts";
 import {
   ForwardCompatibleOptional,
@@ -150,11 +151,12 @@ export class TeamError extends Schema.TaggedError<TeamError>()("TeamError", {
   message: Schema.String,
 }) {}
 
-export const ADMIN_SCOPES: ReadonlyArray<AuthGrantScope> = AuthStandardClientScopes;
+export const ADMIN_SCOPES: ReadonlyArray<AuthGrantScope> = AuthAdministrativeClientScopes;
 
 const adminOnlyScopes = new Set<AuthGrantScope>([
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
+  AuthRelayConfigureScope,
   AuthAccessWriteScope,
   AuthRelayWriteScope,
   // Only the owner's cloud account can use T3 Connect.

@@ -2,6 +2,7 @@ import type { PresentMember } from "@t3tools/client-runtime/state/presence";
 import type { SandboxAccessChip } from "@t3tools/client-runtime/state/sandbox";
 import { Fragment, type ReactElement } from "react";
 import { Platform } from "react-native";
+import { useGT, useMessages } from "gt-react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarAction, AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
@@ -26,6 +27,7 @@ function foldThreadMenus(menus: ReadonlyArray<AppBarMenu>): ReadonlyArray<AppBar
   const statuses = menus.flatMap((menu) => (menu.status === undefined ? [] : [menu.status]));
   return [
     {
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
       title: "Thread",
       icon: "ellipsis.circle",
       ...(statuses.length > 0 ? { status: statuses.join(" · ") } : {}),
@@ -60,16 +62,18 @@ export function ThreadHeader(props: {
   /** Who can open this cloud thread; null while it is private. */
   readonly accessChip?: SandboxAccessChip | null;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const goBack = useWorkspaceBackNavigation();
   const { layout, toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
-  const terminalMenu = threadTerminalMenu(props.gitControls);
+  const terminalMenu = threadTerminalMenu(props.gitControls, m);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
         {
-          accessibilityLabel: filesVisible ? "Close files" : "Open files",
+          accessibilityLabel: filesVisible ? gt("Close files") : gt("Open files"),
           icon: "folder",
           selected: filesVisible,
           disabled: !props.gitControls.canOpenFiles,
@@ -123,7 +127,7 @@ export function ThreadHeader(props: {
       backInSplitView={
         props.onReturnToThread
           ? {
-              accessibilityLabel: "Return to chat",
+              accessibilityLabel: gt("Return to chat"),
               icon: "chevron.left",
               onPress: props.onReturnToThread,
             }

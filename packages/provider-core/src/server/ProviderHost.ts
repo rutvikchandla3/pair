@@ -64,6 +64,11 @@ export class ProviderHost extends Context.Service<
     readonly sessionProcesses?: (
       cwd: string,
     ) => Effect.Effect<ProviderSessionProcesses, ProviderSessionHostUnavailableError>;
+    /**
+     * Counts a running agent for local server discovery, so listeners carrying its
+     * T3CODE_THREAD_ID show under its thread. Call the returned function when it stops.
+     */
+    readonly trackAgent?: () => () => void;
     readonly credentials: (
       namespace: string,
       bindingId: string,

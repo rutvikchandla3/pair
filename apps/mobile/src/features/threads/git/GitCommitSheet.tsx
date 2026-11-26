@@ -2,6 +2,7 @@ import { FitSheet } from "../../../components/ui/FitSheet";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { T, useGT, Var } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -25,6 +26,7 @@ type GitCommitSheetProps = StaticScreenProps<{
 }>;
 
 export function GitCommitSheet(props: GitCommitSheetProps) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
   const gitState = useSelectedThreadGitState();
@@ -80,16 +82,18 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
         <SheetHeader
           title={
             workspacePlan !== null
-              ? "Commit changed repositories"
+              ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                "Commit changed repositories"
               : workspace?.selected
-                ? `Commit changes in ${workspace.selected.name}`
-                : "Commit changes"
+                ? // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                  `Commit changes in ${workspace.selected.name}`
+                : gt("Commit changes")
           }
           subtitle={
-            workspacePlan !== null ? undefined : (gitStatus.data?.refName ?? "(detached HEAD)")
+            workspacePlan !== null ? undefined : (gitStatus.data?.refName ?? gt("(detached HEAD)"))
           }
           onCancel={() => navigation.goBack()}
-          accessibilityLabel="Cancel commit"
+          accessibilityLabel={gt("Cancel commit")}
         />
       }
       keyboardShouldPersistTaps="handled"
@@ -99,30 +103,36 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
     >
       {workspacePlan !== null ? (
         <Text className="text-sm text-foreground-muted">
+          {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
           Runs each repository's next step in order with one commit message, and stops at the first
           failure.
         </Text>
       ) : null}
       {isDefaultRef ? (
         <Text className="text-sm text-warning-foreground">
-          {workspace === null
-            ? "You’re on the default branch. You can create a new branch when committing."
-            : "You’re on the default branch."}
+          {workspace === null ? (
+            <T>You’re on the default branch. You can create a new branch when committing.</T>
+          ) : (
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+            "You’re on the default branch."
+          )}
         </Text>
       ) : null}
       <View className="gap-2">
-        <Text className="text-sm font-t3-medium text-foreground">Commit message</Text>
+        <Text className="text-sm font-t3-medium text-foreground">
+          <T>Commit message</T>
+        </Text>
         <TextInput
           multiline
-          accessibilityLabel="Commit message"
+          accessibilityLabel={gt("Commit message")}
           value={dialogCommitMessage}
           onChangeText={setDialogCommitMessage}
-          placeholder="Describe your changes…"
+          placeholder={gt("Describe your changes…")}
           textAlignVertical="top"
           className="min-h-24 rounded-xl bg-subtle px-4 py-3 text-base"
         />
         <Text className="text-xs text-foreground-muted">
-          Leave empty to generate a message automatically.
+          <T>Leave empty to generate a message automatically.</T>
         </Text>
       </View>
       {workspacePlan !== null ? (
@@ -149,6 +159,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
                 {skip.repository.name}
               </Text>
               <Text className="shrink text-right text-xs text-foreground-muted">
+                {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
                 Skipped: {skip.reason}
               </Text>
             </View>
@@ -158,15 +169,24 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
         <View>
           <View className="flex-row items-center justify-between gap-2 pb-2">
             <View className="flex-1 gap-1">
-              <Text className="text-base font-t3-bold text-foreground">Changed files</Text>
+              <Text className="text-base font-t3-bold text-foreground">
+                <T>Changed files</T>
+              </Text>
               <Text className="text-xs text-foreground-muted">
-                {selectedFiles.length} of {allFiles.length} selected · +
-                {formatDiffCount(selectedInsertions)} −{formatDiffCount(selectedDeletions)}
+                <T>
+                  <Var>{selectedFiles.length}</Var> of <Var>{allFiles.length}</Var> selected · +
+                  <Var>{formatDiffCount(selectedInsertions)}</Var> −
+                  <Var>{formatDiffCount(selectedDeletions)}</Var>
+                </T>
               </Text>
             </View>
             {allFiles.length > 0 ? (
               <Button
-                label={allSelected ? "Deselect all" : "Select all"}
+                label={
+                  allSelected
+                    ? gt("Deselect all")
+                    : gt("Select all", { $context: "selects every changed file to commit" })
+                }
                 tone="text"
                 onPress={() =>
                   setExcludedFiles(
@@ -177,7 +197,9 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
             ) : null}
           </View>
           {allFiles.length === 0 ? (
-            <Text className="py-4 text-sm text-foreground-muted">No changed files to commit.</Text>
+            <Text className="py-4 text-sm text-foreground-muted">
+              <T>No changed files to commit.</T>
+            </Text>
           ) : (
             allFiles.map((file) => {
               const included = !excludedFiles.has(file.path);
@@ -248,6 +270,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
       )}
       {workspacePlan !== null ? (
         <Button
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
           label={`Run on ${workspacePlan.steps.length} ${workspacePlan.steps.length === 1 ? "repository" : "repositories"}`}
           icon="checkmark"
           tone="primary"
@@ -258,7 +281,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
       ) : (
         <View className="gap-2">
           <Button
-            label="Commit changes"
+            label={gt("Commit changes")}
             icon="checkmark"
             tone="primary"
             fullWidth
@@ -267,7 +290,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
           />
           {workspace === null ? (
             <Button
-              label="Commit on a new branch"
+              label={gt("Commit on a new branch")}
               icon="arrow.branch"
               tone="text"
               fullWidth

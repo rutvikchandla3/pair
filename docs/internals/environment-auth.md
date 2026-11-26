@@ -26,6 +26,16 @@ model. DPoP binds a token to a client's proof key; an invalid proof must fail
 rather than fall back to bearer authentication. The OAuth token-exchange
 vocabulary gives these grants a familiar meaning.
 
+A device that exchanges a plain pairing link with a DPoP proof gets a one-hour
+token on a session that renews: presenting the token, even expired, with a
+proof from the same key moves the session's expiry 30 days out and returns a
+fresh token for the same session. The session itself must still be unexpired
+and unrevoked, so a device idle past the window pairs again. Renewal stays in place rather than issuing a
+successor, so live sockets keep their session, Sharing & access shows one row
+per device for its whole renewal window, and one revoke ends it. T3 Connect,
+CLI, desktop and peer sessions never renew, so unlinking Connect or rotating
+their credential still cuts a device off.
+
 ### Every session belongs to a member
 
 Sessions and pairing links carry a `member_id`; the subject keeps describing how
@@ -148,6 +158,12 @@ commands. Every other HTTP and WebSocket path rejects that subject, because the 
 above its ceiling. Inside MCP the credential sets the limits and tool
 parameters only pick targets; see
 [threadAccess](../../apps/server/src/mcp/threadAccess.ts).
+
+These clients have no calling thread, so `/mcp` does not offer them tools that
+act as one, such as `request_secret` or `delegate_task`. Hiding is only
+discovery: the handlers still refuse such a call with
+`thread_credential_required`. A secret card belongs to a thread's run, so an
+outside agent that needs a secret starts a thread and lets that agent ask.
 
 Issuer and resource URLs come from the request's Host and
 `X-Forwarded-Proto`, so one server answers over loopback, Tailscale Serve and a

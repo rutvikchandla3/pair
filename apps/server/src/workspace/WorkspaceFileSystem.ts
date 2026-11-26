@@ -33,7 +33,7 @@ import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { WorkspaceReadGuard } from "./WorkspaceReadGuard.ts";
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
-import { toWslDrivePath } from "./wslDrivePath.ts";
+import { toHostDrivePath } from "./hostDrivePath.ts";
 
 export const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -216,7 +216,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const toHostPath = (requestedPath: string) =>
-    toWslDrivePath(requestedPath).pipe(
+    toHostDrivePath(requestedPath).pipe(
       // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: the spawner above
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
@@ -351,13 +351,19 @@ export const make = Effect.gen(function* () {
       relativePath: input.relativePath,
     });
 
-    const realWorkspaceRoot = yield* host.files
-      .realPath(path.resolve(input.cwd))
-      .pipe(
-        Effect.mapError(
-          operationError(input, target.absolutePath, input.cwd, "realpath-workspace-root"),
-        ),
-      );
+    const realWorkspaceRoot = yield* host.files.realPath(path.resolve(input.cwd)).pipe(
+      // Storage cleanup removes idle worktrees but keeps their path, so nothing below them exists.
+      Effect.catchIf(
+        (error) => input.allowMissing === true && error.code === "ENOENT",
+        () => Effect.succeed(null),
+      ),
+      Effect.mapError(
+        operationError(input, target.absolutePath, input.cwd, "realpath-workspace-root"),
+      ),
+    );
+    if (realWorkspaceRoot === null) {
+      return { relativePath: target.relativePath, realTargetPath: null };
+    }
     const resolved = yield* Effect.gen(function* () {
       let candidate = target.absolutePath;
       for (;;) {

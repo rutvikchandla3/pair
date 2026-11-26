@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ThreadPreviewState } from "../../previewStateStore";
@@ -118,8 +121,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open browser",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: m(msg("Unable to open browser")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     });
@@ -202,6 +205,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (surface.kind === "terminal") {
       focusTerminal(activeThreadRef, surface.activeTerminalId);
     }
+    if (surface.kind === "side-chat") {
+      requestWorkspaceFocus({
+        area: "panel",
+        selector: `[data-side-chat-pane="${CSS.escape(surface.threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+      });
+    }
     if (surface.kind === "diff" && !diffOpen) {
       onDiffPanelOpen?.();
     }
@@ -249,8 +258,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy path",
-          description: "Clipboard API unavailable.",
+          title: m(msg("Failed to copy path")),
+          description: m(msg("Clipboard API unavailable.")),
         }),
       );
       return;
@@ -264,8 +273,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy path",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: m(msg("Failed to copy path")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     });

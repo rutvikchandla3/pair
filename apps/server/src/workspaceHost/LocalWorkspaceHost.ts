@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as SpawnWorker from "../process/SpawnWorker.ts";
 import {
   LOCAL_WORKSPACE_HOST_ID,
   type WorkspaceFileKind,
@@ -181,17 +182,16 @@ export function spawnProcessGroup(
   return child as ProcessGroupProcess;
 }
 
-// Windows has no process groups to watch.
+// Windows has no process groups to watch; a spawn worker keeps the launch off the RPC thread.
 const spawnWindowsProcess = (
   options: ProcessGroupSpawnInput,
   hooks: ProcessGroupHooks,
 ): ProcessGroupProcess => {
-  const child = NodeChildProcess.spawn(options.command, options.args, {
+  const child = SpawnWorker.spawnPiped(options.command, options.args, {
     cwd: options.cwd,
     env: options.env,
     signal: options.signal,
     windowsHide: true,
-    stdio: ["pipe", "pipe", "pipe"],
   });
   child.stderr.setEncoding("utf8").on("data", hooks.onStderr).once("close", hooks.onStderrClose);
   return child;

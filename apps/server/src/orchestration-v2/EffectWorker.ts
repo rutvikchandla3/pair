@@ -1,4 +1,4 @@
-import { type BranchLineageStep, CommandId, NonNegativeInt } from "@t3tools/contracts";
+import { type BranchLineageStep, CommandId, NonNegativeInt, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -93,6 +93,19 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
   );
 }
 
+// Keep an owner for starting runs when persistence or restart cleanup fails.
+const ownsStartingRun = (effectType: EffectOutbox.ClaimedEffectV2["request"]["type"]) =>
+  effectType === "provider-turn.start" || effectType === "provider-turn.restart";
+
+const cannotSettleRun = (cause: Cause.Cause<unknown>) =>
+  Cause.findErrorOption(cause).pipe(
+    Option.exists(
+      (error) =>
+        isOrchestrationEffectExecutionError(error) &&
+        ProviderTurnStartService.isProviderTurnStartRunStateMissingError(error.cause),
+    ),
+  );
+
 export interface OrchestrationEffectExecutorV2Shape {
   readonly execute: (
     effect: EffectOutbox.ClaimedEffectV2,
@@ -171,6 +184,43 @@ export const layerExecutor: Layer.Layer<
           ...(failed ? { failed: true } : {}),
         })
         .pipe(Effect.asVoid);
+    const startRun = (
+      effect: EffectOutbox.OrchestrationEffectV2,
+      runId: RunId,
+      willRetry: boolean,
+    ) =>
+      providerTurnStart.start({ threadId: effect.threadId, runId, willRetry }).pipe(
+        Effect.catchCauseIf(
+          (cause) => !willRetry && !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning(
+              "Last run start attempt failed",
+              { effectId: effect.id, effectType: effect.request.type, runId },
+              cause,
+            ).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+                  // A failed read cannot identify the attempt. Keep retry ownership
+                  // rather than settling whichever attempt happens to be current.
+                  if (
+                    !ProviderTurnStartService.isProviderTurnStartError(failure) ||
+                    failure.attemptId === undefined ||
+                    failure.rootNodeId === undefined
+                  ) {
+                    return Effect.failCause(cause);
+                  }
+                  return providerTurnStart.failStartingRun({
+                    threadId: effect.threadId,
+                    runId,
+                    attemptId: failure.attemptId,
+                    rootNodeId: failure.rootNodeId,
+                  });
+                }),
+              ),
+            ),
+        ),
+      );
     return OrchestrationEffectExecutorV2.of({
       reportExhausted: Effect.fn("OrchestrationEffectExecutorV2.reportExhausted")(
         function* (effect, cause) {
@@ -241,7 +291,13 @@ export const layerExecutor: Layer.Layer<
         switch (effect.request.type) {
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
+            return continueRestartedRun({
+              threadId: effect.threadId,
+              sourceRunId,
+              ...(effect.request.processLossCount === undefined
+                ? {}
+                : { processLossCount: effect.request.processLossCount }),
+            }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
               Effect.tapError(() =>
@@ -297,9 +353,9 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-turn.start":
-            return providerTurnStart
-              .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
+          case "provider-session.apply-thread-title":
+            return providerTurnControl
+              .applyThreadTitle({ threadId: effect.threadId, title: effect.request.title })
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -310,6 +366,17 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-turn.start":
+            return startRun(effect, effect.request.runId, willRetry).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-turn.interrupt": {
             const request = effect.request;
             return providerTurnControl
@@ -549,11 +616,8 @@ export const layerExecutor: Layer.Layer<
                       : Effect.void,
                 ),
                 Effect.andThen(
-                  providerTurnStart.start({
-                    threadId: effect.threadId,
-                    runId: effect.request.runId,
-                    willRetry,
-                  }),
+                  // Failed interruption or detach must not report the old process stopped.
+                  startRun(effect, effect.request.runId, willRetry),
                 ),
                 Effect.mapError(
                   (cause) =>
@@ -1089,7 +1153,9 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts || !isRetryableFailure(exit.cause)
+            : (effect.attemptCount >= maxAttempts &&
+                  (!ownsStartingRun(effect.request.type) || cannotSettleRun(exit.cause))) ||
+                !isRetryableFailure(exit.cause)
               ? yield* (executor.reportExhausted?.(effect, exit.cause) ?? Effect.void).pipe(
                   Effect.andThen(outbox.fail({ effectId: effect.id, workerId, error })),
                   Effect.onError((cause) => terminalizeClaim(effect, cause)),

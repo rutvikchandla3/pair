@@ -6,6 +6,17 @@ export const ToolCallCheck = Schema.Struct({
   args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
 export type ToolCallCheck = typeof ToolCallCheck.Type;
+/** `argsAnyOf`: the call must also match one of these. */
+export const ToolCallCheckWithAlternatives = Schema.Struct({
+  ...ToolCallCheck.fields,
+  argsAnyOf: Schema.optional(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
+});
+/** `success`: only a call that did not fail counts. */
+export const ExpectedToolCall = Schema.Struct({
+  ...ToolCallCheckWithAlternatives.fields,
+  success: Schema.optional(Schema.Literal(true)),
+});
+export type ExpectedToolCall = typeof ExpectedToolCall.Type;
 
 export const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -43,9 +54,21 @@ export const matches = (expected: unknown, actual: unknown): boolean => {
 
 /** Whether some call matches the check. */
 export const foundCall = (
-  calls: ReadonlyArray<{ readonly tool: string; readonly input: unknown }>,
-  { tool, args = {} }: ToolCallCheck,
-) => calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
+  calls: ReadonlyArray<{
+    readonly tool: string;
+    readonly input: unknown;
+    readonly failed?: boolean | undefined;
+  }>,
+  { tool, args = {}, argsAnyOf, success }: ExpectedToolCall,
+) =>
+  calls.some(
+    (call) =>
+      tool.split("|").includes(call.tool) &&
+      (success === undefined || call.failed === false) &&
+      matches(args, call.input) &&
+      (argsAnyOf === undefined ||
+        argsAnyOf.some((alternative) => matches(alternative, call.input))),
+  );
 
 export const callLabel = ({ tool, args }: ToolCallCheck) =>
   args ? `${tool} ${valueText(args)}` : tool;

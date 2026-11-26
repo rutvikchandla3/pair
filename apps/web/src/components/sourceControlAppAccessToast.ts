@@ -1,6 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { appSignInTargetForRemote } from "@t3tools/client-runtime/source-control-clients";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { toastManager } from "./ui/toast";
@@ -25,7 +28,8 @@ export async function suggestAppAccessForRemote(
   const owner = target.input.repository.split("/")[0] ?? target.input.repository;
   toastManager.add({
     type: "info",
-    title: `Give ${target.appSignIn.appName} access to ${owner}`,
+    title: m(msg("Give {appName} access to {owner}", { appName: target.appSignIn.appName, owner })),
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
     description: `It isn't installed there, so GitHub requests for ${target.input.repository} use your own login and its lower rate limit. Ask an admin to install the team's GitHub App on ${owner}.`,
   });
 }

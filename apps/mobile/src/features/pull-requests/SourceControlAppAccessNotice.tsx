@@ -45,6 +45,7 @@ export function SourceControlAppAccessNotice(props: {
   return (
     <View className="mb-4 gap-1 rounded-2xl bg-grouped-card px-4 py-3">
       <Text className="text-sm text-foreground-muted">
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
         {appSignIn.appName} isn't installed on {owner}, so requests here use your own GitHub login
         and its lower rate limit. Ask an admin to install the team's GitHub App on {owner}.
       </Text>

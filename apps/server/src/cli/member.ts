@@ -8,6 +8,7 @@ import {
   type TeamSignInLinkInput,
   WS_METHODS,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -95,7 +96,8 @@ const connectLiveTeam = Effect.fn("cli.member.connectLiveTeam")(function* (state
     });
     return Option.none();
   }
-  return Option.some({ team, pairingBaseUrl: resolveDirectPairingBaseUrl(state) });
+  const platform = yield* HostProcess.Platform;
+  return Option.some({ team, pairingBaseUrl: resolveDirectPairingBaseUrl(state, platform) });
 });
 
 const isTeamError = (error: { readonly _tag: string }): error is TeamError =>

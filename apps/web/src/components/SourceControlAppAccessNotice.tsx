@@ -58,6 +58,7 @@ export function SourceControlAppAccessNotice(props: {
         <SourceControlIconArtwork icon={definition.icon} className="size-4 shrink-0" />
       )}
       <p className="min-w-0 flex-1">
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English */}
         {appSignIn.appName} isn't installed on <span className="text-foreground">{owner}</span>, so
         requests here use your own GitHub login and its lower rate limit. Ask an admin to install
         the team&apos;s GitHub App on {owner}.

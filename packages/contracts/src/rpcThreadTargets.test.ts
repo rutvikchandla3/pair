@@ -11,6 +11,8 @@ import {
 
 const TARGET_FIELD =
   /^(threadIds?|sandboxIds?|cwd|paths?|root)$|(ThreadIds?|SandboxIds?|Path|Paths|Root)$/;
+// A thread row's own id, as in `{ threads: [{ id }] }`.
+const THREAD_ROW_ID = /\.threads?(\[\])?\.id$/;
 
 // Brands are type-only in Effect 4, so a `ThreadId` is found by its field's name and a `SandboxId`
 // by its pattern check, which no other string carries.
@@ -34,7 +36,7 @@ const targetFields = (
         ...ast.propertySignatures.flatMap((property) => {
           const path = `${prefix}.${String(property.name)}`;
           return [
-            ...(TARGET_FIELD.test(String(property.name)) ? [path] : []),
+            ...(TARGET_FIELD.test(String(property.name)) || THREAD_ROW_ID.test(path) ? [path] : []),
             ...targetFields(property.type, path, seen),
           ];
         }),

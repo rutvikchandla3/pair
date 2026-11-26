@@ -183,6 +183,7 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
   Effect.gen(function* () {
     const output = yield* Queue.make<ServerBrowser.ServerBrowserViewerOutput>();
     const released: number[] = [];
+    const invalidated = yield* Deferred.make<void>();
     const frame = (id: number): ServerBrowser.ServerBrowserViewerOutput => ({
       _tag: "frame",
       data: new Uint8Array([id]),
@@ -204,7 +205,11 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
         { disableListenLog: true },
       ).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
-        Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
+        Layer.provide(
+          makeAuth([AuthOrchestrationReadScope], undefined, {
+            sessionEnd: Deferred.await(invalidated),
+          }).layer,
+        ),
       ),
     );
     const server = Context.get(services, HttpServer.HttpServer);
@@ -248,6 +253,12 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
     yield* Effect.promise(() => next.promise);
     expect(received).toEqual([1, "probe", 4]);
     expect(released).toEqual([2, 3, 1]);
+
+    const closed = new Promise<void>((resolve) =>
+      socket.addEventListener("close", () => resolve(), { once: true }),
+    );
+    yield* Deferred.succeed(invalidated, undefined);
+    yield* Effect.promise(() => closed);
   }),
 );
 

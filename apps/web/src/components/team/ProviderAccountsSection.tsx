@@ -21,7 +21,7 @@ import { useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -36,7 +36,7 @@ import { getProviderStatusMessage } from "../chat/ProviderStatusBanner";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { ProviderWizardAuthenticationStep } from "../settings/ProviderWizardAuthenticationStep";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
-import { searchableSetting } from "../settings/settingsSearch";
+import { useSearchableSetting } from "../settings/settingsSearch";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
@@ -110,6 +110,7 @@ function ProviderAccountsList({
   readonly environmentId: EnvironmentId;
   readonly selfId: MemberId;
 }) {
+  const searchableSetting = useSearchableSetting();
   const providerInstances = useEnvironmentSettings(
     environmentId,
     (settings) => settings.providerInstances,
@@ -614,7 +615,9 @@ function ClaudeAccountSignIn({
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, {
     label: "check provider account",
   });
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "sign-in command" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("sign-in command"),
+  });
   const tokenOnly = useAtomValue(environmentCloudLaunchAtom(environmentId));
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);

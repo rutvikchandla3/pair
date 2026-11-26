@@ -15,7 +15,9 @@ import {
 } from "@t3tools/client-runtime/operations";
 import { routedCloudLaunch } from "@t3tools/client-runtime/state/cloud-target";
 import { WORKSPACE_WORKTREE_BASE_REF } from "@t3tools/client-runtime/state/workspaces";
+import { msg } from "gt-react-native";
 
+import { m } from "../i18n/messages";
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 import type { NewTaskWorkspaceMode } from "./newTaskWorkspaceMode";
 
@@ -45,10 +47,10 @@ export interface ProjectThreadStartTurnSpec {
 }
 
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleSeed({
-    text: spec.titleText ?? spec.text,
-    attachments: spec.uploadedAttachments,
-  });
+  const title = deriveThreadTitleSeed(
+    { text: spec.titleText ?? spec.text, attachments: spec.uploadedAttachments },
+    m,
+  );
   const isWorktree = spec.workspaceMode === "worktree";
   const isLocal = spec.workspaceMode === "local";
   return {
@@ -107,6 +109,6 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
 }
 
 export function deriveThreadTitleFromPrompt(value: string): string {
-  const title = threadTitleTextFromPrompt(value) || "New thread";
+  const title = threadTitleTextFromPrompt(value, m) || m(msg("New thread"));
   return title.length <= 72 ? title : `${title.slice(0, 69).trimEnd()}...`;
 }

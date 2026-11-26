@@ -217,6 +217,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
                   threadId === parentThreadId
                     ? ({
                         ...projection.thread,
+                        pinnedAt: now,
                         blockedOnThreadWait: true,
                         pendingBackgroundTasks,
                       } as unknown as OrchestrationV2ThreadShell)
@@ -226,6 +227,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
             input.threadId === parentThreadId
               ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${input.threadId}`),
+          getRunCount: () => Effect.succeed(projection.runs.length),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -251,6 +253,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(result.thread.pinned).toBe(true);
     expect(result.thread.blockedOnThreadWait).toBe(true);
     expect(result.thread.pendingBackgroundTasks).toEqual([
       { taskId: "task-subagent", kind: "subagent", childThreadId },
@@ -369,6 +372,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
           },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
           getThreadShell: () =>
             Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
@@ -476,6 +480,7 @@ it("readThread returns the newest items that fit the response budget", async () 
           },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
           getThreadShell: () =>
             Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
@@ -582,6 +587,7 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
           },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
           getThreadShell: () =>
             Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
@@ -863,6 +869,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
               hasMore: false,
               hasEarlier: false,
             }),
+          getRunCount: (threadId) => Effect.succeed(foreignProjection(threadId).runs.length),
           getProjectThreadRecords: (input) =>
             input.threadId === foreignThreadId && input.projectId === foreignProjectId
               ? Effect.succeed(foreignProjection(input.threadId))

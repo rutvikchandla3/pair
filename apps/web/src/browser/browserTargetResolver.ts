@@ -1,7 +1,8 @@
-import type {
-  BrowserNavigationTarget,
-  EnvironmentId,
-  PreviewUrlResolution,
+import {
+  AuthAccessWriteScope,
+  type BrowserNavigationTarget,
+  type EnvironmentId,
+  type PreviewUrlResolution,
 } from "@t3tools/contracts";
 import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
 import { isLocalLoopbackHost, isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
@@ -11,7 +12,7 @@ import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { readEnvironmentHasMachineBrowser } from "~/state/entities";
-import { readPreparedConnection } from "~/state/session";
+import { readEnvironmentScope, readPreparedConnection } from "~/state/session";
 
 export { normalizeHostname, isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 
@@ -59,16 +60,35 @@ const resolveEnvironmentPortTarget = (
   };
 };
 
-// Desktop renders primary and WSL tabs locally; loopback servers require localhost even for LAN backends.
+// Loopback servers on the desktop's own primary and WSL backends answer on this machine's localhost.
 const reachesEnvironmentLoopback = (target: ConnectionTarget): boolean =>
   isElectron &&
   (target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target));
 
-export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl: string): string {
+/**
+ * Desktop carries every other environment's loopback traffic through the preview tunnel, which
+ * the server grants only to access managers. Members and machine-browser threads take the port route.
+ */
+export const tunnelsEnvironmentLoopback = (
+  target: ConnectionTarget | undefined,
+  mayTunnel: boolean,
+): boolean =>
+  isElectron && mayTunnel && !(target !== undefined && reachesEnvironmentLoopback(target));
+
+export const environmentMayTunnelLoopback = (
+  canManageAccess: boolean,
+  hasMachineBrowser: boolean,
+): boolean => canManageAccess && !hasMachineBrowser;
+
+const resolveLoopbackUrl = (
+  environmentId: EnvironmentId,
+  rawUrl: string,
+  tunnelled: boolean,
+): string => {
   try {
     const normalizedUrl = normalizePreviewUrl(rawUrl);
     const parsed = new URL(normalizedUrl);
-    if (!isLoopbackHost(parsed.hostname)) return normalizedUrl;
+    if (tunnelled || !isLoopbackHost(parsed.hostname)) return normalizedUrl;
     // The thread's machine runs the tab's Chrome, which resolves its own loopback.
     if (readEnvironmentHasMachineBrowser(environmentId)) return normalizedUrl;
     const target = readPreparedConnection(environmentId)?.target;
@@ -88,4 +108,20 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
   } catch {
     return rawUrl;
   }
-}
+};
+
+/** The URL an in-app tab loads. A desktop webview keeps localhost; its partition reaches the environment. */
+export const resolveDiscoveredServerUrl = (environmentId: EnvironmentId, rawUrl: string): string =>
+  resolveLoopbackUrl(
+    environmentId,
+    rawUrl,
+    isElectron &&
+      environmentMayTunnelLoopback(
+        readEnvironmentScope(environmentId, AuthAccessWriteScope),
+        readEnvironmentHasMachineBrowser(environmentId),
+      ),
+  );
+
+/** The URL for the system browser, which has no tunnel and needs an address it can reach itself. */
+export const resolveExternalServerUrl = (environmentId: EnvironmentId, rawUrl: string): string =>
+  resolveLoopbackUrl(environmentId, rawUrl, false);

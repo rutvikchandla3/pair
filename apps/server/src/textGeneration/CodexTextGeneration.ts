@@ -26,6 +26,7 @@ import {
   resolveCodexLaunchArgs,
 } from "../provider/codexLaunchArgs.ts";
 import type { CodexEffectiveRuntime } from "../provider/CodexManagedRuntime.ts";
+import { codexAppServerEnvironment } from "../provider/CodexProvider.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
@@ -312,16 +313,17 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         resolved || fellBack ? undefined : getCodexServiceTierOptionValue(modelSelection);
       // A machine runs the image's pinned codex on its own home, never this server's.
       const binary = machine === undefined ? effectiveConfig.binaryPath || "codex" : "codex";
-      const env =
+      const env = codexAppServerEnvironment(
         machine?.environment ??
-        ({
-          ...effectiveEnvironment,
-          ...(effectiveConfig.homePath
-            ? {
-                CODEX_HOME: expandHomePath(effectiveConfig.homePath, hostInfo.homeDirectory),
-              }
-            : {}),
-        } satisfies NodeJS.ProcessEnv);
+          ({
+            ...effectiveEnvironment,
+            ...(effectiveConfig.homePath
+              ? {
+                  CODEX_HOME: expandHomePath(effectiveConfig.homePath, hostInfo.homeDirectory),
+                }
+              : {}),
+          } satisfies NodeJS.ProcessEnv),
+      );
       const facts =
         machine === undefined ? undefined : { platform: hostInfo.platform, environment: env };
       const enabledMcpServers = yield* listEnabledMcpServers({
@@ -357,6 +359,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
+          // Current Codex gives hooks precedence over the historical codex_hooks alias.
+          "--config",
+          "features.codex_hooks=false",
+          "--config",
+          "features.hooks=false",
           ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,

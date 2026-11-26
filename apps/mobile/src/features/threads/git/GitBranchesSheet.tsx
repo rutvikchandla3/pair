@@ -1,5 +1,6 @@
 import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 
 import { SheetHeader } from "../../../components/ui/SheetHeader";
@@ -20,6 +21,7 @@ type GitBranchesSheetProps = StaticScreenProps<{
 }>;
 
 export function GitBranchesSheet(_props: GitBranchesSheetProps) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
   const gitState = useSelectedThreadGitState();
@@ -27,7 +29,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const { canChangeThreadBranch, canSwitchBranch, gitCwd, workspace } = gitActions;
   // A workspace repository switches and creates branches only inside its own worktree.
   const repository = workspace?.selected ?? null;
-  const title = repository === null ? "Branches & worktrees" : `Branches in ${repository.name}`;
+  const title = repository === null ? gt("Branches & worktrees") : `Branches in ${repository.name}`;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && gitCwd !== null
@@ -38,10 +40,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       : null,
   );
 
-  const currentBranchLabel =
-    gitStatus.data?.refName ??
-    (workspace === null ? selectedThread?.branch : undefined) ??
-    "Detached HEAD";
+  const currentBranch =
+    gitStatus.data?.refName ?? (workspace === null ? selectedThread?.branch : undefined) ?? null;
   const currentWorktreePath = gitCwd;
   const availableBranches = gitState.selectedThreadBranches;
   const branchesLoading = gitState.selectedThreadBranchesLoading;
@@ -50,8 +50,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const [newBranchName, setNewBranchName] = useState("");
   const [worktreeBaseBranchOverride, setWorktreeBaseBranchOverride] = useState<string | null>(null);
   const worktreeBaseBranch =
-    worktreeBaseBranchOverride ??
-    (currentBranchLabel === "Detached HEAD" ? "main" : currentBranchLabel);
+    worktreeBaseBranchOverride ?? (currentBranch === null ? "main" : currentBranch);
   const [worktreeBranchName, setWorktreeBranchName] = useState("");
 
   const disabledExistingBranchNames: Array<string> = [];
@@ -68,16 +67,16 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <FormSection title="New branch">
+      <FormSection title={gt("New branch")}>
         <FormField
           value={newBranchName}
           onChangeText={setNewBranchName}
           placeholder="feature/mobile-polish"
-          accessibilityLabel="New branch name"
+          accessibilityLabel={gt("New branch name")}
         />
         <SheetActionButton
           icon="plus"
-          label="Create & checkout"
+          label={gt("Create & checkout")}
           tone="primary"
           disabled={!canSwitchBranch || busy || newBranchName.trim().length === 0}
           onPress={() => {
@@ -93,24 +92,24 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       </FormSection>
 
       {workspace === null ? (
-        <FormSection title="New worktree">
+        <FormSection title={gt("New worktree")}>
           <FormField
-            label="Base branch"
+            label={gt("Base branch")}
             value={worktreeBaseBranch}
             onChangeText={setWorktreeBaseBranchOverride}
             placeholder="main"
-            accessibilityLabel="Worktree base branch"
+            accessibilityLabel={gt("Worktree base branch")}
           />
           <FormField
-            label="New branch"
+            label={gt("New branch")}
             value={worktreeBranchName}
             onChangeText={setWorktreeBranchName}
             placeholder="feature/mobile-thread"
-            accessibilityLabel="Worktree branch name"
+            accessibilityLabel={gt("Worktree branch name")}
           />
           <SheetActionButton
             icon="square.split.2x1"
-            label="Create worktree"
+            label={gt("Create worktree")}
             tone="primary"
             disabled={
               !canChangeThreadBranch ||
@@ -135,12 +134,12 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       ) : null}
 
       <ListSection
-        title="Existing branches"
+        title={gt("Existing branches")}
         footer={
           branchesLoading
-            ? "Loading branches..."
+            ? gt("Loading branches...")
             : availableBranches.length === 0
-              ? "No local branches found."
+              ? gt("No local branches found.")
               : undefined
         }
       >
@@ -148,11 +147,11 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
           const disabled = disabledExistingBranches.has(branch.name);
           const subtitle = branch.worktreePath
             ? branch.worktreePath === currentWorktreePath
-              ? "Checked out in this thread"
-              : "Checked out in another worktree"
+              ? gt("Checked out in this thread")
+              : gt("Checked out in another worktree")
             : branch.isDefault
-              ? "Default branch"
-              : "Local branch";
+              ? gt("Default branch")
+              : gt("Local branch");
 
           return (
             <ListChoiceRow

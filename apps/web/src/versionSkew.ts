@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
+import type { MessageResolver } from "./i18n/messages";
 
 export interface VersionMismatch {
   readonly clientVersion: string;
@@ -73,14 +74,16 @@ export function resolveVersionMismatch(
   return {
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
     hint: "Version mismatch. Try syncing the client and server to the same Pair version.",
   };
 }
 
 export function resolveServerConfigVersionMismatch(
   serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
+  _resolve?: MessageResolver,
 ): VersionMismatch | null {
-  return resolveVersionMismatch(serverConfig?.environment.serverVersion);
+  return resolveVersionMismatch(serverConfig?.environment.serverVersion, APP_VERSION);
 }
 
 export function resolveServerSelfUpdateCapability(

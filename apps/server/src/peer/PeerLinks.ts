@@ -594,13 +594,19 @@ const make = Effect.gen(function* () {
     return linked;
   });
 
-  /** The first of the link's addresses that answers as its peer, with what it reported. */
+  /** The link's addresses race, so a silent one never delays one that answers. */
   const firstAnswering = Effect.fn("PeerLinks.firstAnswering")(function* (link: PeerLink) {
-    for (const url of link.urls) {
-      const found = yield* answersAs(url, link.environmentId);
-      if (Option.isSome(found)) return Option.some({ url, peer: found.value });
+    if (link.urls.length === 0) {
+      return Option.none<{ readonly url: string; readonly peer: ExecutionEnvironmentDescriptor }>();
     }
-    return Option.none<{ readonly url: string; readonly peer: ExecutionEnvironmentDescriptor }>();
+    return yield* Effect.raceAll(
+      link.urls.map((url) =>
+        answersAs(url, link.environmentId).pipe(
+          Effect.flatMap(Effect.fromOption),
+          Effect.map((peer) => ({ url, peer })),
+        ),
+      ),
+    ).pipe(Effect.option);
   });
 
   /**
@@ -718,9 +724,9 @@ const make = Effect.gen(function* () {
           message: `${link.label} did not answer at ${link.urls.join(", ")}.`,
         });
       }
+      const { url, peer } = answered.value;
       // A link made before the peer had to fence linked work, or a peer moved
       // back to such a version, would carry work past those limits.
-      const { url, peer } = answered.value;
       if (!linkLimitsHold(peer)) {
         return yield* new PeerLinkError({
           reason: "incompatible",

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import {
   WorkspaceColumnsRendererContext,
   WorkspacePresentationHostContext,
@@ -70,6 +71,7 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { isPageTab } from "./workspace/navigation-tab-order";
 import { useEnabledNavigationTabs } from "./workspace/navigation-tabs";
 import { FLOATING_TABS, floatingTabsMetrics } from "./workspace/floating-workspace-tabs";
 import {
@@ -257,6 +259,7 @@ function AdaptiveWorkspaceLayoutContent(
     readonly savedThreadListFilters?: ThreadListFilters | undefined;
   },
 ) {
+  const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const projectGroupingMode = props.projectGroupingMode;
   const nativeWorkspace = use(NativeWorkspaceModeContext);
@@ -266,11 +269,12 @@ function AdaptiveWorkspaceLayoutContent(
   const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const workspace = useWorkspaceTabs();
-  // Settings and Usage occupy the workspace rather than a list/detail pair.
+  // Settings and page tabs occupy the workspace rather than a list/detail pair.
   const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
   const safeAreaInsets = useSafeAreaInsets();
   const workspacePage =
-    Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
+    Platform.OS === "android" &&
+    (androidSettingsOpen || (workspace ? isPageTab(workspace.state.selectedTab) : false));
   const navigation = useNavigation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
@@ -1031,8 +1035,8 @@ function AdaptiveWorkspaceLayoutContent(
                 renderFallback={(fallback) => (
                   <RenderFailureView
                     {...fallback}
-                    title="The sidebar couldn't be displayed"
-                    exit={{ label: "Open settings", onPress: handleOpenSettings }}
+                    title={gt("The sidebar couldn't be displayed")}
+                    exit={{ label: gt("Open settings"), onPress: handleOpenSettings }}
                   />
                 )}
               >
@@ -1129,7 +1133,7 @@ function AdaptiveWorkspaceLayoutContent(
           style={[{ zIndex: 1 }, scrimAnimatedStyle]}
         >
           <Pressable
-            accessibilityLabel="Hide sidebar"
+            accessibilityLabel={gt("Hide sidebar")}
             className="flex-1"
             onPress={() => setPrimarySidebarVisible(false)}
           />

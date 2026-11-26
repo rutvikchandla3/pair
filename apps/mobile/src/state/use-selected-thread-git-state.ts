@@ -1,3 +1,5 @@
+import { vcsActionLabelText } from "@t3tools/client-runtime/state/vcs";
+import { useMessages } from "gt-react-native";
 import { useMemo } from "react";
 
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
@@ -11,6 +13,7 @@ import { useSelectedThreadGitTarget } from "./use-selected-thread-git-target";
 import { workspaceRunLabel } from "./use-selected-thread-workspace";
 
 export function useSelectedThreadGitState() {
+  const messages = useMessages();
   const { selectedThread } = useThreadSelection();
   const target = useSelectedThreadGitTarget();
   const workspaceRun = target.workspace?.run ?? null;
@@ -45,7 +48,9 @@ export function useSelectedThreadGitState() {
   return {
     // "All changed repositories" keeps every control busy until its last repository finishes.
     gitOperationLabel:
-      workspaceRun === null ? gitActionState.currentLabel : workspaceRunLabel(workspaceRun),
+      workspaceRun === null
+        ? vcsActionLabelText(gitActionState, messages)
+        : workspaceRunLabel(workspaceRun),
     sourceControlDiscovery,
     selectedThreadBranches,
     selectedThreadBranchesLoading: selectedThreadBranchState.isPending,

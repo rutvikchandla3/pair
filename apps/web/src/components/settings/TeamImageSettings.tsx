@@ -50,7 +50,7 @@ import { Textarea } from "../ui/textarea";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { SettingsFooter, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   draftFromRecipe,
   EDIT_WITH_AGENT_PROMPT,
@@ -112,6 +112,7 @@ export function TeamImageSettings({
   /** A build runs on the default driver, so none means none can start. */
   readonly driversConfigured: boolean;
 }) {
+  const searchableSetting = useSearchableSetting();
   const snapshotView = useEnvironmentQuery(
     teamImageEnvironment.snapshot({ environmentId, input: {} }),
   );

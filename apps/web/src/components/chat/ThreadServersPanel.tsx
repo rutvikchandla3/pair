@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
@@ -10,16 +11,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  GlobeIcon,
-  LoaderCircleIcon,
-  SquareIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-} from "lucide-react";
+import { T, useGT, Var } from "gt-react";
+import { m } from "~/i18n/messages";
+import { GlobeIcon, SquareIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { type MouseEvent, useState } from "react";
 
-import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
+import { resolveExternalServerUrl } from "../../browser/browserTargetResolver";
 import { readLocalApi } from "../../localApi";
 import { cn, isMacPlatform } from "../../lib/utils";
 import { useOtherThreadsMachinePorts, useThreadDiscoveredPorts } from "../../portDiscoveryState";
@@ -30,6 +27,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { OtherThreadPortLabel } from "../branchOff/OtherThreadPortLabel";
 import { openDiscoveredPort } from "../preview/openDiscoveredPort";
+import { Spinner } from "../ui/spinner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -41,9 +39,6 @@ const SERVER_PAGE_COUNT = 4;
 const serverKey = (server: DiscoveredLocalServer) => `${server.pid}:${server.port}`;
 
 // A machine cannot tell its terminals' servers from its agent's, so it names neither.
-const serverSource = (server: DiscoveredLocalServer, machine: boolean) =>
-  machine ? null : server.terminal === null ? "Agent" : "Terminal";
-
 interface ThreadServersPanelProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -55,6 +50,7 @@ export function ThreadServersPanel(props: ThreadServersPanelProps) {
 }
 
 function ThreadServersList(props: ThreadServersPanelProps) {
+  const gt = useGT();
   const ownServers = useThreadDiscoveredPorts(props);
   // Other people's threads on this machine, after the thread's own, labelled with their owner.
   const others = useOtherThreadsMachinePorts(props);
@@ -84,7 +80,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : String(error),
+        description: thrownErrorMessage(error, m) ?? String(error),
       }),
     );
   };
@@ -95,15 +91,15 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     // localhost is not reachable from this computer.
     if (!machineBrowser && (event.metaKey || event.ctrlKey || event.button === 1)) {
       event.preventDefault();
-      const url = resolveDiscoveredServerUrl(props.environmentId, server.url);
+      const url = resolveExternalServerUrl(props.environmentId, server.url);
       await readLocalApi()
         ?.shell.openExternal(url)
-        .catch((error: unknown) => reportFailure("Unable to open in browser", error));
+        .catch((error: unknown) => reportFailure(gt("Unable to open in browser"), error));
       return;
     }
     const result = await openDiscoveredPort({ threadRef, port: server, openPreview });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportFailure("Unable to open preview", squashAtomCommandFailure(result));
+      reportFailure(gt("Unable to open preview"), squashAtomCommandFailure(result));
     }
   };
 
@@ -120,12 +116,15 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     });
     setStoppingKey(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportFailure("Could not stop server", squashAtomCommandFailure(result));
+      reportFailure(gt("Could not stop server"), squashAtomCommandFailure(result));
     }
   };
 
   return (
-    <ThreadDetailsSection headingId="thread-details-servers-heading" title="Servers">
+    <ThreadDetailsSection
+      headingId="thread-details-servers-heading"
+      title={gt("Servers", { $context: "thread details section: running dev servers" })}
+    >
       <ul className="m-0 list-none p-0">
         {servers.slice(0, visibleCount).map((server, index) => {
           const key = serverKey(server);
@@ -170,16 +169,28 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                       )}
                     </span>
                     <span className="truncate text-2xs font-normal leading-4 text-muted-foreground">
-                      {[serverSource(server, machineBrowser), server.processName]
+                      {[
+                        machineBrowser
+                          ? null
+                          : server.terminal === null
+                            ? gt("Agent", { $context: "who started a dev server" })
+                            : gt("Terminal", { $context: "who started a dev server" }),
+                        server.processName,
+                      ]
                         .filter(Boolean)
                         .join(" · ")}
                     </span>
                   </span>
                 </TooltipTrigger>
                 <TooltipPopup side="left">
-                  {machineBrowser
-                    ? "Open in the browser panel."
-                    : `Open in the browser panel. ${externalClickLabel} for your browser.`}
+                  {machineBrowser ? (
+                    // oxlint-disable-next-line t3code/no-untranslated-copy -- Pair copy stays English
+                    "Open in the browser panel."
+                  ) : (
+                    <T>
+                      Open in the browser panel. <Var>{externalClickLabel}</Var> for your browser.
+                    </T>
+                  )}
                 </TooltipPopup>
               </Tooltip>
               {stoppable ? (
@@ -192,19 +203,21 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                           variant="ghost"
                           part="icon"
                           tone="destructive"
-                          aria-label={`Stop localhost:${server.port}`}
+                          aria-label={gt("Stop localhost:{port}", { port: server.port })}
                           disabled={stoppingKey !== null}
                           onClick={() => void stop(server)}
                         />
                       }
                     >
                       {stoppingKey === key ? (
-                        <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+                        <Spinner aria-hidden size="xs" />
                       ) : (
                         <SquareIcon aria-hidden className="size-3 fill-current" />
                       )}
                     </TooltipTrigger>
-                    <TooltipPopup side="left">Stop server</TooltipPopup>
+                    <TooltipPopup side="left">
+                      <T>Stop server</T>
+                    </TooltipPopup>
                   </Tooltip>
                 </div>
               ) : null}
@@ -228,7 +241,13 @@ function ThreadServersList(props: ThreadServersPanelProps) {
           ) : (
             <ChevronUpIcon aria-hidden className="size-4 shrink-0" />
           )}
-          {hiddenCount > 0 ? `Show ${Math.min(hiddenCount, SERVER_PAGE_COUNT)} more` : "Show less"}
+          {hiddenCount > 0 ? (
+            <T>
+              Show <Var>{Math.min(hiddenCount, SERVER_PAGE_COUNT)}</Var> more
+            </T>
+          ) : (
+            <T>Show less</T>
+          )}
         </ThreadDetailsControl>
       ) : null}
     </ThreadDetailsSection>

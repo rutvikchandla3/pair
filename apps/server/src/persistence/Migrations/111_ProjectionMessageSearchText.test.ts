@@ -38,7 +38,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         // A Pair database at its last migration upgrades through every upstream one after it.
-        yield* runMigrations({ toMigrationInclusive: 109 });
+        yield* runMigrations({ toMigrationInclusive: 139 });
         const insertMessage = (messageId: string, text: unknown) => sql`
           INSERT INTO orchestration_v2_projection_messages (
             message_id, thread_id, role, streaming, created_at, updated_at, payload_json
@@ -71,7 +71,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           { discard: true },
         );
 
-        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 112 }), [
+        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 142 }), [
           [110, "ScheduledTaskThreadMode"],
           [111, "ProjectionMessageSearchText"],
           [112, "TurnItemConversationIndex"],

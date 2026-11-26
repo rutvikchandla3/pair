@@ -13,6 +13,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
@@ -79,6 +80,8 @@ export const layer = Layer.effect(
     const lifecycleEvents = yield* Effect.serviceOption(
       ServerLifecycleEvents.ServerLifecycleEvents,
     );
+    // Optional so hosts built without the preview layer still construct.
+    const portDiscovery = yield* Effect.serviceOption(PortScanner.PortDiscovery);
     return ProviderHost.ProviderHost.of({
       paths: {
         cwd: config.cwd,
@@ -97,6 +100,10 @@ export const layer = Layer.effect(
       ...Option.match(lifecycleEvents, {
         onNone: () => ({}),
         onSome: (events) => ({ awaitServerReady: events.awaitReady }),
+      }),
+      ...Option.match(portDiscovery, {
+        onNone: () => ({}),
+        onSome: (discovery) => ({ trackAgent: discovery.trackAgent }),
       }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),

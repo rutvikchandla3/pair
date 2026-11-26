@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 
 import {
@@ -24,6 +25,7 @@ export function RetentionControl({
   /** What switching it on sets. */
   enabledDays?: number;
 }) {
+  const gt = useGT();
   const [draft, setDraft] = useState(value);
   const [savedValue, setSavedValue] = useState(value);
   // Saving an age can start a cleanup sweep, so turning a rule on only opens a draft.
@@ -106,9 +108,9 @@ export function RetentionControl({
           }}
         >
           <NumberFieldGroup>
-            <NumberFieldDecrement aria-label={`Decrease ${label}`} />
+            <NumberFieldDecrement aria-label={gt("Decrease {label}", { label })} />
             <NumberFieldInput
-              aria-label={`${label} in days`}
+              aria-label={gt("{label} in days", { label })}
               autoFocus={value === null}
               size={5}
               className="w-auto grow-0 text-right"
@@ -139,11 +141,13 @@ export function RetentionControl({
             <span aria-hidden="true" className="self-center pr-2 text-xs">
               days
             </span>
-            <NumberFieldIncrement aria-label={`Increase ${label}`} />
+            <NumberFieldIncrement aria-label={gt("Increase {label}", { label })} />
           </NumberFieldGroup>
         </NumberField>
       ) : (
-        <span className="text-xs text-muted-foreground">Off</span>
+        <span className="text-xs text-muted-foreground">
+          <T>Off</T>
+        </span>
       )}
       <Switch
         aria-label={label}

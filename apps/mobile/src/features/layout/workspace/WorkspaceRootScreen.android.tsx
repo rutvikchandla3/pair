@@ -1,7 +1,8 @@
+import { useGT } from "gt-react-native";
 import { useAndroidFloatingTabs } from "../../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
-import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
+import { NAVIGATION_TAB_ORDER, isPageTab } from "./navigation-tab-order";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import type { ReactNode } from "react";
 import { View } from "react-native";
@@ -13,7 +14,8 @@ import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../../components/ui/useAndroidControlSizing";
 import { HomeRouteScreen } from "../../home/HomeRouteScreen";
 import { PullRequestsScreen } from "../../pull-requests/PullRequestsScreen";
-import { PullRequestToolbar } from "./PullRequestToolbar.android";
+import { ListSearchToolbar } from "./ListSearchToolbar.android";
+import { IssuesScreen } from "../../issues/IssuesScreen";
 import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
 import { WorkspaceSettledContentWidthContext } from "../workspace-content-width";
 import { AndroidWorkspaceNavigation, FloatingWorkspaceTabs } from "./AndroidWorkspaceNavigation";
@@ -34,6 +36,7 @@ export function WorkspaceRootScreen() {
 }
 
 function WorkspaceRoot() {
+  const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const { layout, startNewTask, workspacePageWidth } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
@@ -75,7 +78,7 @@ function WorkspaceRoot() {
             layout.usesSplitView
               ? insets
               : floatingTabsEnabled
-                ? tab === "usage"
+                ? isPageTab(tab)
                   ? { ...insets, bottom: context.bottomClearance }
                   : insets
                 : { ...insets, bottom: 0 }
@@ -95,21 +98,37 @@ function WorkspaceRoot() {
                 renderTab={(tab) =>
                   tab === "threads" ? (
                     <HomeRouteScreen />
-                  ) : tab !== "pullRequests" ? (
+                  ) : isPageTab(tab) ? (
                     <WorkspacePageFrame width={workspacePageWidth ?? null}>
                       <WorkspaceExtraTab tab={tab} />
                     </WorkspacePageFrame>
                   ) : layout.usesSplitView ? (
                     <>
                       <NativeStackScreenOptions options={{ headerShown: false }} />
-                      <AppBar embedded title="Pull requests" />
-                      <WorkspaceEmptyDetail tab="pullRequests" />
+                      <AppBar
+                        embedded
+                        title={
+                          tab === "issues"
+                            ? gt("Issues", { $context: "screen title, list of issues" })
+                            : gt("Pull requests")
+                        }
+                      />
+                      <WorkspaceEmptyDetail tab={tab} />
                     </>
+                  ) : tab === "issues" ? (
+                    <IssuesScreen
+                      renderFrame={(filters, list) => (
+                        <>
+                          <ListSearchToolbar tab="issues" filters={filters} />
+                          <ScreenContent>{list}</ScreenContent>
+                        </>
+                      )}
+                    />
                   ) : (
                     <PullRequestsScreen
                       renderFrame={(filters, list) => (
                         <>
-                          <PullRequestToolbar filters={filters} />
+                          <ListSearchToolbar tab="pullRequests" filters={filters} />
                           <ScreenContent>{list}</ScreenContent>
                         </>
                       )}

@@ -1,4 +1,5 @@
 import { resolveEnvironmentMachineKind, type EnvironmentId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -17,6 +18,7 @@ export function SettingsEnvironmentPicker({
   readonly value: EnvironmentId;
   readonly onChange: (environmentId: EnvironmentId) => void;
 }) {
+  const gt = useGT();
   return (
     <div className="flex min-w-0 items-center gap-1.5 px-3 text-sm text-muted-foreground sm:px-4">
       <span className="shrink-0">{label}</span>
@@ -26,7 +28,7 @@ export function SettingsEnvironmentPicker({
           if (next !== null) onChange(next);
         }}
       >
-        <SelectTrigger size="sm" className="w-auto max-w-72" aria-label="Environment">
+        <SelectTrigger size="sm" className="w-auto max-w-72" aria-label={gt("Environment")}>
           <SelectValue>
             {(selected: EnvironmentId) => {
               const environment = environments.find(
@@ -53,7 +55,9 @@ export function SettingsEnvironmentPicker({
                   {settingsScopeEnvironmentLabel(environment, environments)}
                 </span>
                 {environment.connection.phase !== "connected" ? (
-                  <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    <T>Offline</T>
+                  </span>
                 ) : null}
               </span>
             </SelectItem>

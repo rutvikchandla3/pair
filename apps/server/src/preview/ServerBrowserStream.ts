@@ -268,7 +268,7 @@ const makeHandler = Effect.fnUntraced(function* (
         yield* whenSessionEnds(session),
         awaitThreadLost(session.memberId, threadId).pipe(Effect.andThen(gone)),
         viewer.onMachine === true ? holdMachine(wake, session.memberId, threadId) : Effect.never,
-      ]);
+      ]).pipe(Effect.onInterrupt(() => Effect.sync(() => transport.destroy())));
       return HttpServerResponse.empty();
     }),
   ).pipe(

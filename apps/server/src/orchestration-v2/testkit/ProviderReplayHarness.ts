@@ -511,6 +511,7 @@ export function layerWithRegistry<Error>(
         layerStores,
         layerProviderSessionManagerProvided,
         layerSandboxAttachments,
+        McpAppModelContext.layerEmpty,
       ),
     ),
   );

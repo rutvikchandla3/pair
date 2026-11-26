@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
 const readEnvironmentHasMachineBrowser = vi.fn(() => false);
+const readEnvironmentScope = vi.fn(() => true);
 const env = vi.hoisted(() => ({ isElectron: false }));
 
-vi.mock("~/state/session", () => ({ readPreparedConnection }));
+vi.mock("~/state/session", () => ({ readPreparedConnection, readEnvironmentScope }));
 vi.mock("~/state/entities", () => ({ readEnvironmentHasMachineBrowser }));
 vi.mock("~/env", () => env);
 
@@ -14,6 +15,7 @@ describe("browser target resolver", () => {
   beforeEach(() => {
     readPreparedConnection.mockReset();
     readEnvironmentHasMachineBrowser.mockReturnValue(false);
+    readEnvironmentScope.mockReturnValue(true);
   });
 
   it("refuses public relay hosts until the authenticated gateway exists", async () => {
@@ -50,7 +52,8 @@ describe("browser target resolver", () => {
 
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {
     // WSL NAT advertises a distro IP, but loopback-bound servers only answer on localhost.
-    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    const { environmentMayTunnelLoopback, resolveDiscoveredServerUrl, resolveExternalServerUrl } =
+      await import("./browserTargetResolver");
     env.isElectron = true;
     try {
       for (const target of [
@@ -66,9 +69,25 @@ describe("browser target resolver", () => {
         httpBaseUrl: "http://192.168.1.25:3773",
         target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" },
       });
+      // The webview's partition tunnels to the environment; the system browser has no tunnel.
+      expect(
+        resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/"),
+      ).toBe("http://localhost:3001/");
+      expect(resolveExternalServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/")).toBe(
+        "http://192.168.1.25:3001/",
+      );
+      // A member session is refused the tunnel, so it keeps Pair's port route.
+      readEnvironmentScope.mockReturnValue(false);
       expect(
         resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/"),
       ).toBe("http://192.168.1.25:3001/");
+      // A sandbox thread's tab runs in its machine's Chrome, never through the tunnel.
+      readEnvironmentScope.mockReturnValue(true);
+      readEnvironmentHasMachineBrowser.mockReturnValue(true);
+      expect(
+        resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/"),
+      ).toBe("http://localhost:3001/");
+      expect(environmentMayTunnelLoopback(true, true)).toBe(false);
     } finally {
       env.isElectron = false;
     }

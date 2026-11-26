@@ -221,6 +221,7 @@ const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer
       ProjectionStore.layer,
       layerProviderSessionManagerProvided,
       SandboxAttachments.layer,
+      McpAppModelContext.layer,
     ),
   ),
 );

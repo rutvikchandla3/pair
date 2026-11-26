@@ -129,6 +129,14 @@ import Migration0118 from "./Migrations/118_TurnItemTypeStatusIndex.ts";
 import Migration0119 from "./Migrations/119_ShellThreadReadIndexes.ts";
 import Migration0120 from "./Migrations/120_AuthConnectDevices.ts";
 import Migration0121 from "./Migrations/121_AuthConnectDeniedRequests.ts";
+import Migration0122 from "./Migrations/122_QueuedTurnInputIndexJsonValid.ts";
+import Migration0123 from "./Migrations/123_ProviderTurnAttemptIndex.ts";
+import Migration0124 from "./Migrations/124_TurnItemMessageOrdinalIndex.ts";
+import Migration0125 from "./Migrations/125_TurnItemInlineWorkOutput.ts";
+import Migration0126 from "./Migrations/126_RepairStaleTitleRegeneration.ts";
+import Migration0127 from "./Migrations/127_IssueTrackerBindings.ts";
+import Migration0128 from "./Migrations/128_ActiveShellIndexIndexes.ts";
+import Migration0129 from "./Migrations/129_BackgroundRecoveryIndexes.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -253,6 +261,14 @@ const migrationEntries = [
   [119, "ShellThreadReadIndexes", Migration0119],
   [120, "AuthConnectDevices", Migration0120],
   [121, "AuthConnectDeniedRequests", Migration0121],
+  [122, "QueuedTurnInputIndexJsonValid", Migration0122],
+  [123, "ProviderTurnAttemptIndex", Migration0123],
+  [124, "TurnItemMessageOrdinalIndex", Migration0124],
+  [125, "TurnItemInlineWorkOutput", Migration0125],
+  [126, "RepairStaleTitleRegeneration", Migration0126],
+  [127, "IssueTrackerBindings", Migration0127],
+  [128, "ActiveShellIndexIndexes", Migration0128],
+  [129, "BackgroundRecoveryIndexes", Migration0129],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -340,10 +356,12 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingMigrations();
+  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
-  const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+  // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
+  const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
